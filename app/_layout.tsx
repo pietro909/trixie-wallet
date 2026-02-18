@@ -1,15 +1,21 @@
-import { Stack } from "expo-router";
-import {toNavigationTheme, useAppTheme} from "@/app/theme/theme";
-import RootTabs from "@/app/navigation/RootTabs";
-import {ThemeProvider} from "@react-navigation/native";
 import * as React from "react";
+import { ThemeProvider } from "@react-navigation/native";
+import { toNavigationTheme } from "@/app/theme/theme";
+import { useResolvedTheme } from "@/app/hooks/useResolvedTheme";
+import AppStartupGate from "@/app/components/AppStartupGate";
+import ToastProvider from "@/app/components/ToastProvider";
+import RootStack from "@/app/navigation/RootStack";
 
 export default function RootLayout() {
-  const theme = useAppTheme();
+  const theme = useResolvedTheme();
 
   return (
-    <ThemeProvider value={toNavigationTheme(theme)}>
-      <RootTabs />
-    </ThemeProvider>
+    <ToastProvider>
+      <ThemeProvider value={toNavigationTheme(theme)}>
+        <AppStartupGate>
+          <RootStack />
+        </AppStartupGate>
+      </ThemeProvider>
+    </ToastProvider>
   );
 }

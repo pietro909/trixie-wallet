@@ -13,39 +13,69 @@ No test framework is currently configured.
 
 ## Architecture
 
-**Expo SDK 54 + React Native 0.81 + React 19** cross-platform app (iOS, Android, Web) using file-based routing via Expo Router v6.
+**Expo SDK 54 + React Native 0.81 + React 19** cross-platform app (iOS, Android, Web) using Expo Router v6 for the root layout, with React Navigation for all screen navigation.
 
-### Routing (app/)
+### Navigation
 
-Uses Expo Router `_layout.tsx` to wrap the application in a `ThemeProvider`. The main navigation is handled by `RootTabs` (`app/navigation/RootTabs.tsx`), which implements a Bottom Tab Navigator using `@react-navigation/bottom-tabs`. Screens are located in `app/screens/`.
+- `app/_layout.tsx` — Root layout. Wraps app in `ToastProvider` → `ThemeProvider` → `AppStartupGate` → `RootStack`.
+- `app/navigation/RootStack.tsx` — Native stack navigator. Routes based on wallet state:
+  - No wallet → `Landing`, `IntroCarousel`, `RestoreWallet`
+  - Locked → `Unlock`
+  - Unlocked → `Main` (RootTabs) + profile/transaction sub-screens
+- `app/navigation/RootTabs.tsx` — Bottom tab navigator (Networks, **Wallet** [default], Profile) using `@react-navigation/bottom-tabs`.
+- Screens are in `app/screens/`.
+
+### State Management
+
+**Zustand** store in `app/store/useAppStore.ts` with manual AsyncStorage persistence (key: `app_state_v1`).
+- Types in `app/store/types.ts` (`AppState`, `Wallet`, `Transaction`, etc.)
+- Mock data helpers in `app/store/mock.ts`
+- Actions: `hydrate()`, `createWallet()`, `lockWallet()`, `unlockWithPassword()`, `unlockWithBiometrics()`, `resetWallet()`, `setTheme()`, `setFiatCurrency()`, `setPassword()`, `toggleBiometrics()`
+
+### Theming
+
+Custom theme in `app/theme/theme.tsx`. Brand color: `#ff007f`.
+- `useAppTheme()` — system-based theme (light/dark).
+- `useResolvedTheme()` (`app/hooks/useResolvedTheme.ts`) — respects user preference from store. **Use this in screens.**
+- `toNavigationTheme()` — converts to React Navigation theme.
+- Typography uses Inter font (`@expo-google-fonts/inter`), loaded in `AppStartupGate`.
+- Exports: `spacing`, `radius`, `typography`, `motion`, `shadow()`, `TabIcon`, `AnimatedTabBarButton`, `makeBottomTabsOptions`.
+
+### Shared Components (`app/components/`)
+
+- `Button.tsx` — Primary/secondary/danger/ghost variants, loading state, press animation + haptics.
+- `LoadingOverlay.tsx` — Full-screen overlay with spinner + message.
+- `ToastProvider.tsx` — Context-based toast system (`useToast()` → `showToast(msg, type)`).
+- `WipModal.tsx` — "Work in Progress" modal for unimplemented features.
+- `Skeleton.tsx` — Animated pulse placeholder.
+- `AppStartupGate.tsx` — Hydrates store, loads fonts, shows branded loader.
 
 ### Platform-specific files
 
 Expo's file suffix convention is available for platform overrides (`.ios.tsx`, `.web.ts`). Reference examples are in `app-example/`; the main `app/` directory does not currently use platform-specific files.
 
-### Theming
+### PWA
 
-Custom theme implementation in `app/theme/theme.tsx`.
-- Uses `useAppTheme()` hook to access colors (`theme.colors`), typography, and spacing.
-- Theme supports light/dark modes based on system preference.
-- Navigation theme is synced via `toNavigationTheme`.
-
-### State management
-
-No global state library — local `useState` only. `@react-native-async-storage/async-storage` is installed for persistent storage.
+Installable PWA via `public/manifest.json` with icons in `public/icons/` (192x192, 512x512).
 
 ### Key dependencies
 
-- `react-native-reanimated` — animations (CSS-like animation API)
+- `zustand` — state management
+- `@expo-google-fonts/inter` — typography
+- `react-native-reanimated` — animations
 - `react-native-gesture-handler` — gesture recognition
 - `expo-image` — optimized image component (use instead of RN `<Image>`)
-- `expo-haptics` — haptic feedback on tab presses (iOS)
-- `lucide-react-native` — icons
+- `expo-haptics` — haptic feedback
+- `expo-local-authentication` — biometrics (graceful web fallback)
 - `expo-blur` — blur effects (used in Tab Bar)
+- `lucide-react-native` — icons (only icon library allowed)
+- `@react-navigation/native-stack` — stack navigation
+- `@react-navigation/bottom-tabs` — tab navigation
 
 ## Conventions
 
-- **Files**: PascalCase for components/screens (`WalletScreen.tsx`), kebab-case/camelCase for utilities (`theme.tsx`)
-- **Components**: PascalCase. Named exports preferred for UI components; Default exports for Screens/Routes.
-- **Hooks**: `use-` prefix in filename and export
-- **Path alias**: `@/*` maps to project root (e.g. `@/components/...`)
+- **Files**: PascalCase for components/screens (`WalletScreen.tsx`), camelCase for utilities and hooks (`useAppStore.ts`, `mock.ts`)
+- **Components**: PascalCase. Named exports for UI components; Default exports for Screens/Routes.
+- **Hooks**: `use` prefix (`useLoading.ts`, `useResolvedTheme.ts`)
+- **Icons**: Only `lucide-react-native` — never use other icon libraries.
+- **Path alias**: `@/*` maps to project root (e.g. `@/app/theme/theme`)

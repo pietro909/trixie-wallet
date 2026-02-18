@@ -89,7 +89,10 @@ export const radius = {
 export const typography = {
   // Drop-in friendly: defaults to system if you don't load custom fonts.
   fontFamily: {
-    ui: Platform.select({ ios: undefined, android: undefined, default: undefined }),
+    ui: "Inter_400Regular",
+    uiMedium: "Inter_500Medium",
+    uiSemiBold: "Inter_600SemiBold",
+    uiBold: "Inter_700Bold",
     mono: Platform.select({
       ios: "Menlo",
       android: "monospace",

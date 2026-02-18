@@ -1,15 +1,4 @@
-import { Text, View } from "react-native";
-
+// Root index — navigation is handled entirely by RootStack in _layout.tsx
 export default function Index() {
-  return (
-    <View
-      style={{
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-      }}
-    >
-      <Text>Edit app/index.tsx to edit this screen.</Text>
-    </View>
-  );
+  return null;
 }

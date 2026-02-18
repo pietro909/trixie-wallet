@@ -23,6 +23,7 @@ export default function RootTabs() {
 
   return (
     <Tab.Navigator
+      initialRouteName="Wallet"
       screenOptions={({ route }) => {
         const base = makeBottomTabsOptions(theme, {
           bottomInset: Math.max(0, insets.bottom - 6),
