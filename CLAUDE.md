@@ -7,7 +7,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 npx expo start          # Start dev server (press i for iOS, a for Android, w for web)
 npx expo lint           # Run ESLint (flat config with eslint-config-expo)
-npx expo prebuild       # Generate native iOS/Android projects
 ```
 
 No test framework is currently configured.
@@ -22,9 +21,7 @@ Uses Expo Router `_layout.tsx` to wrap the application in a `ThemeProvider`. The
 
 ### Platform-specific files
 
-Uses Expo's file suffix convention for platform overrides:
-- `.ios.tsx` — iOS-specific (e.g. `icon-symbol.ios.tsx` uses native SF Symbols)
-- `.web.ts` — Web-specific (e.g. `use-color-scheme.web.ts` handles SSR hydration)
+Expo's file suffix convention is available for platform overrides (`.ios.tsx`, `.web.ts`). Reference examples are in `app-example/`; the main `app/` directory does not currently use platform-specific files.
 
 ### Theming
 
