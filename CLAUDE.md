@@ -18,7 +18,7 @@ No test framework is currently configured.
 
 ### Routing (app/)
 
-File-system routing with typed routes enabled. Root layout (`app/_layout.tsx`) sets up a `Stack` with two routes: a `(tabs)` group (Home + Explore tabs) and a `modal` screen. The tabs group is the anchor/default route.
+Uses Expo Router `_layout.tsx` to wrap the application in a `ThemeProvider`. The main navigation is handled by `RootTabs` (`app/navigation/RootTabs.tsx`), which implements a Bottom Tab Navigator using `@react-navigation/bottom-tabs`. Screens are located in `app/screens/`.
 
 ### Platform-specific files
 
@@ -28,7 +28,10 @@ Uses Expo's file suffix convention for platform overrides:
 
 ### Theming
 
-`ThemedText` and `ThemedView` wrap RN primitives with colors from `constants/theme.ts`, resolved via `useThemeColor` hook. Theme follows system light/dark mode.
+Custom theme implementation in `app/theme/theme.tsx`.
+- Uses `useAppTheme()` hook to access colors (`theme.colors`), typography, and spacing.
+- Theme supports light/dark modes based on system preference.
+- Navigation theme is synced via `toNavigationTheme`.
 
 ### State management
 
@@ -40,12 +43,12 @@ No global state library — local `useState` only. `@react-native-async-storage/
 - `react-native-gesture-handler` — gesture recognition
 - `expo-image` — optimized image component (use instead of RN `<Image>`)
 - `expo-haptics` — haptic feedback on tab presses (iOS)
+- `lucide-react-native` — icons
+- `expo-blur` — blur effects (used in Tab Bar)
 
 ## Conventions
 
-- **Files**: kebab-case (`themed-text.tsx`, `use-color-scheme.ts`)
-- **Components**: PascalCase named exports (not default exports)
+- **Files**: PascalCase for components/screens (`WalletScreen.tsx`), kebab-case/camelCase for utilities (`theme.tsx`)
+- **Components**: PascalCase. Named exports preferred for UI components; Default exports for Screens/Routes.
 - **Hooks**: `use-` prefix in filename and export
 - **Path alias**: `@/*` maps to project root (e.g. `@/components/...`)
-- **Styles**: `StyleSheet.create` — no CSS-in-JS libraries
-- **React Compiler** is enabled — skip manual `useMemo`/`useCallback` memoization
