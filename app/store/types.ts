@@ -12,7 +12,7 @@ export type Transaction = {
 
 export type Wallet = {
   id: string;
-  type: "ark" | "onchain" | "lightning";
+  type: "arkade" | "onchain" | "lightning";
   label: string;
   balanceSats: number;
   transactions: Transaction[];

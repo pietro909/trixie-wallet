@@ -34,7 +34,7 @@ const MOCK_COUNTERPARTIES = [
   "Bob",
   "Coffee Shop",
   "Lightning Node",
-  "Ark Service Provider",
+  "Arkade Service Provider",
   "Faucet",
 ];
 
@@ -59,8 +59,8 @@ function generateMockTransactions(count: number): Transaction[] {
 export function generateMockWallet(): Wallet {
   return {
     id: randomId(),
-    type: "ark",
-    label: "Ark",
+    type: "arkade",
+    label: "Arkade",
     balanceSats: 125000 + Math.floor(Math.random() * 50000),
     transactions: generateMockTransactions(6),
     backup: {

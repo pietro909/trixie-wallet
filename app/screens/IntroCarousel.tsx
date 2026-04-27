@@ -24,12 +24,12 @@ const STEPS = [
   {
     Icon: Zap,
     title: "Instant Transfers",
-    body: "Built on the Ark protocol for fast, cheap, and private off-chain transactions.",
+    body: "Built on the Arkade protocol for fast, cheap, and private off-chain transactions.",
   },
   {
     Icon: Globe,
     title: "Multi-Network",
-    body: "Connect to multiple Ark service providers and manage your VTXOs from a single wallet.",
+    body: "Connect to multiple Arkade service providers and manage your VTXOs from a single wallet.",
   },
 ];
 

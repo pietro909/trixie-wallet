@@ -14,7 +14,7 @@ export default function NetworksScreen() {
         Coming Soon
       </Text>
       <Text style={[styles.body, { color: theme.colors.textMuted }]}>
-        Connect to multiple Ark service providers and manage your network
+        Connect to multiple Arkade service providers and manage your network
         connections from here.
       </Text>
     </View>

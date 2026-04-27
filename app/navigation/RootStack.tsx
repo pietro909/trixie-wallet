@@ -1,11 +1,15 @@
-
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { ChevronLeft } from "lucide-react-native";
 import {
-  createStackNavigator,
-  type StackCardStyleInterpolator,
-  CardStyleInterpolators,
-} from "@react-navigation/stack";
+  createNativeStackNavigator,
+  type NativeStackHeaderProps,
+  type NativeStackNavigationOptions,
+} from "@react-navigation/native-stack";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
 import { useAppStore } from "../store/useAppStore";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
+import { type AppTheme, spacing, typography } from "../theme/theme";
 
 import RootTabs from "./RootTabs";
 import LandingNoWallet from "../screens/LandingNoWallet";
@@ -31,10 +35,67 @@ export type RootStackParamList = {
   ProfileReset: undefined;
 };
 
-const Stack = createStackNavigator<RootStackParamList>();
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
-const fadeInterpolator: StackCardStyleInterpolator = ({ current }) => ({
-  cardStyle: { opacity: current.progress },
+function StackHeader({
+  title,
+  onBack,
+  canGoBack,
+  theme,
+}: {
+  title: string;
+  onBack: () => void;
+  canGoBack: boolean;
+  theme: AppTheme;
+}) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      style={[
+        headerStyles.container,
+        {
+          paddingTop: insets.top + spacing[3],
+          backgroundColor: theme.colors.background,
+        },
+      ]}
+    >
+      {canGoBack ? (
+        <Pressable
+          onPress={onBack}
+          hitSlop={12}
+          style={headerStyles.back}
+          accessibilityLabel="Back"
+          accessibilityRole="button"
+        >
+          <ChevronLeft color={theme.colors.text} size={28} />
+        </Pressable>
+      ) : null}
+      <Text
+        style={[headerStyles.title, { color: theme.colors.text }]}
+        numberOfLines={1}
+      >
+        {title}
+      </Text>
+    </View>
+  );
+}
+
+const headerStyles = StyleSheet.create({
+  container: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingBottom: spacing[3],
+    paddingHorizontal: spacing[4],
+    gap: spacing[2],
+  },
+  back: {
+    padding: spacing[1],
+    marginLeft: -spacing[1],
+  },
+  title: {
+    fontSize: typography.size.lg,
+    fontWeight: typography.weight.semibold,
+  },
 });
 
 export default function RootStack() {
@@ -42,22 +103,34 @@ export default function RootStack() {
   const walletContainer = useAppStore((s) => s.walletContainer);
   const security = useAppStore((s) => s.security);
 
-  const headerStyle = {
-    backgroundColor: theme.colors.background,
-    elevation: 0,
-    shadowOpacity: 0,
-    borderBottomWidth: 0,
-  };
-  const headerTintColor = theme.colors.text;
+  const renderCustomHeader = (props: NativeStackHeaderProps) => (
+    <StackHeader
+      title={props.options.title ?? ""}
+      onBack={() => props.navigation.goBack()}
+      canGoBack={!!props.back}
+      theme={theme}
+    />
+  );
+
+  const headerOptions: NativeStackNavigationOptions =
+    Platform.OS === "android"
+      ? {
+          headerShown: true,
+          header: renderCustomHeader,
+        }
+      : {
+          headerShown: true,
+          headerStyle: { backgroundColor: theme.colors.background },
+          headerTintColor: theme.colors.text,
+          headerShadowVisible: false,
+        };
 
   console.log("RootStack: walletContainer", walletContainer);
   return (
     <Stack.Navigator
       screenOptions={{
         headerShown: false,
-        cardStyle: { backgroundColor: theme.colors.background },
-        cardStyleInterpolator: CardStyleInterpolators.forHorizontalIOS,
-        gestureEnabled: true,
+        contentStyle: { backgroundColor: theme.colors.background },
       }}
     >
       {!walletContainer ? (
@@ -66,18 +139,13 @@ export default function RootStack() {
           <Stack.Screen
             name="Landing"
             component={LandingNoWallet}
-            options={{ cardStyleInterpolator: fadeInterpolator }}
+            options={{ animation: "fade" }}
           />
           <Stack.Screen name="IntroCarousel" component={IntroCarousel} />
           <Stack.Screen
             name="RestoreWallet"
             component={RestoreWallet}
-            options={{
-              headerShown: true,
-              title: "Restore Wallet",
-              headerStyle,
-              headerTintColor,
-            }}
+            options={{ ...headerOptions, title: "Restore Wallet" }}
           />
         </>
       ) : security.isLocked ? (
@@ -85,7 +153,7 @@ export default function RootStack() {
         <Stack.Screen
           name="Unlock"
           component={UnlockScreen}
-          options={{ cardStyleInterpolator: fadeInterpolator }}
+          options={{ animation: "fade" }}
         />
       ) : (
         // Main app flow
@@ -93,57 +161,32 @@ export default function RootStack() {
           <Stack.Screen
             name="Main"
             component={RootTabs}
-            options={{ cardStyleInterpolator: fadeInterpolator }}
+            options={{ animation: "fade" }}
           />
           <Stack.Screen
             name="Transactions"
             component={TransactionsScreen}
-            options={{
-              headerShown: true,
-              title: "Transactions",
-              headerStyle,
-              headerTintColor,
-            }}
+            options={{ ...headerOptions, title: "Transactions" }}
           />
           <Stack.Screen
             name="ProfilePreferences"
             component={ProfilePreferences}
-            options={{
-              headerShown: true,
-              title: "Preferences",
-              headerStyle,
-              headerTintColor,
-            }}
+            options={{ ...headerOptions, title: "Preferences" }}
           />
           <Stack.Screen
             name="ProfileBackup"
             component={ProfileBackup}
-            options={{
-              headerShown: true,
-              title: "Backup",
-              headerStyle,
-              headerTintColor,
-            }}
+            options={{ ...headerOptions, title: "Backup" }}
           />
           <Stack.Screen
             name="ProfileLock"
             component={ProfileLock}
-            options={{
-              headerShown: true,
-              title: "Lock Wallet",
-              headerStyle,
-              headerTintColor,
-            }}
+            options={{ ...headerOptions, title: "Lock Wallet" }}
           />
           <Stack.Screen
             name="ProfileReset"
             component={ProfileReset}
-            options={{
-              headerShown: true,
-              title: "Reset Wallet",
-              headerStyle,
-              headerTintColor,
-            }}
+            options={{ ...headerOptions, title: "Reset Wallet" }}
           />
         </>
       )}

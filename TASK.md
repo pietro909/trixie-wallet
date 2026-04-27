@@ -1,5 +1,7 @@
 # Agent Instructions — Expo-only Wallet App (iOS / Android)
 
+> **Status (2026-04-27):** Initial build delivered. Wallet creation, lock/unlock (password + biometrics), theming, navigation (RootStack + RootTabs), and the spec'd screens are in place. Lint and `tsc --noEmit` are clean. Implementation choices that were left open by the spec: **Expo SDK 55** (RN 0.83 / React 19.2), **pnpm** for the package manager (`node-linker=hoisted`), **Biome** for linting, **`@react-navigation/native-stack`** for the stack (with a custom Android header — see [ISSUES.md](./ISSUES.md) item 8). Open follow-ups live in [ISSUES.md](./ISSUES.md); architecture lives in [CLAUDE.md](./CLAUDE.md).
+
 You are a senior React Native engineer. Build a production-quality starter app using **Expo + React Native (TypeScript)**. The app must run on **iOS and Android from day #1** with premium UX: smooth animations, subtle transitions, responsive interactions, and no “stuck” feeling.
 
 Prioritize native mobile readability, UX quality, platform conventions, and performance. Nothing should compromise the mobile experience.
@@ -106,8 +108,8 @@ export default function RootTabs() {
 
 ### Required libraries
 - React Navigation
-  - bottom tabs
-  - stack navigator for sub-screens
+  - bottom tabs (`@react-navigation/bottom-tabs`)
+  - native-stack for sub-screens (`@react-navigation/native-stack`)
 - Animations:
   - `react-native-reanimated`
   - `react-native-gesture-handler`
@@ -184,8 +186,8 @@ type WalletContainer = {
 
 type Wallet = {
   id: string;
-  type: "ark" | "onchain" | "lightning"; // only "ark" now
-  label: string; // "Ark"
+  type: "arkade" | "onchain" | "lightning"; // only "arkade" now
+  label: string; // "Arkade"
   balanceSats: number;
   transactions: Transaction[];
   backup: {
@@ -274,7 +276,7 @@ Create flow:
 ---
 
 ### E) Wallet (Tab)
-- Wallet container is swipeable left/right (future multi-wallet), but starts with 1 wallet (“Ark”)
+- Wallet container is swipeable left/right (future multi-wallet), but starts with 1 wallet (“Arkade”)
 - Big Balance (sats) + fiat equivalent (EUR default)
 - Last 4 transactions preview + “See all” → Transactions screen
 - Send + Receive buttons:

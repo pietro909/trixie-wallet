@@ -47,7 +47,7 @@ export default function LandingNoWallet() {
           Welcome to Trixie
         </Text>
         <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
-          Your self-custodial Ark wallet
+          Your self-custodial Arkade wallet
         </Text>
       </View>
 

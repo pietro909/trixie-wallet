@@ -198,7 +198,7 @@ export default function WalletScreen() {
         ]}
       >
         <Text style={[styles.statsTitle, { color: theme.colors.textMuted }]}>
-          Ark Stats
+          Arkade Stats
         </Text>
         <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
           VTXO Renewals: --
