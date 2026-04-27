@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as LocalAuthentication from "expo-local-authentication";
-import type { AppState, FiatCurrency, ThemePref } from "./types";
+import type { AppState, FiatCurrency, ThemePref, Transaction } from "./types";
 import { generateMockWallet } from "./mock";
 
 const STORAGE_KEY = "app_state_v1";
@@ -41,6 +41,7 @@ type StoreState = AppState & {
   setFiatCurrency: (currency: FiatCurrency) => void;
   setPassword: (password: string) => void;
   toggleBiometrics: (enabled: boolean) => void;
+  appendTransaction: (tx: Transaction, balanceDelta: number) => Promise<void>;
 };
 
 async function persist(state: AppState) {
@@ -146,5 +147,21 @@ export const useAppStore = create<StoreState>((set, get) => ({
       security: { ...s.security, biometricsEnabled: enabled },
     }));
     persist(get());
+  },
+
+  appendTransaction: async (tx, balanceDelta) => {
+    const container = get().walletContainer;
+    if (!container) return;
+    const wallets = container.wallets.map((w) =>
+      w.id === container.activeWalletId
+        ? {
+            ...w,
+            balanceSats: Math.max(0, w.balanceSats + balanceDelta),
+            transactions: [tx, ...w.transactions],
+          }
+        : w,
+    );
+    set({ walletContainer: { ...container, wallets } });
+    await persist(get());
   },
 }));

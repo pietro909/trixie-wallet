@@ -19,7 +19,6 @@ import {
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import { useAppStore } from "../store/useAppStore";
 import { formatSats, satsToFiat } from "../store/mock";
-import WipModal from "../components/WipModal";
 import Button from "../components/Button";
 import type { RootStackParamList } from "../navigation/RootStack";
 import { spacing, typography, radius } from "../theme/theme";
@@ -42,7 +41,6 @@ export default function WalletScreen() {
   const nav = useNavigation<Nav>();
   const walletContainer = useAppStore((s) => s.walletContainer);
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
-  const [wipFeature, setWipFeature] = React.useState<string | null>(null);
   const [refreshing, setRefreshing] = React.useState(false);
 
   const wallet = walletContainer?.wallets.find(
@@ -99,7 +97,7 @@ export default function WalletScreen() {
           variant="primary"
           theme={theme}
           icon={<ArrowUpRight color={theme.colors.onPrimary} size={20} />}
-          onPress={() => setWipFeature("Send")}
+          onPress={() => nav.navigate("SendEntry")}
           style={styles.actionBtn}
         />
         <Button
@@ -107,7 +105,7 @@ export default function WalletScreen() {
           variant="secondary"
           theme={theme}
           icon={<ArrowDownLeft color={theme.colors.text} size={20} />}
-          onPress={() => setWipFeature("Receive")}
+          onPress={() => nav.navigate("ReceiveSelect")}
           style={styles.actionBtn}
         />
       </View>
@@ -211,12 +209,6 @@ export default function WalletScreen() {
         </Text>
       </View>
 
-      <WipModal
-        visible={wipFeature !== null}
-        onClose={() => setWipFeature(null)}
-        feature={wipFeature ?? undefined}
-        theme={theme}
-      />
     </ScrollView>
   );
 }

@@ -361,3 +361,173 @@ Nice-to-have:
 ---
 
 If you also share your `theme/theme` helpers (`makeBottomTabsOptions`, `TabIcon`, `useAppTheme`), we can bake exact integration rules into this task so an agent can’t accidentally break your styling setup.
+
+---
+
+## 10) Follow-up Task: Receive Flow
+
+Build a production-quality receive flow that replaces the current Receive “Work in progress” modal.
+
+### Product direction
+
+Use an explicit payment-type picker before showing a QR code:
+- `Wallet` → `Receive` → payment type picker
+- `Arkade` → show Arkade receive QR code
+- `Bitcoin` → show Bitcoin receive QR code
+- `LNURL` → show LNURL receive QR code
+- `Lightning` → amount input → generate invoice → show Lightning invoice QR code
+
+This adds one tap, but it is less confusing than showing a combined receive screen first. Each QR screen has one clear meaning, and the user always knows which payment rail they are sharing.
+
+### Supported receive types
+
+The supported URLs/addresses are:
+- Arkade
+- Bitcoin
+- Lightning
+- LNURL
+
+Do not add a “Unified” receive option unless it becomes an explicit product requirement later.
+
+### UX requirements
+
+- Tapping `Receive` from the Wallet screen opens the payment-type picker.
+- The picker must show all four supported receive types with clear labels and short helper text.
+- Arkade, Bitcoin, and LNURL can show the QR screen immediately.
+- Lightning requires an amount before an invoice is generated.
+- The amount input is optional for non-Lightning receive types.
+- If the user enters an amount for non-Lightning receive types, include that amount in the generated receive payload only if the target format supports it.
+- The QR screen must show:
+  - Back navigation
+  - Screen title matching the selected payment type
+  - Large scannable QR code
+  - Optional amount/minimum note when relevant
+  - Copy action for the selected payload
+  - Share action for the selected payload
+  - A list of all available receive payloads with individual copy buttons
+- The list of receive payloads should include Lightning only after an amount-backed invoice exists.
+- Copy actions must actually write to the native clipboard, not just show a toast.
+- Share should use the native platform share sheet.
+- All async work must show loading feedback and error feedback.
+
+### Implementation notes
+
+- Keep navigation inside the existing `RootStack`.
+- Add dedicated receive routes instead of overloading the Wallet screen.
+- Use `lucide-react-native` for icons only.
+- Use `expo-clipboard` for copy behavior.
+- Use React Native `Share` for sharing unless there is a strong reason to add another dependency.
+- Use a QR code library that works reliably in Expo on iOS and Android.
+- Keep generated receive data in memory unless there is a clear reason to persist it.
+- Mock receive payload generation is acceptable for the first pass, but isolate it behind a small helper/service so the real Arkade SDK integration can replace it later.
+
+### Acceptance criteria
+
+- `Receive` no longer opens the WIP modal.
+- User can choose Arkade, Bitcoin, Lightning, or LNURL before seeing a QR code.
+- Arkade, Bitcoin, and LNURL flows show a QR code without requiring an amount.
+- Lightning flow requires an amount, generates an invoice only after amount submission, then shows a QR code.
+- QR payload can be copied and shared.
+- Each listed payload has its own copy button.
+- Missing/failed payload generation shows a user-visible error.
+- The flow works on iOS and Android with no web-specific code paths.
+
+---
+
+## 11) Follow-up Task: Send Flow
+
+Build a production-quality send flow that replaces the current Send “Work in progress” modal.
+
+### Product direction
+
+Use scan/paste as the first step, then show the payment options recognized from the scanned QR code or pasted string:
+- `Wallet` → `Send` → scan QR code or paste payment string
+- Parse the input
+- Show recognized payable options
+- User selects Arkade, Bitcoin, Lightning, or LNURL when more than one option is available
+- Continue to amount/review/confirmation based on the selected payment type
+
+This keeps the first interaction fast while avoiding hidden routing decisions. A BIP-21 QR can encode more than one way to pay, so the app should surface those recognized options instead of silently choosing one.
+
+### Supported input types
+
+The parser must recognize:
+- BIP-21 Bitcoin URIs, including query parameters that encode additional payment options
+- Arkade payment URLs/addresses
+- Bitcoin on-chain addresses and `bitcoin:` URIs
+- Lightning invoices
+- LNURL pay/request URLs
+
+For BIP-21, parse the base on-chain payment target and all supported embedded alternatives. If a QR or pasted string contains both Bitcoin and Arkade/Lightning/LNURL options, show them as separate selectable payment methods.
+
+### UX requirements
+
+- Tapping `Send` from the Wallet screen opens the send entry screen.
+- The send entry screen must offer:
+  - QR scanning
+  - Paste/input field
+  - Clear/reset action
+  - Loading and error states
+- QR scanning should parse immediately after a successful scan.
+- Paste/input should parse after submit, not on every keystroke.
+- After parsing, show a list of recognized payment options.
+- Each recognized option should show:
+  - Payment type
+  - Destination preview
+  - Amount, if the payload includes one
+  - Description/memo, if available
+  - Warning state if the option is recognized but cannot currently be paid
+- If exactly one payable option is recognized, the app may continue automatically only if there is no ambiguity. Prefer showing the option with a clear continue action for the first implementation.
+- If no supported option is recognized, show a clear error and keep the original input editable.
+- If an amount is included in the payload, prefill it and make clear whether it is fixed or editable.
+- If no amount is included, request an amount before review for payment types that require one.
+- Always show a review screen before sending.
+- The review screen must show:
+  - Payment type
+  - Destination preview
+  - Amount in sats
+  - Fee estimate placeholder
+  - Total placeholder
+  - Optional memo/description
+  - Confirm button with loading state
+- The confirm action can be mocked in the first pass, but it must produce success/failure feedback and a transaction-like result.
+
+### Implementation notes
+
+- Keep navigation inside the existing `RootStack`.
+- Add dedicated send routes instead of overloading the Wallet screen.
+- Use `lucide-react-native` for icons only.
+- Use Expo-compatible QR scanning APIs. Prefer the Expo camera/barcode scanner path that is current for the installed Expo SDK.
+- Use `expo-clipboard` for paste-from-clipboard convenience if needed, but also support manual text entry.
+- Isolate parsing into a small helper/service, for example `app/services/paymentParser.ts`.
+- The parser should return a normalized structure such as:
+
+```ts
+type ParsedPaymentOption = {
+  id: string;
+  type: "arkade" | "bitcoin" | "lightning" | "lnurl";
+  raw: string;
+  destination: string;
+  amountSats?: number;
+  memo?: string;
+  isPayable: boolean;
+  warning?: string;
+};
+```
+
+- Keep send execution behind a separate helper/service so real Arkade SDK and Bitcoin/Lightning integrations can replace the mock behavior later.
+- Do not silently discard unknown BIP-21 parameters; keep them available in parser metadata for future integrations.
+- Never log full payment payloads in production paths.
+
+### Acceptance criteria
+
+- `Send` no longer opens the WIP modal.
+- User can scan a QR code or paste/type a payment string.
+- BIP-21 inputs are parsed into all recognized supported payment options.
+- Multiple recognized options are shown as a selectable list.
+- Arkade, Bitcoin, Lightning, and LNURL options are labeled clearly.
+- Amounts and memos from the payload are preserved and displayed.
+- Unsupported or malformed inputs show a user-visible error.
+- User sees a review screen before confirming.
+- Confirm send has loading, success, and failure feedback.
+- The flow works on iOS and Android with no web-specific code paths.

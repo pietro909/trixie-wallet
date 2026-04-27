@@ -8,6 +8,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AlertTriangle, Copy, Eye, EyeOff } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
+import * as Clipboard from "expo-clipboard";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import { useAppStore } from "../store/useAppStore";
 import { useToast } from "../components/ToastProvider";
@@ -29,8 +30,9 @@ export default function ProfileBackup() {
   const privateKeyNsec = wallet?.backup.privateKeyNsec ?? "";
   const mnemonic = wallet?.backup.mnemonic;
 
-  async function handleCopy(_text: string, label: string) {
+  async function handleCopy(text: string, label: string) {
     try {
+      await Clipboard.setStringAsync(text);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       showToast(`${label} copied`, "success");
     } catch {

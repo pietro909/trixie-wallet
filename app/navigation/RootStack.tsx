@@ -21,6 +21,19 @@ import ProfilePreferences from "../screens/ProfilePreferences";
 import ProfileBackup from "../screens/ProfileBackup";
 import ProfileLock from "../screens/ProfileLock";
 import ProfileReset from "../screens/ProfileReset";
+import ReceiveSelectScreen from "../screens/receive/ReceiveSelectScreen";
+import ReceiveLightningAmountScreen from "../screens/receive/ReceiveLightningAmountScreen";
+import ReceiveQRScreen from "../screens/receive/ReceiveQRScreen";
+import SendEntryScreen from "../screens/send/SendEntryScreen";
+import SendOptionsScreen from "../screens/send/SendOptionsScreen";
+import SendAmountScreen from "../screens/send/SendAmountScreen";
+import SendReviewScreen from "../screens/send/SendReviewScreen";
+import SendResultScreen from "../screens/send/SendResultScreen";
+import type { ReceiveType } from "../services/receive";
+import type {
+  ParsedPaymentOption,
+  PaymentType,
+} from "../services/paymentParser";
 
 export type RootStackParamList = {
   Landing: undefined;
@@ -33,6 +46,22 @@ export type RootStackParamList = {
   ProfileBackup: undefined;
   ProfileLock: undefined;
   ProfileReset: undefined;
+  ReceiveSelect: undefined;
+  ReceiveLightningAmount: undefined;
+  ReceiveQR: { type: ReceiveType; amountSats?: number };
+  SendEntry: undefined;
+  SendOptions: { rawInput: string };
+  SendAmount: { option: ParsedPaymentOption };
+  SendReview: { option: ParsedPaymentOption; amountSats: number };
+  SendResult: {
+    status: "success" | "error";
+    paymentType: PaymentType;
+    destination: string;
+    amountSats?: number;
+    feeSats?: number;
+    txId?: string;
+    message?: string;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -125,7 +154,6 @@ export default function RootStack() {
           headerShadowVisible: false,
         };
 
-  console.log("RootStack: walletContainer", walletContainer);
   return (
     <Stack.Navigator
       screenOptions={{
@@ -187,6 +215,51 @@ export default function RootStack() {
             name="ProfileReset"
             component={ProfileReset}
             options={{ ...headerOptions, title: "Reset Wallet" }}
+          />
+          <Stack.Screen
+            name="ReceiveSelect"
+            component={ReceiveSelectScreen}
+            options={{ ...headerOptions, title: "Receive" }}
+          />
+          <Stack.Screen
+            name="ReceiveLightningAmount"
+            component={ReceiveLightningAmountScreen}
+            options={{ ...headerOptions, title: "Lightning amount" }}
+          />
+          <Stack.Screen
+            name="ReceiveQR"
+            component={ReceiveQRScreen}
+            options={{ ...headerOptions, title: "Receive" }}
+          />
+          <Stack.Screen
+            name="SendEntry"
+            component={SendEntryScreen}
+            options={{ ...headerOptions, title: "Send" }}
+          />
+          <Stack.Screen
+            name="SendOptions"
+            component={SendOptionsScreen}
+            options={{ ...headerOptions, title: "Choose payment" }}
+          />
+          <Stack.Screen
+            name="SendAmount"
+            component={SendAmountScreen}
+            options={{ ...headerOptions, title: "Amount" }}
+          />
+          <Stack.Screen
+            name="SendReview"
+            component={SendReviewScreen}
+            options={{ ...headerOptions, title: "Review" }}
+          />
+          <Stack.Screen
+            name="SendResult"
+            component={SendResultScreen}
+            options={{
+              ...headerOptions,
+              title: "",
+              headerBackVisible: false,
+              gestureEnabled: false,
+            }}
           />
         </>
       )}

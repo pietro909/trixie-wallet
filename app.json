@@ -34,6 +34,12 @@
           }
         }
       ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Trixie to use the camera to scan payment QR codes."
+        }
+      ],
       "expo-background-task",
       "expo-font",
       "expo-image",

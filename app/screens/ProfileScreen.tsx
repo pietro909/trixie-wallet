@@ -17,10 +17,16 @@ import { spacing, typography, radius } from "../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Main">;
 
+type MenuRoute =
+  | "ProfilePreferences"
+  | "ProfileBackup"
+  | "ProfileLock"
+  | "ProfileReset";
+
 type MenuItem = {
   label: string;
   icon: React.ComponentType<{ color?: string; size?: number }>;
-  route: keyof RootStackParamList;
+  route: MenuRoute;
   danger?: boolean;
 };
 
