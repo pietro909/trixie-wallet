@@ -1,7 +1,6 @@
 import * as React from "react";
 import {
   Animated,
-  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -57,8 +56,9 @@ export default function UnlockScreen() {
     }
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only auto-trigger on mount
   React.useEffect(() => {
-    if (biometricsEnabled && Platform.OS !== "web") {
+    if (biometricsEnabled) {
       const timer = setTimeout(() => {
         unlockWithBiometrics().then((ok) => {
           if (!ok) {
@@ -69,8 +69,6 @@ export default function UnlockScreen() {
       }, 500);
       return () => clearTimeout(timer);
     }
-    // Only auto-trigger on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -124,7 +122,7 @@ export default function UnlockScreen() {
           style={styles.unlockBtn}
         />
 
-        {biometricsEnabled && Platform.OS !== "web" && (
+        {biometricsEnabled && (
           <Button
             label="Use Biometrics"
             variant="secondary"

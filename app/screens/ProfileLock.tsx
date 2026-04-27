@@ -1,6 +1,5 @@
 import * as React from "react";
 import {
-  Platform,
   StyleSheet,
   Switch,
   Text,
@@ -132,21 +131,19 @@ export default function ProfileLock() {
           </Text>
         ) : null}
 
-        {Platform.OS !== "web" && (
-          <View style={styles.bioRow}>
-            <Text style={[styles.bioLabel, { color: theme.colors.text }]}>
-              Enable Biometrics
-            </Text>
-            <Switch
-              value={biometrics}
-              onValueChange={setBiometrics}
-              trackColor={{
-                false: theme.colors.border,
-                true: theme.colors.primary,
-              }}
-            />
-          </View>
-        )}
+        <View style={styles.bioRow}>
+          <Text style={[styles.bioLabel, { color: theme.colors.text }]}>
+            Enable Biometrics
+          </Text>
+          <Switch
+            value={biometrics}
+            onValueChange={setBiometrics}
+            trackColor={{
+              false: theme.colors.border,
+              true: theme.colors.primary,
+            }}
+          />
+        </View>
 
         <Button
           label="Set Password & Lock"

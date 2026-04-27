@@ -1,5 +1,9 @@
-import * as React from "react";
-import { createNativeStackNavigator } from "@react-navigation/native-stack";
+
+import {
+  createStackNavigator,
+  type StackCardStyleInterpolator,
+  CardStyleInterpolators,
+} from "@react-navigation/stack";
 import { useAppStore } from "../store/useAppStore";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 
@@ -27,7 +31,11 @@ export type RootStackParamList = {
   ProfileReset: undefined;
 };
 
-const Stack = createNativeStackNavigator<RootStackParamList>();
+const Stack = createStackNavigator<RootStackParamList>();
+
+const fadeInterpolator: StackCardStyleInterpolator = ({ current }) => ({
+  cardStyle: { opacity: current.progress },
+});
 
 export default function RootStack() {
   const theme = useResolvedTheme();
@@ -36,36 +44,57 @@ export default function RootStack() {
 
   const headerStyle = {
     backgroundColor: theme.colors.background,
+    elevation: 0,
+    shadowOpacity: 0,
+    borderBottomWidth: 0,
   };
   const headerTintColor = theme.colors.text;
 
+  console.log("RootStack: walletContainer", walletContainer);
   return (
     <Stack.Navigator
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: theme.colors.background },
-        animation: "fade",
+        cardStyle: { backgroundColor: theme.colors.background },
+        cardStyleInterpolator: CardStyleInterpolators.forHorizontalIOS,
+        gestureEnabled: true,
       }}
     >
       {!walletContainer ? (
         // No wallet flow
         <>
-          <Stack.Screen name="Landing" component={LandingNoWallet} />
+          <Stack.Screen
+            name="Landing"
+            component={LandingNoWallet}
+            options={{ cardStyleInterpolator: fadeInterpolator }}
+          />
           <Stack.Screen name="IntroCarousel" component={IntroCarousel} />
-          <Stack.Screen name="RestoreWallet" component={RestoreWallet} options={{
-            headerShown: true,
-            title: "Restore Wallet",
-            headerStyle,
-            headerTintColor,
-          }} />
+          <Stack.Screen
+            name="RestoreWallet"
+            component={RestoreWallet}
+            options={{
+              headerShown: true,
+              title: "Restore Wallet",
+              headerStyle,
+              headerTintColor,
+            }}
+          />
         </>
       ) : security.isLocked ? (
         // Locked flow
-        <Stack.Screen name="Unlock" component={UnlockScreen} />
+        <Stack.Screen
+          name="Unlock"
+          component={UnlockScreen}
+          options={{ cardStyleInterpolator: fadeInterpolator }}
+        />
       ) : (
         // Main app flow
         <>
-          <Stack.Screen name="Main" component={RootTabs} />
+          <Stack.Screen
+            name="Main"
+            component={RootTabs}
+            options={{ cardStyleInterpolator: fadeInterpolator }}
+          />
           <Stack.Screen
             name="Transactions"
             component={TransactionsScreen}

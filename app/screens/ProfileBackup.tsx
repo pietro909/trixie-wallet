@@ -1,6 +1,5 @@
 import * as React from "react";
 import {
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -30,11 +29,8 @@ export default function ProfileBackup() {
   const privateKeyNsec = wallet?.backup.privateKeyNsec ?? "";
   const mnemonic = wallet?.backup.mnemonic;
 
-  async function handleCopy(text: string, label: string) {
+  async function handleCopy(_text: string, label: string) {
     try {
-      if (Platform.OS === "web") {
-        await navigator.clipboard.writeText(text);
-      }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       showToast(`${label} copied`, "success");
     } catch {
@@ -49,7 +45,7 @@ export default function ProfileBackup() {
     >
       {/* Warning */}
       <View
-        style={[styles.warning, { backgroundColor: theme.colors.danger + "15" }]}
+        style={[styles.warning, { backgroundColor: `${theme.colors.danger}15` }]}
       >
         <AlertTriangle color={theme.colors.danger} size={20} />
         <Text style={[styles.warningText, { color: theme.colors.danger }]}>

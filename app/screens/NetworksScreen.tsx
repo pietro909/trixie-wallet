@@ -1,4 +1,4 @@
-import * as React from "react";
+
 import { StyleSheet, Text, View } from "react-native";
 import { Network } from "lucide-react-native";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";

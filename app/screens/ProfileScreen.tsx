@@ -1,4 +1,4 @@
-import * as React from "react";
+import type * as React from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -37,7 +37,7 @@ export default function ProfileScreen() {
   const walletContainer = useAppStore((s) => s.walletContainer);
 
   const walletId = walletContainer?.activeWalletId ?? "";
-  const shortId = walletId.slice(0, 8) + "..." + walletId.slice(-4);
+  const shortId = `${walletId.slice(0, 8)}...${walletId.slice(-4)}`;
 
   return (
     <ScrollView

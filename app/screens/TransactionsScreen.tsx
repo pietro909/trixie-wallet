@@ -49,8 +49,8 @@ export default function TransactionsScreen() {
             {
               backgroundColor:
                 tx.direction === "in"
-                  ? theme.colors.success + "20"
-                  : theme.colors.danger + "20",
+                  ? `${theme.colors.success}20`
+                  : `${theme.colors.danger}20`,
             },
           ]}
         >

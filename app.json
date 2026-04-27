@@ -21,14 +21,7 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
-    "web": {
-      "output": "static",
-      "favicon": "./assets/images/favicon.png",
-      "themeColor": "#ff007f",
-      "backgroundColor": "#0a0f1a"
-    },
     "plugins": [
-      "expo-router",
       [
         "expo-splash-screen",
         {
@@ -41,10 +34,13 @@
           }
         }
       ],
-      "expo-background-task"
+      "expo-background-task",
+      "expo-font",
+      "expo-image",
+      "expo-router",
+      "expo-web-browser"
     ],
     "experiments": {
-      "typedRoutes": true,
       "reactCompiler": true
     }
   }

@@ -89,9 +89,9 @@ export default function IntroCarousel() {
 
       <View style={styles.footer}>
         <View style={styles.dots}>
-          {STEPS.map((_, i) => (
+          {STEPS.map((step, i) => (
             <View
-              key={i}
+              key={step.title}
               style={[
                 styles.dot,
                 {

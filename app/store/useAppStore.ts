@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as LocalAuthentication from "expo-local-authentication";
-import { Platform } from "react-native";
 import type { AppState, FiatCurrency, ThemePref } from "./types";
 import { generateMockWallet } from "./mock";
 
@@ -99,7 +98,6 @@ export const useAppStore = create<StoreState>((set, get) => ({
   },
 
   unlockWithBiometrics: async () => {
-    if (Platform.OS === "web") return false;
     try {
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: "Unlock Trixie Wallet",

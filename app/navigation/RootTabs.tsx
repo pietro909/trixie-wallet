@@ -1,4 +1,4 @@
-import * as React from "react";
+
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Network, WalletMinimal, CircleUserRound } from "lucide-react-native";
@@ -28,11 +28,12 @@ export default function RootTabs() {
         const base = makeBottomTabsOptions(theme, {
           bottomInset: Math.max(0, insets.bottom - 6),
           blur: true,
-          // animation: "fade", // enable after you confirm it's stable in your setup
+          animation: "fade",
         });
 
         return {
           ...base,
+          sceneStyle: { paddingTop: insets.top },
           tabBarIcon: ({ focused, color, size }) => {
             const Icon =
               route.name === "Networks"

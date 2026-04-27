@@ -1,6 +1,8 @@
-# Agent Instructions — Expo-only Wallet App (iOS / Android / Web + Easy PWA)
+# Agent Instructions — Expo-only Wallet App (iOS / Android)
 
-You are a senior React Native engineer. Build a production-quality starter app using **Expo + React Native (TypeScript)**. The app must run on **iOS, Android, and Web from day 1** with premium UX (smooth animations, subtle transitions, and never feeling stuck).
+You are a senior React Native engineer. Build a production-quality starter app using **Expo + React Native (TypeScript)**. The app must run on **iOS and Android from day #1** with premium UX: smooth animations, subtle transitions, responsive interactions, and no “stuck” feeling.
+
+Prioritize native mobile readability, UX quality, platform conventions, and performance. Nothing should compromise the mobile experience.
 
 > **Non-negotiable additions**
 > - Icons are **strictly** `lucide-react-native`.
@@ -42,7 +44,7 @@ export default function RootTabs() {
         const base = makeBottomTabsOptions(theme, {
           bottomInset: Math.max(0, insets.bottom - 6),
           blur: true,
-          // animation: "fade", // enable after you confirm it's stable in your setup
+          animation: "fade", // enable after you confirm it's stable in your setup
         });
 
         return {
@@ -87,22 +89,24 @@ export default function RootTabs() {
 
 ## 1) Hard Constraints
 
-- **Expo-only** (no Electron, no native desktop targets).
+- **Expo-only** React Native app.
 - Must work from day one on:
   - **iOS**
   - **Android**
-  - **Web**
 - User is **never logged in**.
 - Wallet lives only in **local AsyncStorage**, as **JSON**.
 - App must **always show activity indicators**: no dead air, no “stuck” feeling.
+- Sensitive data including passwords, private keys, seeds, and similar secrets must always be encrypted at rest.
+- Avoid long-lived in-memory exposure of sensitive data. Only decrypt/use secrets for the minimum time required by a specific action.
+- Prioritize native mobile UX, performance, gestures, animations, haptics, and platform conventions.
 
 ---
 
 ## 2) Tech Stack
 
 ### Required libraries
-- React Navigation (already in use)
-  - bottom tabs (already)
+- React Navigation
+  - bottom tabs
   - stack navigator for sub-screens
 - Animations:
   - `react-native-reanimated`
@@ -111,7 +115,8 @@ export default function RootTabs() {
 - Persistence:
   - `@react-native-async-storage/async-storage`
 - Biometrics:
-  - `expo-local-authentication` (graceful web fallback)
+  - `expo-local-authentication`
+  - Must gracefully handle unavailable or unenrolled biometrics on iOS/Android
 - Haptics:
   - `expo-haptics`
 - Icons:
@@ -121,7 +126,7 @@ export default function RootTabs() {
 - State:
   - `zustand` store with typed selectors/actions
 - Optional:
-  - toast/snackbar solution (or implement minimal custom)
+  - toast/snackbar solution, or implement a minimal custom one if needed
 
 ---
 
@@ -263,7 +268,7 @@ Create flow:
 
 ### D) Unlock
 - Password unlock if `passwordHash` exists
-- Biometrics if enabled (best-effort, web-safe)
+- Biometrics if enabled (best-effort)
 - Failure → shake + inline error; never block UI
 
 ---
@@ -308,22 +313,7 @@ List items:
 
 ---
 
-## 7) PWA (Installable = low effort; Offline later)
-
-Goal: **installable** PWA on Chromium desktop (Linux included) with minimal work.
-
-### Phase 1 (must ship now): Installability
-- Add `manifest.json`
-- Provide icons **192×192** + **512×512**
-- Ensure manifest is linked in web entry so “Install app” works
-
-### Phase 2 (optional later): Offline
-- Add service worker/workbox only when ready
-- Avoid stale-cache bugs; define update strategy explicitly
-
----
-
-## 8) State Management
+## 7) State Management
 
 Implement a typed `zustand` store with actions:
 - `hydrate()`
@@ -344,10 +334,10 @@ Also implement:
 
 ---
 
-## 9) Acceptance Criteria
+## 8) Acceptance Criteria
 
 Must-have:
-- App runs on iOS/Android/Web day one
+- App runs on iOS/Android day one
 - Your `RootTabs.tsx` baseline is preserved and used
 - Wallet creation persists to AsyncStorage and survives reload
 - App never feels stuck; all async has feedback
@@ -360,12 +350,11 @@ Nice-to-have:
 
 ---
 
-## 10) Output Requirements (What to Deliver)
+## 9) Output Requirements (What to Deliver)
 
 1) File tree (screens, navigation, theme, store, components)
 2) Key files: store + persistence, `RootStack`, `RootTabs`, theme system, loading overlay
-3) Run instructions for iOS / Android / Web
-4) PWA installability assets wired in (manifest + icons + linking)
+3) Run instructions for iOS / Android
 
 ---
 

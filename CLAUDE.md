@@ -5,15 +5,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Development Commands
 
 ```bash
-npx expo start          # Start dev server (press i for iOS, a for Android, w for web)
-npx expo lint           # Run ESLint (flat config with eslint-config-expo)
+npx expo start          # Start dev server (press i for iOS, a for Android)
+pnpm lint               # Run Biome (lint + format check; configured via biome.json)
+pnpm lint:fix           # Apply safe Biome fixes
+pnpm format             # Format with Biome
 ```
 
 No test framework is currently configured.
 
 ## Architecture
 
-**Expo SDK 54 + React Native 0.81 + React 19** cross-platform app (iOS, Android, Web) using Expo Router v6 for the root layout, with React Navigation for all screen navigation.
+**Expo SDK 54 + React Native 0.81 + React 19** native app (iOS, Android) using Expo Router v6 for the root layout, with React Navigation for all screen navigation.
 
 ### Navigation
 
@@ -52,11 +54,7 @@ Custom theme in `app/theme/theme.tsx`. Brand color: `#ff007f`.
 
 ### Platform-specific files
 
-Expo's file suffix convention is available for platform overrides (`.ios.tsx`, `.web.ts`). Reference examples are in `app-example/`; the main `app/` directory does not currently use platform-specific files.
-
-### PWA
-
-Installable PWA via `public/manifest.json` with icons in `public/icons/` (192x192, 512x512).
+Expo's file suffix convention is available for platform overrides (`.ios.tsx`, `.android.tsx`). The main `app/` directory does not currently use platform-specific files.
 
 ### Key dependencies
 
@@ -66,7 +64,7 @@ Installable PWA via `public/manifest.json` with icons in `public/icons/` (192x19
 - `react-native-gesture-handler` — gesture recognition
 - `expo-image` — optimized image component (use instead of RN `<Image>`)
 - `expo-haptics` — haptic feedback
-- `expo-local-authentication` — biometrics (graceful web fallback)
+- `expo-local-authentication` — biometrics
 - `expo-blur` — blur effects (used in Tab Bar)
 - `lucide-react-native` — icons (only icon library allowed)
 - `@react-navigation/native-stack` — stack navigation

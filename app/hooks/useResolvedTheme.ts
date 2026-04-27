@@ -5,7 +5,11 @@ import { useAppStore } from "../store/useAppStore";
 export function useResolvedTheme(): AppTheme {
   const themePref = useAppStore((s) => s.preferences.theme);
   const systemScheme = useColorScheme();
-  const resolved =
-    themePref === "system" ? (systemScheme ?? "light") : themePref;
+  const resolved: "light" | "dark" =
+    themePref !== "system"
+      ? themePref
+      : systemScheme === "dark"
+      ? "dark"
+      : "light";
   return themes[resolved];
 }

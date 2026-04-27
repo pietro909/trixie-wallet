@@ -304,6 +304,7 @@ export function TabIcon(props: {
  */
 export function AnimatedTabBarButton({
   theme,
+  style,
   ...props
 }: BottomTabBarButtonProps & { theme: AppTheme }) {
   const scale = React.useRef(new Animated.Value(1)).current;
@@ -333,7 +334,7 @@ export function AnimatedTabBarButton({
   return (
     <Animated.View style={{ transform: [{ scale }], opacity }}>
       <Pressable
-        {...props}
+        {...(props as PressableProps)}
         onPressIn={onPressIn}
         onPressOut={onPressOut}
         android_ripple={
@@ -341,13 +342,7 @@ export function AnimatedTabBarButton({
             ? { color: theme.colors.primarySoft, borderless: false }
             : undefined
         }
-        style={(state) => {
-          const base =
-            typeof props.style === "function"
-              ? props.style(state)
-              : (props.style as any);
-          return [base, styles.tabButton];
-        }}
+        style={() => [style, styles.tabButton]}
       />
     </Animated.View>
   );
