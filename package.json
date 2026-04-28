@@ -13,8 +13,8 @@
     "check": "biome check"
   },
   "dependencies": {
-    "@arkade-os/boltz-swap": "^0.3.21",
-    "@arkade-os/sdk": "^0.4.20",
+    "@arkade-os/boltz-swap": "^0.3.22",
+    "@arkade-os/sdk": "^0.4.21",
     "@expo-google-fonts/inter": "^0.4.2",
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "^2.2.0",
@@ -44,7 +44,7 @@
     "expo-task-manager": "~55.0.15",
     "expo-web-browser": "~55.0.14",
     "lucide-react-native": "^1.11.0",
-    "react": "19.2.0",
+    "react": "19.2.5",
     "react-native": "0.83.6",
     "react-native-gesture-handler": "~2.30.1",
     "react-native-qrcode-svg": "^6.3.21",

@@ -1,10 +1,9 @@
-
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
+import type { BitcoinUnit, FiatCurrency, ThemePref } from "../store/types";
 import { useAppStore } from "../store/useAppStore";
-import type { FiatCurrency, ThemePref } from "../store/types";
-import { spacing, typography, radius } from "../theme/theme";
+import { radius, spacing, typography } from "../theme/theme";
 
 const THEME_OPTIONS: { label: string; value: ThemePref }[] = [
   { label: "System", value: "system" },
@@ -18,12 +17,20 @@ const CURRENCY_OPTIONS: { label: string; value: FiatCurrency }[] = [
   { label: "GBP", value: "GBP" },
 ];
 
+const BITCOIN_UNIT_OPTIONS: { label: string; value: BitcoinUnit }[] = [
+  { label: "Satoshi (SAT)", value: "sats" },
+  { label: "Bitcoin (₿)", value: "btc" },
+  { label: "Automatic", value: "auto" },
+];
+
 export default function ProfilePreferences() {
   const theme = useResolvedTheme();
   const currentTheme = useAppStore((s) => s.preferences.theme);
   const currentCurrency = useAppStore((s) => s.preferences.fiatCurrency);
+  const currentBitcoinUnit = useAppStore((s) => s.preferences.bitcoinUnit);
   const setThemePref = useAppStore((s) => s.setTheme);
   const setFiatCurrency = useAppStore((s) => s.setFiatCurrency);
+  const setBitcoinUnit = useAppStore((s) => s.setBitcoinUnit);
 
   return (
     <SafeAreaView
@@ -104,6 +111,49 @@ export default function ProfilePreferences() {
                         : theme.colors.text,
                     fontWeight:
                       currentCurrency === opt.value
+                        ? typography.weight.semibold
+                        : typography.weight.regular,
+                  },
+                ]}
+              >
+                {opt.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
+          Bitcoin Unit
+        </Text>
+        <View
+          style={[
+            styles.optionGroup,
+            { backgroundColor: theme.colors.card, ...theme.shadow("card") },
+          ]}
+        >
+          {BITCOIN_UNIT_OPTIONS.map((opt) => (
+            <Pressable
+              key={opt.value}
+              onPress={() => setBitcoinUnit(opt.value)}
+              style={[
+                styles.option,
+                currentBitcoinUnit === opt.value && {
+                  backgroundColor: theme.colors.primarySoft,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.optionLabel,
+                  {
+                    color:
+                      currentBitcoinUnit === opt.value
+                        ? theme.colors.primary
+                        : theme.colors.text,
+                    fontWeight:
+                      currentBitcoinUnit === opt.value
                         ? typography.weight.semibold
                         : typography.weight.regular,
                   },

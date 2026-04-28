@@ -1,3 +1,19 @@
+import {
+  type RouteProp,
+  useNavigation,
+  useRoute,
+} from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import * as Haptics from "expo-haptics";
+import {
+  AlertCircle,
+  AlertTriangle,
+  Bitcoin,
+  ChevronRight,
+  Globe,
+  Layers,
+  Zap,
+} from "lucide-react-native";
 import * as React from "react";
 import {
   Animated,
@@ -8,34 +24,26 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
-import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import {
-  AlertCircle,
-  AlertTriangle,
-  Bitcoin,
-  ChevronRight,
-  Globe,
-  Layers,
-  Zap,
-} from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import { useFormatSats } from "../../hooks/useFormatSats";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
-import { useAppStore } from "../../store/useAppStore";
-import { satsToFiat, formatSats } from "../../store/mock";
+import type { RootStackParamList } from "../../navigation/RootStack";
 import {
-  parsePaymentInput,
-  paymentTypeLabel,
   type ParsedPaymentOption,
   type PaymentType,
+  parsePaymentInput,
+  paymentTypeLabel,
 } from "../../services/paymentParser";
-import type { RootStackParamList } from "../../navigation/RootStack";
+import { satsToFiat } from "../../store/mock";
+import { useAppStore } from "../../store/useAppStore";
 import { motion, radius, spacing, typography } from "../../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "SendOptions">;
 type Route = RouteProp<RootStackParamList, "SendOptions">;
 
-const ICONS: Record<PaymentType, React.ComponentType<{ color?: string; size?: number }>> = {
+const ICONS: Record<
+  PaymentType,
+  React.ComponentType<{ color?: string; size?: number }>
+> = {
   arkade: Layers,
   bitcoin: Bitcoin,
   lightning: Zap,
@@ -52,6 +60,7 @@ function OptionRow({
   onPress: () => void;
 }) {
   const theme = useResolvedTheme();
+  const { format: formatSats, label: unitLabel } = useFormatSats();
   const scale = React.useRef(new Animated.Value(1)).current;
   const Icon = ICONS[option.type];
   const disabled = !option.isPayable;
@@ -113,7 +122,7 @@ function OptionRow({
           </Text>
           {option.amountSats ? (
             <Text style={[styles.meta, { color: theme.colors.textSubtle }]}>
-              {formatSats(option.amountSats)} sats ·{" "}
+              {formatSats(option.amountSats)} {unitLabel} ·{" "}
               {satsToFiat(option.amountSats, fiatCurrency)}
             </Text>
           ) : null}

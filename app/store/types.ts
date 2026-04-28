@@ -1,5 +1,6 @@
 export type ThemePref = "system" | "light" | "dark";
 export type FiatCurrency = "EUR" | "USD" | "GBP";
+export type BitcoinUnit = "sats" | "btc" | "auto";
 
 export type Transaction = {
   id: string;
@@ -35,6 +36,11 @@ export type ArkadeWalletMetadata = {
 
 export type ServerStatus = "idle" | "connecting" | "online" | "offline";
 
+export type WalletBehavior = {
+  vtxoAutoRenewal: boolean;
+  delegatedRenewal: boolean;
+};
+
 export type ArkadeServerInfo = {
   network: string;
   version: string;
@@ -55,9 +61,11 @@ export type AppState = {
     lastError: string | null;
     serverInfo: ArkadeServerInfo | null;
   };
+  walletBehavior: WalletBehavior;
   preferences: {
     theme: ThemePref;
     fiatCurrency: FiatCurrency;
+    bitcoinUnit: BitcoinUnit;
   };
   security: {
     isLocked: boolean;

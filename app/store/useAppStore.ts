@@ -30,8 +30,10 @@ import { deleteSecret, saveSecret } from "../services/arkade/secret-store";
 import type {
   AppState,
   ArkadeWalletMetadata,
+  BitcoinUnit,
   FiatCurrency,
   ThemePref,
+  WalletBehavior,
 } from "./types";
 
 const STORAGE_KEY = "app_state_v2";
@@ -52,6 +54,21 @@ function newWalletId(): string {
   return bytesToHex(bytes);
 }
 
+const DEFAULT_WALLET_BEHAVIOR: WalletBehavior = {
+  vtxoAutoRenewal: false,
+  delegatedRenewal: false,
+};
+
+function normalizeWalletBehavior(
+  behavior: Partial<WalletBehavior> | null | undefined,
+): WalletBehavior {
+  const delegatedRenewal = behavior?.delegatedRenewal === true;
+  return {
+    vtxoAutoRenewal: behavior?.vtxoAutoRenewal === true || delegatedRenewal,
+    delegatedRenewal,
+  };
+}
+
 const DEFAULT_STATE: AppState = {
   schemaVersion: 2,
   wallet: null,
@@ -62,9 +79,11 @@ const DEFAULT_STATE: AppState = {
     lastError: null,
     serverInfo: null,
   },
+  walletBehavior: DEFAULT_WALLET_BEHAVIOR,
   preferences: {
     theme: "system",
     fiatCurrency: "EUR",
+    bitcoinUnit: "auto",
   },
   security: {
     isLocked: false,
@@ -87,12 +106,14 @@ type StoreState = AppState & {
   restoreWallet: (input: RestoreInput) => Promise<void>;
   refreshWallet: () => Promise<void>;
   sendArkade: (address: string, amountSats: number) => Promise<string>;
+  setWalletBehavior: (behavior: Partial<WalletBehavior>) => Promise<void>;
   lockWallet: () => Promise<void>;
   unlockWithPassword: (password: string) => Promise<boolean>;
   unlockWithBiometrics: () => Promise<boolean>;
   resetWallet: () => Promise<void>;
   setTheme: (theme: ThemePref) => void;
   setFiatCurrency: (currency: FiatCurrency) => void;
+  setBitcoinUnit: (unit: BitcoinUnit) => void;
   setPassword: (password: string) => void;
   toggleBiometrics: (enabled: boolean) => void;
 };
@@ -102,6 +123,7 @@ async function persist(state: AppState) {
     schemaVersion: 2,
     wallet: state.wallet,
     network: state.network,
+    walletBehavior: state.walletBehavior,
     preferences: state.preferences,
     security: state.security,
   };
@@ -175,6 +197,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
             ...DEFAULT_STATE.security,
             ...(parsed.security ?? {}),
           },
+          walletBehavior: normalizeWalletBehavior(parsed.walletBehavior),
           wallet: parsed.wallet ?? null,
           _hydrated: true,
         });
@@ -277,6 +300,8 @@ export const useAppStore = create<StoreState>((set, get) => ({
         walletId,
         artifacts,
         arkServerUrl,
+        network: serverNetwork,
+        behavior: get().walletBehavior,
       });
       const metadata = buildMetadata(
         walletId,
@@ -346,6 +371,8 @@ export const useAppStore = create<StoreState>((set, get) => ({
         walletId,
         artifacts,
         arkServerUrl,
+        network: serverNetwork,
+        behavior: get().walletBehavior,
       });
       const metadata = buildMetadata(
         walletId,
@@ -376,7 +403,10 @@ export const useAppStore = create<StoreState>((set, get) => ({
   refreshWallet: async () => {
     const metadata = get().wallet;
     if (!metadata) return;
-    const snapshot = await refreshWalletSnapshot(metadata);
+    const snapshot = await refreshWalletSnapshot(
+      metadata,
+      get().walletBehavior,
+    );
     set({ wallet: applySnapshot(metadata, snapshot) });
     await persist(get());
   },
@@ -395,7 +425,10 @@ export const useAppStore = create<StoreState>((set, get) => ({
         "Insufficient balance for this amount",
       );
     }
-    const wallet = await ensureWallet({ metadata });
+    const wallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
     let txId: string;
     try {
       txId = await wallet.send({ address, amount: amountSats });
@@ -410,6 +443,20 @@ export const useAppStore = create<StoreState>((set, get) => ({
       // ignore refresh failure; txId is still returned
     }
     return txId;
+  },
+
+  setWalletBehavior: async (behavior) => {
+    const current = get().walletBehavior;
+    const next = normalizeWalletBehavior({ ...current, ...behavior });
+    if (
+      current.vtxoAutoRenewal === next.vtxoAutoRenewal &&
+      current.delegatedRenewal === next.delegatedRenewal
+    ) {
+      return;
+    }
+    set({ walletBehavior: next });
+    await disposeWallet();
+    await persist(get());
   },
 
   lockWallet: async () => {
@@ -474,6 +521,13 @@ export const useAppStore = create<StoreState>((set, get) => ({
   setFiatCurrency: (currency) => {
     set((s) => ({
       preferences: { ...s.preferences, fiatCurrency: currency },
+    }));
+    persist(get());
+  },
+
+  setBitcoinUnit: (unit) => {
+    set((s) => ({
+      preferences: { ...s.preferences, bitcoinUnit: unit },
     }));
     persist(get());
   },

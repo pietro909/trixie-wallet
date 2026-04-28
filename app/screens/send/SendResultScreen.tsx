@@ -1,29 +1,24 @@
-import * as React from "react";
-import {
-  Animated,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import {
   CommonActions,
+  type RouteProp,
   useNavigation,
   useRoute,
-  type RouteProp,
 } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { CheckCircle2, Copy, XCircle } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
-import { useResolvedTheme } from "../../hooks/useResolvedTheme";
-import { useToast } from "../../components/ToastProvider";
+import { CheckCircle2, Copy, XCircle } from "lucide-react-native";
+import * as React from "react";
+import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Button from "../../components/Button";
-import { satsToFiat, formatSats } from "../../store/mock";
-import { useAppStore } from "../../store/useAppStore";
-import { paymentTypeLabel } from "../../services/paymentParser";
+import { useToast } from "../../components/ToastProvider";
+import { useFormatSats } from "../../hooks/useFormatSats";
+import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
+import { paymentTypeLabel } from "../../services/paymentParser";
+import { satsToFiat } from "../../store/mock";
+import { useAppStore } from "../../store/useAppStore";
 import { radius, spacing, typography } from "../../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "SendResult">;
@@ -34,6 +29,7 @@ export default function SendResultScreen() {
   const nav = useNavigation<Nav>();
   const params = useRoute<Route>().params;
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
+  const { format: formatSats, label: unitLabel } = useFormatSats();
   const { showToast } = useToast();
 
   const ok = params.status === "success";
@@ -102,7 +98,7 @@ export default function SendResultScreen() {
         {ok ? (
           <>
             <Text style={[styles.amount, { color: theme.colors.text }]}>
-              {formatSats(params.amountSats ?? 0)} sats
+              {formatSats(params.amountSats ?? 0)} {unitLabel}
             </Text>
             <Text style={[styles.fiat, { color: theme.colors.textMuted }]}>
               ≈ {satsToFiat(params.amountSats ?? 0, fiatCurrency)}
@@ -111,8 +107,10 @@ export default function SendResultScreen() {
               {paymentTypeLabel(params.paymentType)} · {params.destination}
             </Text>
             {params.feeSats && params.feeSats > 0 ? (
-              <Text style={[styles.subtitle, { color: theme.colors.textSubtle }]}>
-                Network fee {formatSats(params.feeSats)} sats
+              <Text
+                style={[styles.subtitle, { color: theme.colors.textSubtle }]}
+              >
+                Network fee {formatSats(params.feeSats)} {unitLabel}
               </Text>
             ) : null}
             {params.txId ? (
@@ -129,7 +127,10 @@ export default function SendResultScreen() {
               >
                 <View style={styles.txIdHeader}>
                   <Text
-                    style={[styles.txIdLabel, { color: theme.colors.textMuted }]}
+                    style={[
+                      styles.txIdLabel,
+                      { color: theme.colors.textMuted },
+                    ]}
                   >
                     Transaction ID
                   </Text>
@@ -161,11 +162,7 @@ export default function SendResultScreen() {
           <Button label="Done" theme={theme} onPress={goHome} />
         ) : (
           <>
-            <Button
-              label="Try again"
-              theme={theme}
-              onPress={tryAgain}
-            />
+            <Button label="Try again" theme={theme} onPress={tryAgain} />
             <Button
               label="Back to wallet"
               theme={theme}

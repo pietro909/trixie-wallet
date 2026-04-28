@@ -408,3 +408,85 @@ Manual acceptance:
 - React Native streaming support depends on Expo providers and `expo/fetch`.
 - SQLite table names/prefixes need to be stable if multiple wallets are kept.
 - Mainnet default would be risky; use mutinynet for the first prototype.
+
+## Update — 2026-04-28: Network → Advanced tab
+
+Scope grew beyond the original "small operational screen" brief. The Networks
+tab became an Advanced surface aimed at power users: server config plus the
+runtime/protocol facts the wallet relies on, plus raw exports for debugging.
+Route renamed `Networks` → `Advanced`, lucide tab icon swapped to
+`SlidersHorizontal`. File renamed
+`app/screens/NetworksScreen.tsx` → `app/screens/AdvancedScreen.tsx`.
+
+### Sections, top to bottom
+
+1. **Server** (sole elevated card) — URL input, status pill folding
+   `Online · network · vX.Y.Z` into one line, Apply / Test buttons.
+2. **Endpoints** — Ark server, Indexer, Esplora, Delegate. Each row has icon,
+   label, subtitle, truncated mono URL, copy button. Indexer URL is the same
+   host as the Ark server; Esplora falls back to the SDK
+   `ESPLORA_URL[network]` default; Delegate is shown as `Off` and inert
+   because no `delegatorProvider` is wired today.
+3. **Server details** (collapsible) — version, network, signer pubkey
+   (copyable), forfeit address (copyable), dust threshold, unilateral exit
+   (formatted as `Xd Yh`), tx fee rate. Sourced from `ArkadeServerInfo`.
+4. **Wallet behaviour** — vtxo auto-renewal `Off` (we pass
+   `settlementConfig: false`) and delegated renewal `Off`. Subtitles use
+   product language, not API names.
+5. **Diagnostics** — SDK versions (`@arkade-os/sdk`, `@arkade-os/boltz-swap`),
+   app commit (copyable), app tag (rendered only when an exact tag exists at
+   HEAD), then JSON copy actions for live server info, wallet record, and
+   persisted app state (`passwordHash` redacted to `"[redacted]"`).
+
+### Supporting changes outside the screen
+
+- **`app/store/types.ts`** — new `ArkadeServerInfo` type (network, version,
+  signer pubkey, forfeit address, dust sats, unilateral exit seconds, tx fee
+  rate). Added `network.serverInfo: ArkadeServerInfo | null` to `AppState`.
+- **`app/services/arkade/runtime.ts`** — `probeServer` returns the full info;
+  new `fetchRawServerInfo` re-fetches and walks the response converting any
+  `bigint` to string so the Diagnostics JSON copy works.
+- **`app/store/useAppStore.ts`** — captures `serverInfo` on `refreshServer`,
+  `createWallet`, and `restoreWallet`; clears it on URL change; persists.
+- **`app/services/arkade/network.ts`** — new `normalizeServerUrl` accepts
+  `mutinynet.arkade.sh`, `localhost:7070`, `192.168.1.5:7070`, etc. Picks
+  `http` for loopback / RFC1918 hosts, `https` everywhere else. Validates via
+  the `URL` constructor and drops trailing slashes. `setArkServerUrl` runs
+  every input through it.
+- **`app.config.ts`** (new) — wraps `app.json` via `ConfigContext`, injects
+  `extra.versions` and `extra.git` at config-resolution time. Package versions
+  are read via `fs.readFileSync` against `node_modules/<pkg>/package.json`
+  because the SDK's exports map does not expose `./package.json`. A `compact`
+  helper drops null fields before insertion — Expo's schema otherwise rewrites
+  `null` in `extra` to `{}`, which would have made the screen think a tag
+  exists when one does not. Read at runtime via `expo-constants`.
+
+### UX behaviours worth remembering
+
+- Test connection probes the normalized **draft** URL, not the persisted one.
+  If the draft equals persisted, the action also runs through `refreshServer`
+  so the status pill updates; otherwise it is a non-mutating probe and only
+  the toast reports the result.
+- Server URL input gets `inputMode="url"`, `autoComplete="url"`,
+  `placeholder="mutinynet.arkade.sh"`, `returnKeyType="done"` with
+  `onSubmitEditing` bound to apply (when dirty) or test.
+- A "Will use {url}" hint appears under the input when the typed string
+  normalizes to something different — non-destructive preview, no auto-edit
+  while typing.
+- Version segment of the status pill and Server-details "Version" row both
+  guard against empty strings — mutinynet currently reports `version: ""` and
+  the previous code rendered a bare `v`.
+- Copy Pressables carry `accessibilityRole="button"` and explicit
+  `accessibilityLabel`; the Server-details disclosure carries
+  `accessibilityState={{ expanded }}`.
+- Visual hierarchy is intentional: only the Server card has `shadow("card")`;
+  the rest are bordered panels with no elevation.
+
+### Picked up explicitly out of scope (for now)
+
+- Esplora editor in-line (currently read-only; the override only lives on
+  wallet metadata).
+- Wiring `RestDelegatorProvider` (no auto-discovery from `ArkInfo`; would need
+  a chosen URL).
+- Surfacing `ArkInfo.serviceStatus` per-service.
+- "Open URL externally" affordance on Endpoints.

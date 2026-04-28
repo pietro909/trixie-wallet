@@ -4,6 +4,7 @@ export type ArkadeErrorKind =
   | "invalid_private_key"
   | "wallet_init_failed"
   | "wallet_not_ready"
+  | "delegator_unavailable"
   | "secret_storage_failed"
   | "insufficient_balance"
   | "unsupported_payment"

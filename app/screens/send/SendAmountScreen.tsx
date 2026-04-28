@@ -1,3 +1,10 @@
+import {
+  type RouteProp,
+  useNavigation,
+  useRoute,
+} from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { Lock } from "lucide-react-native";
 import * as React from "react";
 import {
   KeyboardAvoidingView,
@@ -9,15 +16,13 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
-import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Lock } from "lucide-react-native";
-import { useResolvedTheme } from "../../hooks/useResolvedTheme";
-import { useAppStore } from "../../store/useAppStore";
-import { satsToFiat, formatSats } from "../../store/mock";
 import Button from "../../components/Button";
-import { paymentTypeLabel } from "../../services/paymentParser";
+import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
+import { formatSatsAs } from "../../services/format";
+import { paymentTypeLabel } from "../../services/paymentParser";
+import { satsToFiat } from "../../store/mock";
+import { useAppStore } from "../../store/useAppStore";
 import { radius, spacing, typography } from "../../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "SendAmount">;
@@ -82,7 +87,9 @@ export default function SendAmountScreen() {
               },
             ]}
           >
-            <Text style={[styles.summaryLabel, { color: theme.colors.textMuted }]}>
+            <Text
+              style={[styles.summaryLabel, { color: theme.colors.textMuted }]}
+            >
               Sending via
             </Text>
             <Text style={[styles.summaryType, { color: theme.colors.text }]}>
@@ -95,7 +102,9 @@ export default function SendAmountScreen() {
               {option.destination}
             </Text>
             {option.memo ? (
-              <Text style={[styles.summaryMemo, { color: theme.colors.textSubtle }]}>
+              <Text
+                style={[styles.summaryMemo, { color: theme.colors.textSubtle }]}
+              >
                 “{option.memo}”
               </Text>
             ) : null}
@@ -103,14 +112,19 @@ export default function SendAmountScreen() {
 
           <View style={styles.amountSection}>
             <View style={styles.amountHeader}>
-              <Text style={[styles.amountTitle, { color: theme.colors.textMuted }]}>
+              <Text
+                style={[styles.amountTitle, { color: theme.colors.textMuted }]}
+              >
                 Amount
               </Text>
               {isLocked ? (
                 <View style={styles.lockedTag}>
                   <Lock color={theme.colors.textSubtle} size={12} />
                   <Text
-                    style={[styles.lockedTagText, { color: theme.colors.textSubtle }]}
+                    style={[
+                      styles.lockedTagText,
+                      { color: theme.colors.textSubtle },
+                    ]}
                   >
                     Fixed
                   </Text>
@@ -147,11 +161,15 @@ export default function SendAmountScreen() {
             </View>
 
             <View style={styles.metaRow}>
-              <Text style={[styles.metaText, { color: theme.colors.textSubtle }]}>
+              <Text
+                style={[styles.metaText, { color: theme.colors.textSubtle }]}
+              >
                 {sats > 0 ? `≈ ${satsToFiat(sats, fiatCurrency)}` : " "}
               </Text>
-              <Text style={[styles.metaText, { color: theme.colors.textSubtle }]}>
-                Balance: {formatSats(balance)} sats
+              <Text
+                style={[styles.metaText, { color: theme.colors.textSubtle }]}
+              >
+                Balance: {formatSatsAs(balance, "sats")} sats
               </Text>
             </View>
 
@@ -174,12 +192,9 @@ export default function SendAmountScreen() {
                     ]}
                   >
                     <Text
-                      style={[
-                        styles.presetLabel,
-                        { color: theme.colors.text },
-                      ]}
+                      style={[styles.presetLabel, { color: theme.colors.text }]}
                     >
-                      {formatSats(p)}
+                      {formatSatsAs(p, "sats")}
                     </Text>
                   </Pressable>
                 ))}
@@ -198,7 +213,10 @@ export default function SendAmountScreen() {
                   ]}
                 >
                   <Text
-                    style={[styles.presetLabel, { color: theme.colors.primary }]}
+                    style={[
+                      styles.presetLabel,
+                      { color: theme.colors.primary },
+                    ]}
                   >
                     Max
                   </Text>

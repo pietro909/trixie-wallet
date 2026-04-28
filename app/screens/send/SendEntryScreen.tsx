@@ -247,7 +247,7 @@ export default function SendEntryScreen() {
                 setText(t);
                 if (error) setError(null);
               }}
-              placeholder="bitcoin:..., lnbc..., lnurl..., ark1..."
+              placeholder="ark1…, tark1…, bc1…, lnbc…, lnurl…, bitcoin:…"
               placeholderTextColor={theme.colors.placeholder}
               autoCapitalize="none"
               autoCorrect={false}

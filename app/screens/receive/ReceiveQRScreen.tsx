@@ -1,3 +1,12 @@
+import {
+  type RouteProp,
+  useNavigation,
+  useRoute,
+} from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import * as Clipboard from "expo-clipboard";
+import * as Haptics from "expo-haptics";
+import { AlertCircle, Copy, Plus, Share2 } from "lucide-react-native";
 import * as React from "react";
 import {
   Animated,
@@ -8,29 +17,20 @@ import {
   Text,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
-import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import {
-  AlertCircle,
-  Copy,
-  Plus,
-  Share2,
-} from "lucide-react-native";
-import * as Haptics from "expo-haptics";
-import * as Clipboard from "expo-clipboard";
 import QRCode from "react-native-qrcode-svg";
-import { useResolvedTheme } from "../../hooks/useResolvedTheme";
-import { useAppStore } from "../../store/useAppStore";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useToast } from "../../components/ToastProvider";
-import { satsToFiat, formatSats } from "../../store/mock";
+import { useFormatSats } from "../../hooks/useFormatSats";
+import { useResolvedTheme } from "../../hooks/useResolvedTheme";
+import type { RootStackParamList } from "../../navigation/RootStack";
+import { paymentTypeLabel } from "../../services/paymentParser";
 import {
   makeAllPayloads,
   makeReceivePayload,
   type ReceivePayload,
 } from "../../services/receive";
-import { paymentTypeLabel } from "../../services/paymentParser";
-import type { RootStackParamList } from "../../navigation/RootStack";
+import { satsToFiat } from "../../store/mock";
+import { useAppStore } from "../../store/useAppStore";
 import { motion, radius, spacing, typography } from "../../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "ReceiveQR">;
@@ -82,7 +82,9 @@ function CopyRow({
             style={[
               styles.payloadLabel,
               {
-                color: isPrimary ? theme.colors.primary : theme.colors.textMuted,
+                color: isPrimary
+                  ? theme.colors.primary
+                  : theme.colors.textMuted,
               },
             ]}
           >
@@ -113,6 +115,7 @@ export default function ReceiveQRScreen() {
   const { showToast } = useToast();
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
   const wallet = useAppStore((s) => s.wallet);
+  const { format: formatSats, label: unitLabel } = useFormatSats();
 
   const setTitle = nav.setOptions;
   React.useEffect(() => {
@@ -210,7 +213,7 @@ export default function ReceiveQRScreen() {
           </Text>
           {primary.amountSats ? (
             <Text style={[styles.amount, { color: theme.colors.textSubtle }]}>
-              {formatSats(primary.amountSats)} sats ·{" "}
+              {formatSats(primary.amountSats)} {unitLabel} ·{" "}
               {satsToFiat(primary.amountSats, fiatCurrency)}
             </Text>
           ) : type === "lnurl" ? (
@@ -275,7 +278,9 @@ export default function ReceiveQRScreen() {
             ]}
           >
             <Plus color={theme.colors.primary} size={16} />
-            <Text style={[styles.addAmountText, { color: theme.colors.primary }]}>
+            <Text
+              style={[styles.addAmountText, { color: theme.colors.primary }]}
+            >
               Need a fixed-amount Lightning invoice instead?
             </Text>
           </Pressable>
@@ -283,12 +288,18 @@ export default function ReceiveQRScreen() {
 
         {others.length > 0 ? (
           <View style={styles.otherSection}>
-            <Text style={[styles.otherTitle, { color: theme.colors.textMuted }]}>
+            <Text
+              style={[styles.otherTitle, { color: theme.colors.textMuted }]}
+            >
               Other ways to receive
             </Text>
             <View style={styles.payloadList}>
               {others.map((p) => (
-                <CopyRow key={`${p.type}:${p.payload}`} payload={p} onCopy={handleCopy} />
+                <CopyRow
+                  key={`${p.type}:${p.payload}`}
+                  payload={p}
+                  onCopy={handleCopy}
+                />
               ))}
             </View>
           </View>

@@ -16,6 +16,7 @@ import {
 import * as React from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -25,10 +26,18 @@ import {
 } from "react-native";
 import Button from "../components/Button";
 import { useToast } from "../components/ToastProvider";
+import { useFormatSats } from "../hooks/useFormatSats";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
-import { normalizeServerUrl } from "../services/arkade/network";
+import {
+  defaultDelegatorUrlForNetwork,
+  normalizeServerUrl,
+} from "../services/arkade/network";
 import { fetchRawServerInfo, probeServer } from "../services/arkade/runtime";
-import type { ArkadeServerInfo, ServerStatus } from "../store/types";
+import type {
+  ArkadeServerInfo,
+  ServerStatus,
+  WalletBehavior,
+} from "../store/types";
 import { useAppStore } from "../store/useAppStore";
 import { type AppTheme, radius, spacing, typography } from "../theme/theme";
 
@@ -69,8 +78,11 @@ export default function AdvancedScreen() {
   const { showToast } = useToast();
   const networkState = useAppStore((s) => s.network);
   const wallet = useAppStore((s) => s.wallet);
+  const walletBehavior = useAppStore((s) => s.walletBehavior);
   const setArkServerUrl = useAppStore((s) => s.setArkServerUrl);
   const refreshServer = useAppStore((s) => s.refreshServer);
+  const setWalletBehavior = useAppStore((s) => s.setWalletBehavior);
+  const { format: formatSats, label: unitLabel } = useFormatSats();
 
   const [draft, setDraft] = React.useState(networkState.arkServerUrl);
   const [detailsOpen, setDetailsOpen] = React.useState(false);
@@ -84,6 +96,8 @@ export default function AdvancedScreen() {
   const isTesting = busyKey === "test";
   const serverInfo = networkState.serverInfo;
   const detectedNetwork = networkState.detectedNetwork;
+  const behaviorNetwork = detectedNetwork ?? wallet?.network ?? null;
+  const delegateUrl = defaultDelegatorUrlForNetwork(behaviorNetwork);
 
   React.useEffect(() => {
     if (networkState.status === "idle") {
@@ -186,6 +200,7 @@ export default function AdvancedScreen() {
       schemaVersion: s.schemaVersion,
       wallet: s.wallet,
       network: s.network,
+      walletBehavior: s.walletBehavior,
       preferences: s.preferences,
       security: {
         isLocked: s.security.isLocked,
@@ -200,6 +215,82 @@ export default function AdvancedScreen() {
     } catch {
       showToast("Could not copy", "error");
     }
+  }
+
+  const applyWalletBehavior = React.useCallback(
+    async (next: WalletBehavior) => {
+      try {
+        await setWalletBehavior(next);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        showToast(
+          "Wallet behaviour saved. Restart the app to apply it fully.",
+          "success",
+        );
+      } catch (e) {
+        showToast(
+          e instanceof Error ? e.message : "Could not update wallet behaviour",
+          "error",
+        );
+      }
+    },
+    [setWalletBehavior, showToast],
+  );
+
+  const confirmWalletBehavior = React.useCallback(
+    (title: string, body: string, next: WalletBehavior) => {
+      Alert.alert(title, `${body}\n\nRestart the app after applying.`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Apply",
+          style: "default",
+          onPress: () => {
+            void applyWalletBehavior(next);
+          },
+        },
+      ]);
+    },
+    [applyWalletBehavior],
+  );
+
+  function toggleVtxoAutoRenewal() {
+    if (walletBehavior.vtxoAutoRenewal) {
+      confirmWalletBehavior(
+        "Turn off VTXO auto-renewal?",
+        walletBehavior.delegatedRenewal
+          ? "Delegated renewal will also turn off because it uses the same SDK settlement manager."
+          : "The wallet will stop renewing expiring VTXOs automatically.",
+        { vtxoAutoRenewal: false, delegatedRenewal: false },
+      );
+      return;
+    }
+
+    confirmWalletBehavior(
+      "Turn on VTXO auto-renewal?",
+      "The SDK settlement manager will watch expiring VTXOs and renew them automatically.",
+      { ...walletBehavior, vtxoAutoRenewal: true },
+    );
+  }
+
+  function toggleDelegatedRenewal() {
+    if (!walletBehavior.delegatedRenewal && !delegateUrl) {
+      showToast("No delegate endpoint for this network", "error");
+      return;
+    }
+
+    if (walletBehavior.delegatedRenewal) {
+      confirmWalletBehavior(
+        "Turn off delegated renewal?",
+        "Renewals will stay local to this device. This can change the Arkade receive address.",
+        { ...walletBehavior, delegatedRenewal: false },
+      );
+      return;
+    }
+
+    confirmWalletBehavior(
+      "Turn on delegated renewal?",
+      `The wallet will use ${delegateUrl} for delegated renewal. This can change the Arkade receive address.`,
+      { vtxoAutoRenewal: true, delegatedRenewal: true },
+    );
   }
 
   const arkUrl = networkState.arkServerUrl;
@@ -357,10 +448,21 @@ export default function AdvancedScreen() {
           theme={theme}
           icon={Share2}
           label="Delegate"
-          subtitle="Renews virtual coins on your behalf"
-          url="Not configured"
-          tag="Off"
-          inert
+          subtitle="Delegated renewal endpoint"
+          url={delegateUrl ?? "No default delegate for this network"}
+          tag={
+            walletBehavior.delegatedRenewal
+              ? "On"
+              : delegateUrl
+                ? "Off"
+                : "Unavailable"
+          }
+          inert={!delegateUrl}
+          onCopy={
+            delegateUrl
+              ? () => handleCopy(delegateUrl, "Delegate URL")
+              : undefined
+          }
         />
       </View>
 
@@ -443,7 +545,7 @@ export default function AdvancedScreen() {
                 <DetailRow
                   theme={theme}
                   label="Dust threshold"
-                  value={`${serverInfo.dustSats.toLocaleString()} sats`}
+                  value={`${formatSats(serverInfo.dustSats)} ${unitLabel}`}
                 />
                 <DetailRow
                   theme={theme}
@@ -463,7 +565,7 @@ export default function AdvancedScreen() {
       ) : null}
 
       <Text style={[styles.sectionLabel, { color: theme.colors.textMuted }]}>
-        Wallet behaviour
+        Wallet Behaviour
       </Text>
       <View
         style={[
@@ -474,20 +576,32 @@ export default function AdvancedScreen() {
           },
         ]}
       >
-        <RuntimeRow
+        <BehaviorToggleRow
           theme={theme}
-          label="Vtxo auto-renewal"
-          value="Off"
-          tone="muted"
-          hint="Vtxos must be settled manually before they expire."
+          label="VTXO auto-renewal"
+          checked={walletBehavior.vtxoAutoRenewal}
+          onPress={toggleVtxoAutoRenewal}
+          hint={
+            walletBehavior.vtxoAutoRenewal
+              ? "The SDK settlement manager renews expiring VTXOs."
+              : "Expiring VTXOs stay manual."
+          }
         />
         <Divider theme={theme} />
-        <RuntimeRow
+        <BehaviorToggleRow
           theme={theme}
           label="Delegated renewal"
-          value="Off"
-          tone="muted"
-          hint="Renewals stay on this device — no third-party delegate is involved."
+          checked={walletBehavior.delegatedRenewal}
+          onPress={toggleDelegatedRenewal}
+          disabled={!walletBehavior.delegatedRenewal && !delegateUrl}
+          tag={delegateUrl ? undefined : "Unavailable"}
+          hint={
+            delegateUrl
+              ? walletBehavior.delegatedRenewal
+                ? "Renewal handoff uses the configured Arkade delegate."
+                : "Renewals stay local to this device."
+              : "This network has no default delegate endpoint."
+          }
         />
       </View>
 
@@ -758,48 +872,91 @@ function Divider({ theme }: { theme: AppTheme }) {
   return <View style={{ height: 1, backgroundColor: theme.colors.divider }} />;
 }
 
-function RuntimeRow({
+function BehaviorToggleRow({
   theme,
   label,
-  value,
-  tone = "default",
+  checked,
+  disabled,
+  tag,
   hint,
+  onPress,
 }: {
   theme: AppTheme;
   label: string;
-  value: string;
-  tone?: "default" | "muted" | "danger";
+  checked: boolean;
+  disabled?: boolean;
+  tag?: string;
   hint?: string;
+  onPress: () => void;
 }) {
-  const valueColor =
-    tone === "danger"
-      ? theme.colors.danger
-      : tone === "muted"
-        ? theme.colors.textSubtle
-        : theme.colors.text;
+  const trackColor = checked
+    ? theme.colors.primary
+    : theme.colors.surfaceSubtle;
+  const isInert = disabled === true;
   return (
-    <View style={styles.runtimeRow}>
-      <View style={styles.runtimeHead}>
-        <Text style={[styles.runtimeLabel, { color: theme.colors.text }]}>
-          {label}
-        </Text>
+    <Pressable
+      onPress={onPress}
+      disabled={isInert}
+      accessibilityRole="switch"
+      accessibilityLabel={label}
+      accessibilityState={{ checked, disabled: isInert }}
+      style={({ pressed }) => [
+        styles.behaviorRow,
+        pressed && !isInert ? { opacity: 0.6 } : null,
+        isInert ? { opacity: 0.45 } : null,
+      ]}
+    >
+      <View style={styles.behaviorHead}>
+        <View style={styles.behaviorTitleWrap}>
+          <Text style={[styles.behaviorLabel, { color: theme.colors.text }]}>
+            {label}
+          </Text>
+          {tag ? (
+            <View
+              style={[
+                styles.endpointTag,
+                { backgroundColor: theme.colors.surfaceSubtle },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.endpointTagText,
+                  { color: theme.colors.textSubtle },
+                ]}
+              >
+                {tag}
+              </Text>
+            </View>
+          ) : null}
+        </View>
         <View
           style={[
-            styles.runtimeValueWrap,
-            { backgroundColor: theme.colors.surfaceSubtle },
+            styles.switchTrack,
+            {
+              backgroundColor: trackColor,
+              borderColor: checked ? theme.colors.primary : theme.colors.border,
+            },
           ]}
         >
-          <Text style={[styles.runtimeValue, { color: valueColor }]}>
-            {value}
-          </Text>
+          <View
+            style={[
+              styles.switchThumb,
+              {
+                backgroundColor: checked
+                  ? theme.colors.onPrimary
+                  : theme.colors.textSubtle,
+                transform: [{ translateX: checked ? 18 : 0 }],
+              },
+            ]}
+          />
         </View>
       </View>
       {hint ? (
-        <Text style={[styles.runtimeHint, { color: theme.colors.textSubtle }]}>
+        <Text style={[styles.behaviorHint, { color: theme.colors.textSubtle }]}>
           {hint}
         </Text>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
 
@@ -1049,32 +1206,42 @@ const styles = StyleSheet.create({
     fontSize: typography.size.sm,
     textAlign: "right",
   },
-  runtimeRow: {
+  behaviorRow: {
     paddingVertical: spacing[4],
     paddingHorizontal: spacing[4],
   },
-  runtimeHead: {
+  behaviorHead: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: spacing[3],
   },
-  runtimeLabel: {
+  behaviorTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[2],
+  },
+  behaviorLabel: {
+    flexShrink: 1,
     fontSize: typography.size.md,
     fontWeight: typography.weight.semibold,
   },
-  runtimeValueWrap: {
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[1],
+  switchTrack: {
+    width: 42,
+    height: 24,
+    padding: 2,
     borderRadius: radius.pill,
+    borderWidth: 1,
+    justifyContent: "center",
   },
-  runtimeValue: {
-    fontSize: typography.size.xs,
-    fontWeight: typography.weight.semibold,
-    letterSpacing: 0.3,
-    textTransform: "uppercase",
+  switchThumb: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
   },
-  runtimeHint: {
+  behaviorHint: {
     fontSize: typography.size.xs,
     marginTop: spacing[2],
     lineHeight: typography.lineHeight.xs,

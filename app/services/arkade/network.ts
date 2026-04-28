@@ -2,8 +2,21 @@ export const DEFAULT_ARK_SERVER_URL = "https://mutinynet.arkade.sh";
 
 const MAINNET_NETWORK_NAMES = new Set(["bitcoin", "mainnet"]);
 
+const DEFAULT_DELEGATOR_URLS: Record<string, string> = {
+  bitcoin: "https://delegate.arkade.money",
+  mutinynet: "https://delegator.mutinynet.arkade.sh",
+  regtest: "http://localhost:7012",
+};
+
 export function isMainnetForNetworkName(network: string): boolean {
   return MAINNET_NETWORK_NAMES.has(network.toLowerCase());
+}
+
+export function defaultDelegatorUrlForNetwork(
+  network: string | null | undefined,
+): string | null {
+  if (!network) return null;
+  return DEFAULT_DELEGATOR_URLS[network.toLowerCase()] ?? null;
 }
 
 const PRIVATE_HOST_RE =

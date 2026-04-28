@@ -1,28 +1,22 @@
-import * as React from "react";
 import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
+  type RouteProp,
+  useNavigation,
+  useRoute,
+} from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import {
-  AlertTriangle,
-  ArrowUpRight,
-} from "lucide-react-native";
-import { useResolvedTheme } from "../../hooks/useResolvedTheme";
-import { useAppStore } from "../../store/useAppStore";
-import { useToast } from "../../components/ToastProvider";
-import { satsToFiat, formatSats } from "../../store/mock";
+import { AlertTriangle, ArrowUpRight } from "lucide-react-native";
+import * as React from "react";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Button from "../../components/Button";
-import { paymentTypeLabel } from "../../services/paymentParser";
-import {
-  executeSend,
-  unsupportedReasonFor,
-} from "../../services/sendExecutor";
+import { useToast } from "../../components/ToastProvider";
+import { useFormatSats } from "../../hooks/useFormatSats";
+import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
+import { paymentTypeLabel } from "../../services/paymentParser";
+import { executeSend, unsupportedReasonFor } from "../../services/sendExecutor";
+import { satsToFiat } from "../../store/mock";
+import { useAppStore } from "../../store/useAppStore";
 import { radius, spacing, typography } from "../../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "SendReview">;
@@ -92,6 +86,7 @@ export default function SendReviewScreen() {
   const nav = useNavigation<Nav>();
   const { option, amountSats } = useRoute<Route>().params;
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
+  const { format: formatSats, label: unitLabel } = useFormatSats();
   const { showToast } = useToast();
 
   const [sending, setSending] = React.useState(false);
@@ -161,7 +156,7 @@ export default function SendReviewScreen() {
             <ArrowUpRight color={theme.colors.primary} size={24} />
           </View>
           <Text style={[styles.headerAmount, { color: theme.colors.text }]}>
-            {formatSats(amountSats)} sats
+            {formatSats(amountSats)} {unitLabel}
           </Text>
           <Text style={[styles.headerFiat, { color: theme.colors.textMuted }]}>
             ≈ {satsToFiat(amountSats, fiatCurrency)}
@@ -172,7 +167,11 @@ export default function SendReviewScreen() {
           <Row label="Payment type" value={paymentTypeLabel(option.type)} />
           <Row label="Destination" value={option.destination} mono />
           {option.memo ? <Row label="Memo" value={option.memo} /> : null}
-          <Row label="Amount" value={`${formatSats(amountSats)} sats`} emphasis />
+          <Row
+            label="Amount"
+            value={`${formatSats(amountSats)} ${unitLabel}`}
+            emphasis
+          />
           <Row label="Network fee" value="Calculated by Arkade" />
         </View>
 
@@ -205,7 +204,9 @@ export default function SendReviewScreen() {
 
       <View style={styles.footer}>
         <Button
-          label={sending ? "Sending…" : `Send ${formatSats(amountSats)} sats`}
+          label={
+            sending ? "Sending…" : `Send ${formatSats(amountSats)} ${unitLabel}`
+          }
           theme={theme}
           loading={sending}
           disabled={sending || !!unsupported}

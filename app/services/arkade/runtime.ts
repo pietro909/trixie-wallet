@@ -1,9 +1,13 @@
-import { Wallet } from "@arkade-os/sdk";
+import { RestDelegatorProvider, Wallet } from "@arkade-os/sdk";
 import {
   ExpoArkProvider,
   ExpoIndexerProvider,
 } from "@arkade-os/sdk/adapters/expo";
-import type { ArkadeServerInfo, ArkadeWalletMetadata } from "../../store/types";
+import type {
+  ArkadeServerInfo,
+  ArkadeWalletMetadata,
+  WalletBehavior,
+} from "../../store/types";
 import { ArkadeError, toArkadeError } from "./errors";
 import {
   buildIdentityFromSecret,
@@ -11,7 +15,10 @@ import {
   type IdentityArtifacts,
 } from "./identity";
 import { mapArkTxs } from "./mappers";
-import { isMainnetForNetworkName } from "./network";
+import {
+  defaultDelegatorUrlForNetwork,
+  isMainnetForNetworkName,
+} from "./network";
 import { readSecret, type StoredSecret } from "./secret-store";
 import { clearWalletData, createRepositories } from "./storage";
 
@@ -30,8 +37,15 @@ export type WalletSnapshot = {
 };
 
 let activeWalletId: string | null = null;
+let activeBehaviorKey: string | null = null;
 let activeWalletPromise: Promise<Wallet> | null = null;
 let activeWalletInstance: Wallet | null = null;
+
+function behaviorKey(behavior: WalletBehavior): string {
+  return `${behavior.vtxoAutoRenewal ? "renew" : "manual"}:${
+    behavior.delegatedRenewal ? "delegate" : "self"
+  }`;
+}
 
 async function fetchServerInfo(
   arkServerUrl: string,
@@ -101,21 +115,44 @@ async function buildWallet(
   walletId: string,
   artifacts: IdentityArtifacts,
   arkServerUrl: string,
+  network: string,
+  behavior: WalletBehavior,
   esploraUrl?: string,
 ): Promise<Wallet> {
   const repos = createRepositories(walletId);
+  const delegatorUrl = behavior.delegatedRenewal
+    ? defaultDelegatorUrlForNetwork(network)
+    : null;
+  if (behavior.delegatedRenewal && !delegatorUrl) {
+    throw new ArkadeError(
+      "delegator_unavailable",
+      `No default Arkade delegate is configured for ${network}`,
+    );
+  }
+  const settlementConfig =
+    behavior.vtxoAutoRenewal || behavior.delegatedRenewal
+      ? {
+          vtxoThreshold: 60 * 60 * 24 * 3,
+          boardingUtxoSweep: true,
+          pollIntervalMs: 60_000,
+        }
+      : false;
+
   try {
     return await Wallet.create({
       identity: artifacts.identity,
       arkServerUrl,
       arkProvider: new ExpoArkProvider(arkServerUrl),
       indexerProvider: new ExpoIndexerProvider(arkServerUrl),
+      delegatorProvider: delegatorUrl
+        ? new RestDelegatorProvider(delegatorUrl)
+        : undefined,
       esploraUrl,
       storage: {
         walletRepository: repos.walletRepository,
         contractRepository: repos.contractRepository,
       },
-      settlementConfig: false,
+      settlementConfig,
     });
   } catch (e) {
     throw toArkadeError(
@@ -158,6 +195,8 @@ export type CreateWalletInput = {
   walletId: string;
   artifacts: IdentityArtifacts;
   arkServerUrl: string;
+  network: string;
+  behavior: WalletBehavior;
   esploraUrl?: string;
 };
 
@@ -168,9 +207,12 @@ export async function createWalletInstance(
     input.walletId,
     input.artifacts,
     input.arkServerUrl,
+    input.network,
+    input.behavior,
     input.esploraUrl,
   );
   activeWalletId = input.walletId;
+  activeBehaviorKey = behaviorKey(input.behavior);
   activeWalletInstance = wallet;
   activeWalletPromise = Promise.resolve(wallet);
   const snapshot = await snapshotWallet(wallet);
@@ -179,12 +221,15 @@ export async function createWalletInstance(
 
 export type EnsureWalletInput = {
   metadata: ArkadeWalletMetadata;
+  behavior: WalletBehavior;
 };
 
 export async function ensureWallet(input: EnsureWalletInput): Promise<Wallet> {
-  const { metadata } = input;
+  const { behavior, metadata } = input;
+  const nextBehaviorKey = behaviorKey(behavior);
   if (
     activeWalletId === metadata.id &&
+    activeBehaviorKey === nextBehaviorKey &&
     activeWalletInstance &&
     activeWalletPromise
   ) {
@@ -203,15 +248,19 @@ export async function ensureWallet(input: EnsureWalletInput): Promise<Wallet> {
       metadata.id,
       artifacts,
       metadata.arkServerUrl,
+      network,
+      behavior,
       metadata.esploraUrl,
     );
     activeWalletInstance = wallet;
     return wallet;
   })();
   activeWalletId = metadata.id;
+  activeBehaviorKey = nextBehaviorKey;
   activeWalletPromise = promise.catch((e) => {
     if (activeWalletId === metadata.id) {
       activeWalletId = null;
+      activeBehaviorKey = null;
       activeWalletInstance = null;
       activeWalletPromise = null;
     }
@@ -232,14 +281,16 @@ export async function getWallet(): Promise<Wallet> {
 
 export async function refreshWalletSnapshot(
   metadata: ArkadeWalletMetadata,
+  behavior: WalletBehavior,
 ): Promise<WalletSnapshot> {
-  const wallet = await ensureWallet({ metadata });
+  const wallet = await ensureWallet({ behavior, metadata });
   return snapshotWallet(wallet);
 }
 
 export async function disposeWallet(): Promise<void> {
   const instance = activeWalletInstance;
   activeWalletId = null;
+  activeBehaviorKey = null;
   activeWalletInstance = null;
   activeWalletPromise = null;
   if (instance) {

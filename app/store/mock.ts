@@ -1,3 +1,4 @@
+import { formatFiat } from "../services/format";
 import type { FiatCurrency } from "./types";
 
 const MOCK_FIAT_RATES: Record<FiatCurrency, number> = {
@@ -7,11 +8,5 @@ const MOCK_FIAT_RATES: Record<FiatCurrency, number> = {
 };
 
 export function satsToFiat(sats: number, currency: FiatCurrency): string {
-  const amount = sats * MOCK_FIAT_RATES[currency];
-  const symbol = currency === "EUR" ? "€" : currency === "GBP" ? "£" : "$";
-  return `${symbol}${amount.toFixed(2)}`;
-}
-
-export function formatSats(sats: number): string {
-  return sats.toLocaleString("en-US");
+  return formatFiat(sats * MOCK_FIAT_RATES[currency], currency);
 }

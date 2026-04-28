@@ -1,16 +1,10 @@
-import * as React from "react";
-import {
-  FlatList,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
 import { ArrowDownLeft, ArrowUpRight, Inbox } from "lucide-react-native";
+import * as React from "react";
+import { FlatList, RefreshControl, StyleSheet, Text, View } from "react-native";
+import { useFormatSats } from "../hooks/useFormatSats";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
-import { useAppStore } from "../store/useAppStore";
-import { formatSats } from "../store/mock";
 import type { Transaction } from "../store/types";
+import { useAppStore } from "../store/useAppStore";
 import { spacing, typography } from "../theme/theme";
 
 function formatDate(timestamp: number): string {
@@ -27,6 +21,7 @@ export default function TransactionsScreen() {
   const theme = useResolvedTheme();
   const wallet = useAppStore((s) => s.wallet);
   const refreshWallet = useAppStore((s) => s.refreshWallet);
+  const { format: formatSats, label: unitLabel } = useFormatSats();
   const [refreshing, setRefreshing] = React.useState(false);
 
   const transactions = wallet?.transactions ?? [];
@@ -44,9 +39,7 @@ export default function TransactionsScreen() {
 
   function renderItem({ item: tx }: { item: Transaction }) {
     return (
-      <View
-        style={[styles.row, { borderBottomColor: theme.colors.divider }]}
-      >
+      <View style={[styles.row, { borderBottomColor: theme.colors.divider }]}>
         <View
           style={[
             styles.icon,
@@ -85,7 +78,7 @@ export default function TransactionsScreen() {
           ]}
         >
           {tx.direction === "in" ? "+" : "-"}
-          {formatSats(tx.amountSats)} sats
+          {formatSats(tx.amountSats)} {unitLabel}
         </Text>
       </View>
     );

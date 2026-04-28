@@ -1,12 +1,3 @@
-import * as React from "react";
-import {
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import {
@@ -16,12 +7,22 @@ import {
   Clock,
   Inbox,
 } from "lucide-react-native";
-import { useResolvedTheme } from "../hooks/useResolvedTheme";
-import { useAppStore } from "../store/useAppStore";
-import { formatSats, satsToFiat } from "../store/mock";
+import * as React from "react";
+import {
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import Button from "../components/Button";
+import { useFormatSats } from "../hooks/useFormatSats";
+import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../navigation/RootStack";
-import { spacing, typography, radius } from "../theme/theme";
+import { satsToFiat } from "../store/mock";
+import { useAppStore } from "../store/useAppStore";
+import { radius, spacing, typography } from "../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Main">;
 
@@ -43,6 +44,7 @@ export default function WalletScreen() {
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
   const refreshWallet = useAppStore((s) => s.refreshWallet);
   const detectedNetwork = useAppStore((s) => s.network.detectedNetwork);
+  const { format: formatSats, label: unitLabel } = useFormatSats();
   const [refreshing, setRefreshing] = React.useState(false);
 
   const walletId = wallet?.id;
@@ -66,7 +68,9 @@ export default function WalletScreen() {
 
   if (!wallet) {
     return (
-      <View style={[styles.empty, { backgroundColor: theme.colors.background }]}>
+      <View
+        style={[styles.empty, { backgroundColor: theme.colors.background }]}
+      >
         <Inbox color={theme.colors.textSubtle} size={48} />
         <Text style={[styles.emptyText, { color: theme.colors.textMuted }]}>
           No wallet found
@@ -90,12 +94,17 @@ export default function WalletScreen() {
       }
     >
       {/* Balance Card */}
-      <View style={[styles.balanceCard, { backgroundColor: theme.colors.card, ...theme.shadow("card") }]}>
+      <View
+        style={[
+          styles.balanceCard,
+          { backgroundColor: theme.colors.card, ...theme.shadow("card") },
+        ]}
+      >
         <Text style={[styles.walletLabel, { color: theme.colors.textSubtle }]}>
           {wallet.label}
         </Text>
         <Text style={[styles.balance, { color: theme.colors.text }]}>
-          {formatSats(wallet.balanceSats)} sats
+          {formatSats(wallet.balanceSats)} {unitLabel}
         </Text>
         <Text style={[styles.fiat, { color: theme.colors.textMuted }]}>
           {satsToFiat(wallet.balanceSats, fiatCurrency)}
@@ -145,7 +154,9 @@ export default function WalletScreen() {
         {recentTxns.length === 0 ? (
           <View style={styles.emptyTxns}>
             <Clock color={theme.colors.textSubtle} size={32} />
-            <Text style={[styles.emptyTxnsText, { color: theme.colors.textMuted }]}>
+            <Text
+              style={[styles.emptyTxnsText, { color: theme.colors.textMuted }]}
+            >
               No transactions yet
             </Text>
           </View>
@@ -153,7 +164,10 @@ export default function WalletScreen() {
           recentTxns.map((tx) => (
             <View
               key={tx.id}
-              style={[styles.txRow, { borderBottomColor: theme.colors.divider }]}
+              style={[
+                styles.txRow,
+                { borderBottomColor: theme.colors.divider },
+              ]}
             >
               <View
                 style={[
@@ -176,7 +190,9 @@ export default function WalletScreen() {
                 <Text style={[styles.txLabel, { color: theme.colors.text }]}>
                   {tx.counterpartyLabel}
                 </Text>
-                <Text style={[styles.txTime, { color: theme.colors.textSubtle }]}>
+                <Text
+                  style={[styles.txTime, { color: theme.colors.textSubtle }]}
+                >
                   {formatRelativeTime(tx.timestamp)}
                   {tx.status === "pending" ? " · Pending" : ""}
                 </Text>
@@ -214,16 +230,16 @@ export default function WalletScreen() {
           Balance breakdown
         </Text>
         <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
-          Available offchain: {formatSats(wallet.balanceSats)} sats
+          Available offchain: {formatSats(wallet.balanceSats)} {unitLabel}
         </Text>
         <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
-          Boarding (onchain): {formatSats(wallet.balanceBoardingSats)} sats
+          Boarding (onchain): {formatSats(wallet.balanceBoardingSats)}{" "}
+          {unitLabel}
         </Text>
         <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
-          Total: {formatSats(wallet.balanceTotalSats)} sats
+          Total: {formatSats(wallet.balanceTotalSats)} {unitLabel}
         </Text>
       </View>
-
     </ScrollView>
   );
 }
