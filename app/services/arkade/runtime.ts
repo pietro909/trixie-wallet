@@ -1,14 +1,17 @@
 import { Wallet } from "@arkade-os/sdk";
-import { ExpoArkProvider, ExpoIndexerProvider } from "@arkade-os/sdk/adapters/expo";
-import type { ArkadeWalletMetadata } from "../../store/types";
+import {
+  ExpoArkProvider,
+  ExpoIndexerProvider,
+} from "@arkade-os/sdk/adapters/expo";
+import type { ArkadeServerInfo, ArkadeWalletMetadata } from "../../store/types";
 import { ArkadeError, toArkadeError } from "./errors";
-import { isMainnetForNetworkName } from "./network";
 import {
   buildIdentityFromSecret,
   bytesToHex,
   type IdentityArtifacts,
 } from "./identity";
 import { mapArkTxs } from "./mappers";
+import { isMainnetForNetworkName } from "./network";
 import { readSecret, type StoredSecret } from "./secret-store";
 import { clearWalletData, createRepositories } from "./storage";
 
@@ -26,20 +29,25 @@ export type WalletSnapshot = {
   transactions: ReturnType<typeof mapArkTxs>;
 };
 
-export type ServerInfo = {
-  arkServerUrl: string;
-  network: string;
-};
-
 let activeWalletId: string | null = null;
 let activeWalletPromise: Promise<Wallet> | null = null;
 let activeWalletInstance: Wallet | null = null;
 
-async function fetchServerNetwork(arkServerUrl: string): Promise<string> {
+async function fetchServerInfo(
+  arkServerUrl: string,
+): Promise<ArkadeServerInfo> {
   try {
     const provider = new ExpoArkProvider(arkServerUrl);
     const info = await provider.getInfo();
-    return info.network;
+    return {
+      network: info.network,
+      version: info.version,
+      signerPubkey: info.signerPubkey,
+      forfeitAddress: info.forfeitAddress,
+      dustSats: Number(info.dust),
+      unilateralExitDelaySeconds: Number(info.unilateralExitDelay),
+      txFeeRate: info.fees.txFeeRate,
+    };
   } catch (e) {
     throw toArkadeError(
       "server_unreachable",
@@ -49,9 +57,44 @@ async function fetchServerNetwork(arkServerUrl: string): Promise<string> {
   }
 }
 
-export async function probeServer(arkServerUrl: string): Promise<ServerInfo> {
-  const network = await fetchServerNetwork(arkServerUrl);
-  return { arkServerUrl, network };
+async function fetchServerNetwork(arkServerUrl: string): Promise<string> {
+  const info = await fetchServerInfo(arkServerUrl);
+  return info.network;
+}
+
+export async function probeServer(
+  arkServerUrl: string,
+): Promise<ArkadeServerInfo> {
+  return fetchServerInfo(arkServerUrl);
+}
+
+function jsonifyDeep(value: unknown): unknown {
+  if (typeof value === "bigint") return value.toString();
+  if (Array.isArray(value)) return value.map(jsonifyDeep);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = jsonifyDeep(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+export async function fetchRawServerInfo(
+  arkServerUrl: string,
+): Promise<Record<string, unknown>> {
+  try {
+    const provider = new ExpoArkProvider(arkServerUrl);
+    const info = await provider.getInfo();
+    return jsonifyDeep(info) as Record<string, unknown>;
+  } catch (e) {
+    throw toArkadeError(
+      "server_unreachable",
+      `Could not reach Arkade server at ${arkServerUrl}`,
+      e,
+    );
+  }
 }
 
 async function buildWallet(
@@ -107,11 +150,7 @@ export async function snapshotWallet(wallet: Wallet): Promise<WalletSnapshot> {
       transactions: mapArkTxs(txs),
     };
   } catch (e) {
-    throw toArkadeError(
-      "refresh_failed",
-      "Failed to refresh wallet state",
-      e,
-    );
+    throw toArkadeError("refresh_failed", "Failed to refresh wallet state", e);
   }
 }
 
@@ -142,9 +181,7 @@ export type EnsureWalletInput = {
   metadata: ArkadeWalletMetadata;
 };
 
-export async function ensureWallet(
-  input: EnsureWalletInput,
-): Promise<Wallet> {
+export async function ensureWallet(input: EnsureWalletInput): Promise<Wallet> {
   const { metadata } = input;
   if (
     activeWalletId === metadata.id &&
@@ -185,7 +222,10 @@ export async function ensureWallet(
 
 export async function getWallet(): Promise<Wallet> {
   if (!activeWalletPromise) {
-    throw new ArkadeError("wallet_not_ready", "Arkade wallet is not initialized");
+    throw new ArkadeError(
+      "wallet_not_ready",
+      "Arkade wallet is not initialized",
+    );
   }
   return activeWalletPromise;
 }

@@ -1,17 +1,19 @@
-
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import {
+  CircleUserRound,
+  SlidersHorizontal,
+  WalletMinimal,
+} from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Network, WalletMinimal, CircleUserRound } from "lucide-react-native";
 
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
+import AdvancedScreen from "../screens/AdvancedScreen";
+import ProfileScreen from "../screens/ProfileScreen";
+import WalletScreen from "../screens/WalletScreen";
 import { makeBottomTabsOptions, TabIcon } from "../theme/theme";
 
-import NetworksScreen from "../screens/NetworksScreen";
-import WalletScreen from "../screens/WalletScreen";
-import ProfileScreen from "../screens/ProfileScreen";
-
 export type RootTabsParamList = {
-  Networks: undefined;
+  Advanced: undefined;
   Wallet: undefined;
   Profile: undefined;
 };
@@ -42,11 +44,11 @@ export default function RootTabs() {
           },
           tabBarIcon: ({ focused, color, size }) => {
             const Icon =
-              route.name === "Networks"
-                ? Network
+              route.name === "Advanced"
+                ? SlidersHorizontal
                 : route.name === "Wallet"
-                ? WalletMinimal
-                : CircleUserRound;
+                  ? WalletMinimal
+                  : CircleUserRound;
 
             return (
               <TabIcon
@@ -61,7 +63,7 @@ export default function RootTabs() {
         };
       }}
     >
-      <Tab.Screen name="Networks" component={NetworksScreen} />
+      <Tab.Screen name="Advanced" component={AdvancedScreen} />
       <Tab.Screen name="Wallet" component={WalletScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>

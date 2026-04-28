@@ -1,18 +1,8 @@
-import { create } from "zustand";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as LocalAuthentication from "expo-local-authentication";
 import * as Crypto from "expo-crypto";
-import type {
-  AppState,
-  ArkadeWalletMetadata,
-  FiatCurrency,
-  ThemePref,
-} from "./types";
+import * as LocalAuthentication from "expo-local-authentication";
+import { create } from "zustand";
 import { ArkadeError, toArkadeError } from "../services/arkade/errors";
-import {
-  DEFAULT_ARK_SERVER_URL,
-  isMainnetForNetworkName,
-} from "../services/arkade/network";
 import {
   buildMnemonicIdentity,
   buildRandomSingleKeyIdentity,
@@ -22,9 +12,10 @@ import {
   type IdentityArtifacts,
 } from "../services/arkade/identity";
 import {
-  deleteSecret,
-  saveSecret,
-} from "../services/arkade/secret-store";
+  DEFAULT_ARK_SERVER_URL,
+  isMainnetForNetworkName,
+  normalizeServerUrl,
+} from "../services/arkade/network";
 import {
   clearAllWalletData,
   createWalletInstance,
@@ -35,6 +26,13 @@ import {
   snapshotWallet,
   type WalletSnapshot,
 } from "../services/arkade/runtime";
+import { deleteSecret, saveSecret } from "../services/arkade/secret-store";
+import type {
+  AppState,
+  ArkadeWalletMetadata,
+  FiatCurrency,
+  ThemePref,
+} from "./types";
 
 const STORAGE_KEY = "app_state_v2";
 const LEGACY_STORAGE_KEY = "app_state_v1";
@@ -62,6 +60,7 @@ const DEFAULT_STATE: AppState = {
     detectedNetwork: null,
     status: "idle",
     lastError: null,
+    serverInfo: null,
   },
   preferences: {
     theme: "system",
@@ -202,6 +201,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
           status: "online",
           detectedNetwork: info.network,
           lastError: null,
+          serverInfo: info,
         },
       }));
       await persist(get());
@@ -220,15 +220,16 @@ export const useAppStore = create<StoreState>((set, get) => ({
   },
 
   setArkServerUrl: async (url) => {
-    const trimmed = url.trim();
-    if (!trimmed) return;
+    const normalized = normalizeServerUrl(url);
+    if (!normalized) return;
     set((s) => ({
       network: {
         ...s.network,
-        arkServerUrl: trimmed,
+        arkServerUrl: normalized,
         status: "idle",
         detectedNetwork: null,
         lastError: null,
+        serverInfo: null,
       },
     }));
     await persist(get());
@@ -245,10 +246,9 @@ export const useAppStore = create<StoreState>((set, get) => ({
     set((s) => ({
       network: { ...s.network, status: "connecting", lastError: null },
     }));
-    let serverNetwork: string;
+    let probed: Awaited<ReturnType<typeof probeServer>>;
     try {
-      const info = await probeServer(arkServerUrl);
-      serverNetwork = info.network;
+      probed = await probeServer(arkServerUrl);
     } catch (e) {
       const err = toArkadeError(
         "server_unreachable",
@@ -264,6 +264,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
       }));
       throw err;
     }
+    const serverNetwork = probed.network;
     const isMainnet = isMainnetForNetworkName(serverNetwork);
     const artifacts =
       kind === "mnemonic"
@@ -292,6 +293,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
           status: "online",
           detectedNetwork: serverNetwork,
           lastError: null,
+          serverInfo: probed,
         },
       }));
       await persist(get());
@@ -313,10 +315,9 @@ export const useAppStore = create<StoreState>((set, get) => ({
     set((s) => ({
       network: { ...s.network, status: "connecting", lastError: null },
     }));
-    let serverNetwork: string;
+    let probed: Awaited<ReturnType<typeof probeServer>>;
     try {
-      const info = await probeServer(arkServerUrl);
-      serverNetwork = info.network;
+      probed = await probeServer(arkServerUrl);
     } catch (e) {
       const err = toArkadeError(
         "server_unreachable",
@@ -332,6 +333,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
       }));
       throw err;
     }
+    const serverNetwork = probed.network;
     const isMainnet = isMainnetForNetworkName(serverNetwork);
     const artifacts =
       input.kind === "mnemonic"
@@ -360,6 +362,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
           status: "online",
           detectedNetwork: serverNetwork,
           lastError: null,
+          serverInfo: probed,
         },
       }));
       await persist(get());
@@ -384,10 +387,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
       throw new ArkadeError("wallet_not_ready", "No wallet available");
     }
     if (amountSats <= 0) {
-      throw new ArkadeError(
-        "send_failed",
-        "Amount must be greater than zero",
-      );
+      throw new ArkadeError("send_failed", "Amount must be greater than zero");
     }
     if (amountSats > metadata.balanceSats) {
       throw new ArkadeError(

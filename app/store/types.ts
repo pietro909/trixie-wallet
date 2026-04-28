@@ -35,6 +35,16 @@ export type ArkadeWalletMetadata = {
 
 export type ServerStatus = "idle" | "connecting" | "online" | "offline";
 
+export type ArkadeServerInfo = {
+  network: string;
+  version: string;
+  signerPubkey: string;
+  forfeitAddress: string;
+  dustSats: number;
+  unilateralExitDelaySeconds: number;
+  txFeeRate: string;
+};
+
 export type AppState = {
   schemaVersion: 2;
   wallet: ArkadeWalletMetadata | null;
@@ -43,6 +53,7 @@ export type AppState = {
     detectedNetwork: string | null;
     status: ServerStatus;
     lastError: string | null;
+    serverInfo: ArkadeServerInfo | null;
   };
   preferences: {
     theme: ThemePref;
