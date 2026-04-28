@@ -5,32 +5,45 @@ export type Transaction = {
   id: string;
   direction: "in" | "out";
   amountSats: number;
-  timestamp: number; // unix ms
+  timestamp: number;
   counterpartyLabel: string;
   status: "pending" | "confirmed";
 };
 
-export type Wallet = {
+export type WalletIdentityKind = "mnemonic" | "singleKey";
+
+export type ArkadeWalletMetadata = {
   id: string;
-  type: "arkade" | "onchain" | "lightning";
+  type: "arkade";
   label: string;
+  identityKind: WalletIdentityKind;
+  publicKeyHex: string;
+  arkServerUrl: string;
+  esploraUrl?: string;
+  network: string;
+  arkAddress: string;
+  boardingAddress: string;
   balanceSats: number;
+  balanceTotalSats: number;
+  balanceBoardingSats: number;
   transactions: Transaction[];
   backup: {
-    privateKeyHex: string;
-    privateKeyNsec?: string;
-    mnemonic?: string;
+    hasMnemonic: boolean;
+    hasPrivateKey: boolean;
   };
 };
 
-export type WalletContainer = {
-  wallets: Wallet[];
-  activeWalletId: string;
-};
+export type ServerStatus = "idle" | "connecting" | "online" | "offline";
 
 export type AppState = {
-  schemaVersion: 1;
-  walletContainer: WalletContainer | null;
+  schemaVersion: 2;
+  wallet: ArkadeWalletMetadata | null;
+  network: {
+    arkServerUrl: string;
+    detectedNetwork: string | null;
+    status: ServerStatus;
+    lastError: string | null;
+  };
   preferences: {
     theme: ThemePref;
     fiatCurrency: FiatCurrency;

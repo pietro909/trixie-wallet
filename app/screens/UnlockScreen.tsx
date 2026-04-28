@@ -37,9 +37,9 @@ export default function UnlockScreen() {
     ]).start();
   }
 
-  function handlePasswordUnlock() {
+  async function handlePasswordUnlock() {
     setError("");
-    const ok = unlockWithPassword(password);
+    const ok = await unlockWithPassword(password);
     if (!ok) {
       setError("Incorrect password");
       shake();

@@ -40,10 +40,12 @@ const MENU_ITEMS: MenuItem[] = [
 export default function ProfileScreen() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
-  const walletContainer = useAppStore((s) => s.walletContainer);
+  const wallet = useAppStore((s) => s.wallet);
 
-  const walletId = walletContainer?.activeWalletId ?? "";
-  const shortId = `${walletId.slice(0, 8)}...${walletId.slice(-4)}`;
+  const walletId = wallet?.id ?? "";
+  const shortId = walletId
+    ? `${walletId.slice(0, 8)}...${walletId.slice(-4)}`
+    : "—";
 
   return (
     <ScrollView

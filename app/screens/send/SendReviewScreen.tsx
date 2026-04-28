@@ -18,7 +18,10 @@ import { useToast } from "../../components/ToastProvider";
 import { satsToFiat, formatSats } from "../../store/mock";
 import Button from "../../components/Button";
 import { paymentTypeLabel } from "../../services/paymentParser";
-import { estimateFeeSats, executeSend } from "../../services/sendExecutor";
+import {
+  executeSend,
+  unsupportedReasonFor,
+} from "../../services/sendExecutor";
 import type { RootStackParamList } from "../../navigation/RootStack";
 import { radius, spacing, typography } from "../../theme/theme";
 
@@ -93,8 +96,7 @@ export default function SendReviewScreen() {
 
   const [sending, setSending] = React.useState(false);
 
-  const fee = estimateFeeSats(option, amountSats);
-  const total = amountSats + fee;
+  const unsupported = unsupportedReasonFor(option);
 
   async function handleConfirm() {
     setSending(true);
@@ -115,7 +117,6 @@ export default function SendReviewScreen() {
           status: "error",
           message: result.error,
           amountSats,
-          feeSats: fee,
           paymentType: option.type,
           destination: option.destination,
         });
@@ -127,7 +128,6 @@ export default function SendReviewScreen() {
         status: "error",
         message: msg,
         amountSats,
-        feeSats: fee,
         paymentType: option.type,
         destination: option.destination,
       });
@@ -172,26 +172,35 @@ export default function SendReviewScreen() {
           <Row label="Payment type" value={paymentTypeLabel(option.type)} />
           <Row label="Destination" value={option.destination} mono />
           {option.memo ? <Row label="Memo" value={option.memo} /> : null}
-          <Row label="Amount" value={`${formatSats(amountSats)} sats`} />
-          <Row
-            label="Network fee"
-            value={fee > 0 ? `${formatSats(fee)} sats` : "—"}
-          />
-          <Row label="Total" value={`${formatSats(total)} sats`} emphasis />
+          <Row label="Amount" value={`${formatSats(amountSats)} sats`} emphasis />
+          <Row label="Network fee" value="Calculated by Arkade" />
         </View>
 
-        <View
-          style={[
-            styles.notice,
-            { backgroundColor: `${theme.colors.warning}15` },
-          ]}
-        >
-          <AlertTriangle color={theme.colors.warning} size={16} />
-          <Text style={[styles.noticeText, { color: theme.colors.warning }]}>
-            Network fee is an estimate. The Arkade SDK will return the real
-            value once integrated.
-          </Text>
-        </View>
+        {unsupported ? (
+          <View
+            style={[
+              styles.notice,
+              { backgroundColor: `${theme.colors.danger}15` },
+            ]}
+          >
+            <AlertTriangle color={theme.colors.danger} size={16} />
+            <Text style={[styles.noticeText, { color: theme.colors.danger }]}>
+              {unsupported}
+            </Text>
+          </View>
+        ) : (
+          <View
+            style={[
+              styles.notice,
+              { backgroundColor: `${theme.colors.warning}15` },
+            ]}
+          >
+            <AlertTriangle color={theme.colors.warning} size={16} />
+            <Text style={[styles.noticeText, { color: theme.colors.warning }]}>
+              Fee is determined by the Arkade SDK at send time.
+            </Text>
+          </View>
+        )}
       </ScrollView>
 
       <View style={styles.footer}>
@@ -199,7 +208,7 @@ export default function SendReviewScreen() {
           label={sending ? "Sending…" : `Send ${formatSats(amountSats)} sats`}
           theme={theme}
           loading={sending}
-          disabled={sending}
+          disabled={sending || !!unsupported}
           onPress={handleConfirm}
         />
       </View>

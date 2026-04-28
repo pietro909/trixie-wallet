@@ -25,17 +25,21 @@ function formatDate(timestamp: number): string {
 
 export default function TransactionsScreen() {
   const theme = useResolvedTheme();
-  const walletContainer = useAppStore((s) => s.walletContainer);
+  const wallet = useAppStore((s) => s.wallet);
+  const refreshWallet = useAppStore((s) => s.refreshWallet);
   const [refreshing, setRefreshing] = React.useState(false);
 
-  const wallet = walletContainer?.wallets.find(
-    (w) => w.id === walletContainer.activeWalletId,
-  );
   const transactions = wallet?.transactions ?? [];
 
-  function handleRefresh() {
+  async function handleRefresh() {
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 1000);
+    try {
+      await refreshWallet();
+    } catch {
+      // best-effort
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   function renderItem({ item: tx }: { item: Transaction }) {

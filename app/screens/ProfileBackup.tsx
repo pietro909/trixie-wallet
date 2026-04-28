@@ -1,5 +1,6 @@
 import * as React from "react";
 import {
+  ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -12,23 +13,39 @@ import * as Clipboard from "expo-clipboard";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import { useAppStore } from "../store/useAppStore";
 import { useToast } from "../components/ToastProvider";
+import { readSecret } from "../services/arkade/secret-store";
+import type { StoredSecret } from "../services/arkade/secret-store";
 import { spacing, typography, radius } from "../theme/theme";
-
 
 export default function ProfileBackup() {
   const theme = useResolvedTheme();
-  const walletContainer = useAppStore((s) => s.walletContainer);
+  const wallet = useAppStore((s) => s.wallet);
   const { showToast } = useToast();
-  const [showKey, setShowKey] = React.useState(false);
-  const [showMnemonic, setShowMnemonic] = React.useState(false);
+  const [revealed, setRevealed] = React.useState(false);
+  const [secret, setSecret] = React.useState<StoredSecret | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
 
-  const wallet = walletContainer?.wallets.find(
-    (w) => w.id === walletContainer.activeWalletId,
-  );
-
-  const privateKeyHex = wallet?.backup.privateKeyHex ?? "";
-  const privateKeyNsec = wallet?.backup.privateKeyNsec ?? "";
-  const mnemonic = wallet?.backup.mnemonic;
+  async function handleReveal() {
+    if (!wallet) return;
+    if (revealed) {
+      setRevealed(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const s = await readSecret(wallet.id);
+      setSecret(s);
+      setRevealed(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Could not read secret";
+      setError(msg);
+      showToast(msg, "error");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function handleCopy(text: string, label: string) {
     try {
@@ -40,12 +57,14 @@ export default function ProfileBackup() {
     }
   }
 
+  const kindLabel =
+    wallet?.identityKind === "mnemonic" ? "Seed phrase" : "Private key (hex)";
+
   return (
     <SafeAreaView
       edges={["bottom"]}
       style={[styles.container, { backgroundColor: theme.colors.background }]}
     >
-      {/* Warning */}
       <View
         style={[styles.warning, { backgroundColor: `${theme.colors.danger}15` }]}
       >
@@ -56,89 +75,33 @@ export default function ProfileBackup() {
         </Text>
       </View>
 
-      {/* Private Key Hex */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
-            Private Key (Hex)
+            {kindLabel}
           </Text>
           <View style={styles.sectionActions}>
-            <Pressable onPress={() => setShowKey(!showKey)}>
-              {showKey ? (
+            <Pressable onPress={handleReveal} disabled={loading}>
+              {revealed ? (
                 <EyeOff color={theme.colors.textMuted} size={20} />
               ) : (
                 <Eye color={theme.colors.textMuted} size={20} />
               )}
             </Pressable>
-            <Pressable onPress={() => handleCopy(privateKeyHex, "Private key")}>
-              <Copy color={theme.colors.textMuted} size={20} />
-            </Pressable>
-          </View>
-        </View>
-        <View
-          style={[
-            styles.valueBox,
-            { backgroundColor: theme.colors.surfaceSubtle },
-          ]}
-        >
-          <Text
-            style={[
-              styles.valueText,
-              { color: theme.colors.text },
-            ]}
-            selectable={showKey}
-          >
-            {showKey ? privateKeyHex : "\u2022".repeat(32)}
-          </Text>
-        </View>
-      </View>
-
-      {/* Private Key NSEC */}
-      {privateKeyNsec ? (
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
-              Private Key (NSEC)
-            </Text>
-            <Pressable onPress={() => handleCopy(privateKeyNsec, "NSEC key")}>
-              <Copy color={theme.colors.textMuted} size={20} />
-            </Pressable>
-          </View>
-          <View
-            style={[
-              styles.valueBox,
-              { backgroundColor: theme.colors.surfaceSubtle },
-            ]}
-          >
-            <Text
-              style={[styles.valueText, { color: theme.colors.text }]}
-              selectable={showKey}
-            >
-              {showKey ? privateKeyNsec : "\u2022".repeat(32)}
-            </Text>
-          </View>
-        </View>
-      ) : null}
-
-      {/* Mnemonic */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
-            Seed Phrase
-          </Text>
-          <View style={styles.sectionActions}>
-            <Pressable onPress={() => setShowMnemonic(!showMnemonic)}>
-              {showMnemonic ? (
-                <EyeOff color={theme.colors.textMuted} size={20} />
-              ) : (
-                <Eye color={theme.colors.textMuted} size={20} />
-              )}
-            </Pressable>
-            {mnemonic && (
-              <Pressable onPress={() => handleCopy(mnemonic, "Seed phrase")}>
+            {revealed && secret ? (
+              <Pressable
+                onPress={() =>
+                  handleCopy(
+                    secret.kind === "mnemonic"
+                      ? secret.mnemonic
+                      : secret.privateKeyHex,
+                    kindLabel,
+                  )
+                }
+              >
                 <Copy color={theme.colors.textMuted} size={20} />
               </Pressable>
-            )}
+            ) : null}
           </View>
         </View>
         <View
@@ -147,18 +110,68 @@ export default function ProfileBackup() {
             { backgroundColor: theme.colors.surfaceSubtle },
           ]}
         >
-          <Text
-            style={[styles.valueText, { color: theme.colors.text }]}
-            selectable={showMnemonic}
-          >
-            {mnemonic
-              ? showMnemonic
-                ? mnemonic
-                : "\u2022".repeat(48)
-              : "Not available"}
-          </Text>
+          {loading ? (
+            <ActivityIndicator color={theme.colors.primary} />
+          ) : (
+            <Text
+              style={[styles.valueText, { color: theme.colors.text }]}
+              selectable={revealed}
+            >
+              {revealed && secret
+                ? secret.kind === "mnemonic"
+                  ? secret.mnemonic
+                  : secret.privateKeyHex
+                : "•".repeat(48)}
+            </Text>
+          )}
         </View>
+        {error ? (
+          <Text style={[styles.error, { color: theme.colors.danger }]}>
+            {error}
+          </Text>
+        ) : null}
       </View>
+
+      {wallet ? (
+        <>
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
+              Public key (compressed)
+            </Text>
+            <View
+              style={[
+                styles.valueBox,
+                { backgroundColor: theme.colors.surfaceSubtle },
+              ]}
+            >
+              <Text
+                style={[styles.valueText, { color: theme.colors.text }]}
+                selectable
+              >
+                {wallet.publicKeyHex}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
+              Arkade address
+            </Text>
+            <View
+              style={[
+                styles.valueBox,
+                { backgroundColor: theme.colors.surfaceSubtle },
+              ]}
+            >
+              <Text
+                style={[styles.valueText, { color: theme.colors.text }]}
+                selectable
+              >
+                {wallet.arkAddress}
+              </Text>
+            </View>
+          </View>
+        </>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -196,6 +209,7 @@ const styles = StyleSheet.create({
     fontWeight: typography.weight.semibold,
     textTransform: "uppercase",
     letterSpacing: 1,
+    marginBottom: spacing[2],
   },
   sectionActions: {
     flexDirection: "row",
@@ -204,10 +218,16 @@ const styles = StyleSheet.create({
   valueBox: {
     padding: spacing[4],
     borderRadius: radius.sm,
+    minHeight: 56,
+    justifyContent: "center",
   },
   valueText: {
     fontSize: typography.size.sm,
     fontFamily: typography.fontFamily.mono,
     lineHeight: typography.lineHeight.sm,
+  },
+  error: {
+    fontSize: typography.size.xs,
+    marginTop: spacing[2],
   },
 });

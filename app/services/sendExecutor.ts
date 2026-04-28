@@ -1,40 +1,29 @@
 import type { ParsedPaymentOption } from "./paymentParser";
-import { paymentTypeLabel } from "./paymentParser";
 import { useAppStore } from "../store/useAppStore";
-import type { Transaction } from "../store/types";
+import { ArkadeError } from "./arkade/errors";
 
 export type SendResult =
   | { ok: true; txId: string; feeSats: number; amountSats: number }
   | { ok: false; error: string };
 
-function randomTxId(): string {
-  const chars = "0123456789abcdef";
-  let id = "";
-  for (let i = 0; i < 64; i++) id += chars[Math.floor(Math.random() * 16)];
-  return id;
+export function isPayableInThisMilestone(option: ParsedPaymentOption): boolean {
+  return option.type === "arkade" && option.isPayable;
 }
 
-export function estimateFeeSats(option: ParsedPaymentOption, amountSats: number): number {
+export function unsupportedReasonFor(
+  option: ParsedPaymentOption,
+): string | null {
+  if (option.type === "arkade") return null;
   switch (option.type) {
-    case "arkade":
-      return 0;
-    case "lightning":
-      return Math.max(1, Math.floor(amountSats * 0.0002));
-    case "lnurl":
-      return Math.max(1, Math.floor(amountSats * 0.0002));
     case "bitcoin":
-      return 250;
+      return "Bitcoin on-chain sends are not available yet.";
+    case "lightning":
+      return "Lightning sends are not available yet.";
+    case "lnurl":
+      return "LNURL pay is not available yet.";
   }
 }
 
-/**
- * Mock send. Simulates 1.5–2s of network work, fails ~10% of the time so the
- * UI can exercise its error path. On success, persists a transaction to the
- * active wallet so the recent-activity list updates.
- *
- * Replace this with the Arkade SDK / Lightning client once available; the
- * shape of `SendResult` should stay stable.
- */
 export async function executeSend(
   option: ParsedPaymentOption,
   amountSats: number,
@@ -45,32 +34,34 @@ export async function executeSend(
   if (!option.isPayable) {
     return { ok: false, error: option.warning ?? "Payment option is not payable" };
   }
-
-  const wallet = useAppStore.getState().walletContainer?.wallets.find(
-    (w) => w.id === useAppStore.getState().walletContainer?.activeWalletId,
-  );
-  const fee = estimateFeeSats(option, amountSats);
-  const total = amountSats + fee;
-  if (wallet && total > wallet.balanceSats) {
-    return { ok: false, error: "Insufficient balance for this amount and fee" };
+  const unsupported = unsupportedReasonFor(option);
+  if (unsupported) {
+    return { ok: false, error: unsupported };
   }
 
-  await new Promise((r) => setTimeout(r, 1500 + Math.random() * 500));
-
-  if (Math.random() < 0.1) {
-    return { ok: false, error: "Network error — please try again" };
+  const address = extractArkadeAddress(option);
+  if (!address) {
+    return { ok: false, error: "No Arkade address found in payment input" };
   }
 
-  const txId = randomTxId();
-  const tx: Transaction = {
-    id: txId,
-    direction: "out",
-    amountSats,
-    timestamp: Date.now(),
-    counterpartyLabel: option.memo ?? `${paymentTypeLabel(option.type)} payment`,
-    status: option.type === "bitcoin" ? "pending" : "confirmed",
-  };
-  await useAppStore.getState().appendTransaction(tx, -total);
+  try {
+    const txId = await useAppStore.getState().sendArkade(address, amountSats);
+    return { ok: true, txId, feeSats: 0, amountSats };
+  } catch (e) {
+    if (e instanceof ArkadeError) {
+      return { ok: false, error: e.message };
+    }
+    const msg = e instanceof Error ? e.message : "Send failed";
+    return { ok: false, error: msg };
+  }
+}
 
-  return { ok: true, txId, feeSats: fee, amountSats };
+function extractArkadeAddress(option: ParsedPaymentOption): string | null {
+  if (option.type !== "arkade") return null;
+  // raw can be a bare ark1... address or an arkade:/ark: URI; strip scheme/query if present.
+  const raw = option.raw.trim();
+  const noScheme = raw.replace(/^(arkade|ark):\/\//i, "").replace(/^(arkade|ark):/i, "");
+  const qIndex = noScheme.indexOf("?");
+  const address = qIndex === -1 ? noScheme : noScheme.slice(0, qIndex);
+  return address || null;
 }

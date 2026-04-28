@@ -39,17 +39,29 @@ function formatRelativeTime(timestamp: number): string {
 export default function WalletScreen() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
-  const walletContainer = useAppStore((s) => s.walletContainer);
+  const wallet = useAppStore((s) => s.wallet);
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
+  const refreshWallet = useAppStore((s) => s.refreshWallet);
+  const detectedNetwork = useAppStore((s) => s.network.detectedNetwork);
   const [refreshing, setRefreshing] = React.useState(false);
 
-  const wallet = walletContainer?.wallets.find(
-    (w) => w.id === walletContainer.activeWalletId,
-  );
+  const walletId = wallet?.id;
+  React.useEffect(() => {
+    if (!walletId) return;
+    refreshWallet().catch(() => {
+      // surface refresh errors only on user-triggered pulls
+    });
+  }, [refreshWallet, walletId]);
 
-  function handleRefresh() {
+  async function handleRefresh() {
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 1000);
+    try {
+      await refreshWallet();
+    } catch {
+      // best-effort
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   if (!wallet) {
@@ -87,6 +99,9 @@ export default function WalletScreen() {
         </Text>
         <Text style={[styles.fiat, { color: theme.colors.textMuted }]}>
           {satsToFiat(wallet.balanceSats, fiatCurrency)}
+        </Text>
+        <Text style={[styles.networkTag, { color: theme.colors.textSubtle }]}>
+          {(detectedNetwork ?? wallet.network).toUpperCase()}
         </Text>
       </View>
 
@@ -185,7 +200,7 @@ export default function WalletScreen() {
         )}
       </View>
 
-      {/* Stats Placeholder */}
+      {/* Balance Breakdown */}
       <View
         style={[
           styles.statsCard,
@@ -196,16 +211,16 @@ export default function WalletScreen() {
         ]}
       >
         <Text style={[styles.statsTitle, { color: theme.colors.textMuted }]}>
-          Arkade Stats
+          Balance breakdown
         </Text>
         <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
-          VTXO Renewals: --
+          Available offchain: {formatSats(wallet.balanceSats)} sats
         </Text>
         <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
-          Swaps: --
+          Boarding (onchain): {formatSats(wallet.balanceBoardingSats)} sats
         </Text>
         <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
-          On-chain: --
+          Total: {formatSats(wallet.balanceTotalSats)} sats
         </Text>
       </View>
 
@@ -237,6 +252,11 @@ const styles = StyleSheet.create({
   fiat: {
     fontSize: typography.size.md,
     marginTop: spacing[1],
+  },
+  networkTag: {
+    fontSize: typography.size.xs,
+    marginTop: spacing[2],
+    letterSpacing: 1,
   },
   actions: {
     flexDirection: "row",

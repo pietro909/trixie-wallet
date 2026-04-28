@@ -30,11 +30,7 @@ export default function SendAmountScreen() {
   const nav = useNavigation<Nav>();
   const { option } = useRoute<Route>().params;
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
-  const wallet = useAppStore((s) =>
-    s.walletContainer?.wallets.find(
-      (w) => w.id === s.walletContainer?.activeWalletId,
-    ),
-  );
+  const wallet = useAppStore((s) => s.wallet);
 
   // Lightning invoices with an embedded amount are amount-locked.
   const isLocked = option.type === "lightning" && !!option.amountSats;

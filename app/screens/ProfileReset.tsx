@@ -16,7 +16,7 @@ export default function ProfileReset() {
 
   async function handleReset() {
     await resetWallet();
-    // Navigation auto-redirects to Landing because walletContainer becomes null
+    // Navigation auto-redirects to Landing because wallet becomes null
   }
 
   return (

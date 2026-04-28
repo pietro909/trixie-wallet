@@ -129,7 +129,7 @@ const headerStyles = StyleSheet.create({
 
 export default function RootStack() {
   const theme = useResolvedTheme();
-  const walletContainer = useAppStore((s) => s.walletContainer);
+  const wallet = useAppStore((s) => s.wallet);
   const security = useAppStore((s) => s.security);
 
   const renderCustomHeader = (props: NativeStackHeaderProps) => (
@@ -161,7 +161,7 @@ export default function RootStack() {
         contentStyle: { backgroundColor: theme.colors.background },
       }}
     >
-      {!walletContainer ? (
+      {!wallet ? (
         // No wallet flow
         <>
           <Stack.Screen

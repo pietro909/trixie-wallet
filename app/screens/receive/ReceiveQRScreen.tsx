@@ -112,11 +112,7 @@ export default function ReceiveQRScreen() {
   const { type, amountSats } = route.params;
   const { showToast } = useToast();
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
-  const wallet = useAppStore((s) =>
-    s.walletContainer?.wallets.find(
-      (w) => w.id === s.walletContainer?.activeWalletId,
-    ),
-  );
+  const wallet = useAppStore((s) => s.wallet);
 
   const setTitle = nav.setOptions;
   React.useEffect(() => {

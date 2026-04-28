@@ -27,7 +27,7 @@ export default function ProfileLock() {
   const [biometrics, setBiometrics] = React.useState(false);
   const [error, setError] = React.useState("");
 
-  function handleSetAndLock() {
+  async function handleSetAndLock() {
     if (password.length < 6) {
       setError("Password must be at least 6 characters");
       return;
@@ -39,12 +39,12 @@ export default function ProfileLock() {
     setError("");
     setPassword(password);
     if (biometrics) toggleBiometrics(true);
-    lockWallet();
+    await lockWallet();
     showToast("Wallet locked", "info");
   }
 
-  function handleLockNow() {
-    lockWallet();
+  async function handleLockNow() {
+    await lockWallet();
     showToast("Wallet locked", "info");
   }
 

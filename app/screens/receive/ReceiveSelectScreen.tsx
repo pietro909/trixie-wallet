@@ -30,6 +30,7 @@ type Option = {
   title: string;
   helper: string;
   Icon: React.ComponentType<{ color?: string; size?: number }>;
+  unavailable?: boolean;
 };
 
 const OPTIONS: Option[] = [
@@ -41,21 +42,23 @@ const OPTIONS: Option[] = [
   },
   {
     type: "bitcoin",
-    title: "Bitcoin",
-    helper: "On-chain payment to a native segwit address.",
+    title: "Bitcoin boarding",
+    helper: "On-chain payment to your boarding address.",
     Icon: Bitcoin,
   },
   {
     type: "lightning",
     title: "Lightning",
-    helper: "Generate a BOLT-11 invoice for a fixed amount.",
+    helper: "Coming later — invoice generation not available yet.",
     Icon: Zap,
+    unavailable: true,
   },
   {
     type: "lnurl",
     title: "LNURL",
-    helper: "Static pay endpoint. Sender chooses the amount.",
+    helper: "Coming later — LNURL pay not available yet.",
     Icon: Globe,
+    unavailable: true,
   },
 ];
 
@@ -68,12 +71,15 @@ function OptionCard({
 }) {
   const theme = useResolvedTheme();
   const scale = React.useRef(new Animated.Value(1)).current;
+  const disabled = !!option.unavailable;
 
   return (
     <Animated.View style={{ transform: [{ scale }] }}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={option.title}
+        accessibilityState={{ disabled }}
+        disabled={disabled}
         onPressIn={() =>
           Animated.spring(scale, {
             toValue: motion.press.scaleDown,
@@ -99,6 +105,7 @@ function OptionCard({
           {
             backgroundColor: theme.colors.card,
             borderColor: theme.colors.border,
+            opacity: disabled ? 0.5 : 1,
             ...theme.shadow("card"),
           },
         ]}
@@ -119,7 +126,9 @@ function OptionCard({
             {option.helper}
           </Text>
         </View>
-        <ChevronRight color={theme.colors.textSubtle} size={20} />
+        {!disabled ? (
+          <ChevronRight color={theme.colors.textSubtle} size={20} />
+        ) : null}
       </Pressable>
     </Animated.View>
   );
