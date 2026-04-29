@@ -7,6 +7,7 @@ import { ChevronLeft } from "lucide-react-native";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
+import ActivityDetailsScreen from "../screens/ActivityDetailsScreen";
 import ActivityScreen from "../screens/ActivityScreen";
 import IntroCarousel from "../screens/IntroCarousel";
 import LandingNoWallet from "../screens/LandingNoWallet";
@@ -40,6 +41,7 @@ export type RootStackParamList = {
   Unlock: undefined;
   Main: undefined;
   Activity: undefined;
+  ActivityDetails: { activityId: string };
   ProfilePreferences: undefined;
   ProfileBackup: undefined;
   ProfileLock: undefined;
@@ -200,6 +202,11 @@ export default function RootStack() {
             name="Activity"
             component={ActivityScreen}
             options={{ ...headerOptions, title: "Activity" }}
+          />
+          <Stack.Screen
+            name="ActivityDetails"
+            component={ActivityDetailsScreen}
+            options={{ ...headerOptions, title: "Activity details" }}
           />
           <Stack.Screen
             name="ProfilePreferences"

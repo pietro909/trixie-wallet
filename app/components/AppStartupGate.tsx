@@ -38,9 +38,7 @@ export default function AppStartupGate({
         style={[styles.container, { backgroundColor: theme.colors.background }]}
       >
         <WalletMinimal color={theme.colors.primary} size={64} />
-        <Text style={[styles.title, { color: theme.colors.text }]}>
-          Trixie
-        </Text>
+        <Text style={[styles.title, { color: theme.colors.text }]}>Trixie</Text>
         <ActivityIndicator
           color={theme.colors.primary}
           size="small"

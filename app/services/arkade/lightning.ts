@@ -290,6 +290,19 @@ export async function disposeLightning(): Promise<void> {
   }
 }
 
+/**
+ * Wipe every row from the local Boltz swap repository.
+ *
+ * The `boltz_swaps` table has no `wallet_id` column — it's a single shared
+ * table owned by the boltz-swap package. Without this, swaps recorded by a
+ * prior wallet remain visible in a freshly-created wallet's Activity feed.
+ * Caller must `disposeLightning()` first.
+ */
+export async function clearAllSwaps(): Promise<void> {
+  const repo = new SQLiteSwapRepository(getSharedSqlExecutor());
+  await repo.clear();
+}
+
 export async function createLightningInvoice(
   args: CreateLightningInvoiceRequest,
 ): Promise<CreateLightningInvoiceResponse> {
@@ -340,6 +353,46 @@ export async function getLightningFees(network: string): Promise<FeesResponse> {
   const fees = await swaps.swapProvider.getFees();
   feesCache = { network, fees };
   return fees;
+}
+
+export type SubmarineFeeQuote = {
+  feeSats: number;
+  percentage: number;
+  minerFeesSats: number;
+};
+
+/**
+ * Estimate the fee for paying a Lightning invoice (submarine swap) without
+ * needing an active `ArkadeSwaps` instance. Fetches Boltz fees through a
+ * standalone provider so the Review screen can render a real number before
+ * the user taps Send. Returns null when Lightning is not supported on the
+ * active network or the fee fetch fails (caller falls back to a generic
+ * message).
+ */
+export async function quoteSubmarineSwapFee(
+  network: string,
+  amountSats: number,
+): Promise<SubmarineFeeQuote | null> {
+  const apiUrl = boltzApiUrlForNetwork(network);
+  const boltzNetwork = asBoltzNetwork(network);
+  if (!apiUrl || !boltzNetwork) return null;
+  try {
+    let fees = feesCache?.network === network ? feesCache.fees : null;
+    if (!fees) {
+      const provider = new BoltzSwapProvider({
+        apiUrl,
+        network: boltzNetwork,
+      });
+      fees = await provider.getFees();
+      feesCache = { network, fees };
+    }
+    const percentage = fees.submarine.percentage;
+    const minerFeesSats = fees.submarine.minerFees;
+    const feeSats = Math.ceil((amountSats * percentage) / 100) + minerFeesSats;
+    return { feeSats, percentage, minerFeesSats };
+  } catch {
+    return null;
+  }
 }
 
 export function clearLightningCaches(): void {
@@ -444,5 +497,28 @@ export async function restoreLightningActivity(): Promise<LightningRestoreSummar
       "Failed to restore Lightning activity",
       e,
     );
+  }
+}
+
+/**
+ * Pull the latest Boltz status for every non-final swap in the local repo.
+ *
+ * The SwapManager normally receives status updates over WebSocket and falls
+ * back to polling every 30s. But if the WS dropped while the app was
+ * backgrounded — or if Boltz pushed `invoice.settled` in between — the local
+ * swap row can stay stuck at `transaction.confirmed` until the next poll
+ * cycle. Calling this on pull-to-refresh closes that gap so titles/statuses
+ * line up with reality immediately.
+ *
+ * Best-effort: returns silently when Lightning is not initialized or the
+ * Boltz API is unreachable. Callers should not block their critical path on
+ * the result.
+ */
+export async function refreshSwapsStatus(): Promise<void> {
+  if (!activeInstance) return;
+  try {
+    await activeInstance.refreshSwapsStatus();
+  } catch {
+    // best-effort; the next polling cycle will catch up
   }
 }

@@ -8,7 +8,13 @@ import {
   type ViewStyle,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import { type AppTheme, motion, radius, spacing, typography } from "../theme/theme";
+import {
+  type AppTheme,
+  motion,
+  radius,
+  spacing,
+  typography,
+} from "../theme/theme";
 
 type Variant = "primary" | "secondary" | "danger" | "ghost";
 

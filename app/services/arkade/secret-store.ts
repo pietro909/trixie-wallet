@@ -59,7 +59,10 @@ export async function readSecret(walletId: string): Promise<StoredSecret> {
     ) {
       return parsed;
     }
-    throw new ArkadeError("secret_storage_failed", "Wallet secret is malformed");
+    throw new ArkadeError(
+      "secret_storage_failed",
+      "Wallet secret is malformed",
+    );
   } catch (e) {
     throw toArkadeError(
       "secret_storage_failed",

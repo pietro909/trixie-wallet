@@ -148,6 +148,31 @@ export default function ReceiveQRScreen() {
   });
   const swapStatus = swapActivity?.status;
 
+  // For non-Lightning receive flows (arkade onchain/offchain), watch the
+  // wallet activity list — driven by the global incoming-funds listener — and
+  // celebrate the first new incoming payment that arrives after this screen
+  // mounted.
+  const baselineRef = React.useRef<Set<string> | null>(null);
+  const arkadeActivities = useAppStore((s) => s.wallet?.activities ?? null);
+  if (baselineRef.current == null && arkadeActivities) {
+    baselineRef.current = new Set(arkadeActivities.map((a) => a.id));
+  }
+  const arkadeReceived = React.useMemo(() => {
+    if (type === "lightning") return null;
+    if (!arkadeActivities) return null;
+    const baseline = baselineRef.current;
+    if (!baseline) return null;
+    return (
+      arkadeActivities.find(
+        (a) =>
+          !baseline.has(a.id) &&
+          a.kind === "payment" &&
+          a.direction === "in" &&
+          a.rail === "arkade",
+      ) ?? null
+    );
+  }, [type, arkadeActivities]);
+
   const [primary, all, error] = React.useMemo<
     [ReceivePayload | null, ReceivePayload[], string | null]
   >(() => {
@@ -235,10 +260,25 @@ export default function ReceiveQRScreen() {
   const showAddAmount = type !== "lnurl" && type !== "lightning" && !amountSats;
   const lightningSettled = swapStatus === "confirmed";
   const lightningFailed = swapStatus === "failed" || swapStatus === "refunded";
-  const settledAmountSats =
-    lightningSettled && swapActivity?.amountSats != null
-      ? swapActivity.amountSats
-      : (lightningCreditedSats ?? primary.amountSats);
+  const received = lightningSettled || arkadeReceived != null;
+  const receivedAmountSats = lightningSettled
+    ? (swapActivity?.amountSats ?? lightningCreditedSats ?? primary.amountSats)
+    : (arkadeReceived?.amountSats ?? primary.amountSats);
+  // Only boarding deposits actually need to wait for an onchain confirmation;
+  // arkade offchain receives are usable immediately. The activity id prefix
+  // is the cheapest way to discriminate without inspecting raw metadata.
+  const receivedIsBoarding =
+    arkadeReceived?.id.startsWith("arkade:boarding:") === true;
+  const receivedPending =
+    receivedIsBoarding && arkadeReceived?.status === "pending";
+  const receivedTitle = receivedPending
+    ? "Payment detected"
+    : "Payment received";
+  const receivedHint = lightningSettled
+    ? "Funds claimed and added to your wallet."
+    : receivedPending
+      ? "Detected onchain — waiting for confirmation."
+      : "Funds added to your wallet.";
 
   return (
     <SafeAreaView
@@ -256,26 +296,26 @@ export default function ReceiveQRScreen() {
             },
           ]}
         >
-          {lightningSettled ? (
+          {received ? (
             <View style={styles.lightningSettledWrap}>
               <CheckCircle2 color={theme.colors.success} size={72} />
               <Text style={[styles.settledTitle, { color: theme.colors.text }]}>
-                Payment received
+                {receivedTitle}
               </Text>
-              {settledAmountSats != null ? (
+              {receivedAmountSats != null ? (
                 <Text
                   style={[
                     styles.settledAmount,
                     { color: theme.colors.success },
                   ]}
                 >
-                  +{formatSats(settledAmountSats)} {unitLabel}
+                  +{formatSats(receivedAmountSats)} {unitLabel}
                 </Text>
               ) : null}
               <Text
                 style={[styles.settledHint, { color: theme.colors.textSubtle }]}
               >
-                Funds claimed and added to your wallet.
+                {receivedHint}
               </Text>
             </View>
           ) : lightningFailed ? (
@@ -301,7 +341,7 @@ export default function ReceiveQRScreen() {
               />
             </View>
           )}
-          {!lightningSettled && !lightningFailed ? (
+          {!received && !lightningFailed ? (
             <Text
               numberOfLines={1}
               style={[styles.destination, { color: theme.colors.text }]}
@@ -310,7 +350,7 @@ export default function ReceiveQRScreen() {
               {primary.destination}
             </Text>
           ) : null}
-          {lightningSettled || lightningFailed ? null : type === "lightning" &&
+          {received || lightningFailed ? null : type === "lightning" &&
             primary.amountSats ? (
             <View style={styles.lightningAmounts}>
               <Text style={[styles.amount, { color: theme.colors.textSubtle }]}>
@@ -364,7 +404,7 @@ export default function ReceiveQRScreen() {
           )}
         </View>
 
-        {lightningSettled || lightningFailed ? (
+        {received || lightningFailed ? (
           <View style={styles.actions}>
             <Pressable
               accessibilityLabel="Back to wallet"

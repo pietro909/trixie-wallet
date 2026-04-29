@@ -1,4 +1,3 @@
-
 import { ThemeProvider } from "@react-navigation/native";
 import { toNavigationTheme } from "@/app/theme/theme";
 import { useResolvedTheme } from "@/app/hooks/useResolvedTheme";

@@ -13,6 +13,10 @@ import { useToast } from "../../components/ToastProvider";
 import { useFormatSats } from "../../hooks/useFormatSats";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
+import {
+  quoteSubmarineSwapFee,
+  type SubmarineFeeQuote,
+} from "../../services/arkade/lightning";
 import { paymentTypeLabel } from "../../services/paymentParser";
 import { executeSend, unsupportedReasonFor } from "../../services/sendExecutor";
 import { satsToFiat } from "../../store/mock";
@@ -86,10 +90,35 @@ export default function SendReviewScreen() {
   const nav = useNavigation<Nav>();
   const { option, amountSats } = useRoute<Route>().params;
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
+  const network = useAppStore(
+    (s) => s.network.detectedNetwork ?? s.wallet?.network ?? null,
+  );
   const { format: formatSats, label: unitLabel } = useFormatSats();
   const { showToast } = useToast();
 
   const [sending, setSending] = React.useState(false);
+  const [lightningFee, setLightningFee] =
+    React.useState<SubmarineFeeQuote | null>(null);
+  const [lightningFeeLoading, setLightningFeeLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (option.type !== "lightning" || !network) return;
+    let cancelled = false;
+    setLightningFeeLoading(true);
+    quoteSubmarineSwapFee(network, amountSats)
+      .then((quote) => {
+        if (!cancelled) setLightningFee(quote);
+      })
+      .catch(() => {
+        if (!cancelled) setLightningFee(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLightningFeeLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [option.type, network, amountSats]);
 
   const unsupported = unsupportedReasonFor(option);
 
@@ -172,7 +201,27 @@ export default function SendReviewScreen() {
             value={`${formatSats(amountSats)} ${unitLabel}`}
             emphasis
           />
-          <Row label="Network fee" value="Calculated by Arkade" />
+          {option.type === "lightning" ? (
+            <>
+              <Row
+                label="Network fee"
+                value={
+                  lightningFeeLoading
+                    ? "Calculating…"
+                    : lightningFee
+                      ? `${formatSats(lightningFee.feeSats)} ${unitLabel}`
+                      : "Unavailable"
+                }
+              />
+              {lightningFee ? (
+                <Row
+                  label="Total"
+                  value={`${formatSats(amountSats + lightningFee.feeSats)} ${unitLabel}`}
+                  emphasis
+                />
+              ) : null}
+            </>
+          ) : null}
         </View>
 
         {unsupported ? (
@@ -187,19 +236,7 @@ export default function SendReviewScreen() {
               {unsupported}
             </Text>
           </View>
-        ) : (
-          <View
-            style={[
-              styles.notice,
-              { backgroundColor: `${theme.colors.warning}15` },
-            ]}
-          >
-            <AlertTriangle color={theme.colors.warning} size={16} />
-            <Text style={[styles.noticeText, { color: theme.colors.warning }]}>
-              Fee is determined by the Arkade SDK at send time.
-            </Text>
-          </View>
-        )}
+        ) : null}
       </ScrollView>
 
       <View style={styles.footer}>

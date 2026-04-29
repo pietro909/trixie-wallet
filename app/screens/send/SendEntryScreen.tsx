@@ -94,10 +94,13 @@ export default function SendEntryScreen() {
       scanLockRef.current = false;
     } finally {
       // unlock scanner after navigation has settled, in case user comes back
-      setTimeout(() => {
-        scanLockRef.current = false;
-        setBusy(false);
-      }, source === "scan" ? 800 : 200);
+      setTimeout(
+        () => {
+          scanLockRef.current = false;
+          setBusy(false);
+        },
+        source === "scan" ? 800 : 200,
+      );
     }
   }
 
@@ -166,10 +169,17 @@ export default function SendEntryScreen() {
           ) : status === "denied" ? (
             <View style={styles.permissionBlock}>
               <CameraIcon color={theme.colors.textSubtle} size={36} />
-              <Text style={[styles.permissionTitle, { color: theme.colors.text }]}>
+              <Text
+                style={[styles.permissionTitle, { color: theme.colors.text }]}
+              >
                 Camera access denied
               </Text>
-              <Text style={[styles.permissionBody, { color: theme.colors.textMuted }]}>
+              <Text
+                style={[
+                  styles.permissionBody,
+                  { color: theme.colors.textMuted },
+                ]}
+              >
                 Enable camera access in system settings to scan QR codes, or
                 paste a payment string below.
               </Text>
@@ -177,10 +187,17 @@ export default function SendEntryScreen() {
           ) : (
             <View style={styles.permissionBlock}>
               <ScanLine color={theme.colors.textSubtle} size={36} />
-              <Text style={[styles.permissionTitle, { color: theme.colors.text }]}>
+              <Text
+                style={[styles.permissionTitle, { color: theme.colors.text }]}
+              >
                 Scan QR codes
               </Text>
-              <Text style={[styles.permissionBody, { color: theme.colors.textMuted }]}>
+              <Text
+                style={[
+                  styles.permissionBody,
+                  { color: theme.colors.textMuted },
+                ]}
+              >
                 Allow the camera to scan a payment QR.
               </Text>
               <Pressable

@@ -1,3 +1,5 @@
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -5,12 +7,22 @@ import {
   Repeat,
 } from "lucide-react-native";
 import * as React from "react";
-import { FlatList, RefreshControl, StyleSheet, Text, View } from "react-native";
+import {
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useFormatSats } from "../hooks/useFormatSats";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
+import type { RootStackParamList } from "../navigation/RootStack";
 import type { Activity } from "../store/types";
 import { useAppStore } from "../store/useAppStore";
 import { spacing, typography } from "../theme/theme";
+
+type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 function formatDate(timestamp: number): string {
   const d = new Date(timestamp);
@@ -37,6 +49,7 @@ function statusSuffix(status: Activity["status"]): string {
 
 export default function ActivityScreen() {
   const theme = useResolvedTheme();
+  const nav = useNavigation<Nav>();
   const wallet = useAppStore((s) => s.wallet);
   const refreshWallet = useAppStore((s) => s.refreshWallet);
   const { format: formatSats, label: unitLabel } = useFormatSats();
@@ -76,7 +89,16 @@ export default function ActivityScreen() {
         : theme.colors.text;
     const sign = isSelf || item.amountSats == null ? "" : isIn ? "+" : "-";
     return (
-      <View style={[styles.row, { borderBottomColor: theme.colors.divider }]}>
+      <Pressable
+        onPress={() => nav.navigate("ActivityDetails", { activityId: item.id })}
+        style={({ pressed }) => [
+          styles.row,
+          {
+            borderBottomColor: theme.colors.divider,
+            opacity: pressed ? 0.6 : 1,
+          },
+        ]}
+      >
         <View style={[styles.icon, { backgroundColor: iconBg }]}>
           <Icon color={iconColor} size={18} />
         </View>
@@ -95,7 +117,7 @@ export default function ActivityScreen() {
             {formatSats(item.amountSats)} {unitLabel}
           </Text>
         ) : null}
-      </View>
+      </Pressable>
     );
   }
 

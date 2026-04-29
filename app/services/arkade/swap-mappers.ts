@@ -3,19 +3,27 @@ import {
   type BoltzSubmarineSwap,
   type BoltzSwap,
   type BoltzSwapStatus,
+  isReverseClaimableStatus,
   isReverseFailedStatus,
   isReverseSuccessStatus,
   isSubmarineFailedStatus,
   isSubmarineSuccessStatus,
 } from "@arkade-os/boltz-swap";
 import type { Activity, ActivityStatus } from "../../store/types";
+import { boltzApiUrlForNetwork } from "./lightning";
 import type { LocalSwapMetadata } from "./swap-storage";
 
 export type ActivitySources = {
-  /** Arkade-side rows already mapped via `mapArkTxs`. */
+  /** Arkade-side rows produced by `getActivityHistory`. */
   arkadeActivities: Activity[];
   swaps: BoltzSwap[];
   metadata: LocalSwapMetadata[];
+  /** Active network name, used to resolve the Boltz API URL for metadata. */
+  network: string | null;
+};
+
+type ProjectionContext = {
+  network: string | null;
 };
 
 function reverseSwapStatus(status: BoltzSwapStatus): ActivityStatus {
@@ -31,34 +39,66 @@ function submarineSwapStatus(swap: BoltzSubmarineSwap): ActivityStatus {
   return "pending";
 }
 
-function reverseTitle(status: ActivityStatus): string {
-  switch (status) {
-    case "confirmed":
-      return "Lightning received";
-    case "failed":
-      return "Lightning invoice failed";
-    case "refunded":
+/**
+ * Title for a reverse swap (Lightning -> Arkade).
+ *
+ * Lifecycle: `swap.created -> transaction.mempool -> transaction.confirmed
+ *            -> invoice.settled`.
+ *
+ * - `swap.created`: nothing has happened on the LN side yet. Title reads
+ *   "Lightning invoice" — the user is awaiting payment.
+ * - `transaction.mempool` / `transaction.confirmed` (claimable states): Boltz
+ *   has already received the LN payment and locked matching funds on Arkade
+ *   for us. The LN side is effectively done; we're only waiting for our
+ *   on-Arkade claim to be observed. Title reads "Lightning received".
+ * - `invoice.settled`: fully settled. Title reads "Lightning received".
+ * - Failed / expired terminal states: dedicated titles.
+ *
+ * Status (`ActivityStatus`) remains `"pending"` until `invoice.settled` so
+ * the user still sees a Pending tag while the on-chain claim settles.
+ */
+function reverseTitle(swap: BoltzReverseSwap): string {
+  if (isReverseFailedStatus(swap.status)) {
+    if (swap.status === "transaction.refunded") {
       return "Lightning invoice refunded";
-    case "pending":
-      return "Lightning invoice";
-    default:
-      return "Lightning invoice";
+    }
+    return "Lightning invoice failed";
   }
+  if (
+    isReverseSuccessStatus(swap.status) ||
+    isReverseClaimableStatus(swap.status)
+  ) {
+    return "Lightning received";
+  }
+  return "Lightning invoice";
 }
 
-function submarineTitle(status: ActivityStatus): string {
-  switch (status) {
-    case "confirmed":
-      return "Lightning sent";
-    case "failed":
-      return "Lightning send failed";
-    case "refunded":
-      return "Lightning refund";
-    case "pending":
-      return "Lightning payment";
-    default:
-      return "Lightning payment";
+/**
+ * Title for a submarine swap (Arkade -> Lightning).
+ *
+ * Lifecycle: `swap.created -> invoice.set -> invoice.pending -> invoice.paid
+ *            -> transaction.claimed`.
+ *
+ * - Pre-`invoice.paid`: the LN destination has not been paid yet. Title
+ *   reads "Lightning payment".
+ * - `invoice.paid`: Boltz has paid the LN destination. The send has
+ *   landed; we're waiting for Boltz to claim our Arkade lockup. Title
+ *   reads "Lightning sent".
+ * - `transaction.claimed`: fully settled. Title reads "Lightning sent".
+ * - Refunded: explicit "Lightning refund" title.
+ * - Failed: "Lightning send failed".
+ */
+function submarineTitle(swap: BoltzSubmarineSwap): string {
+  if (swap.refunded) return "Lightning refund";
+  if (isSubmarineFailedStatus(swap.status)) return "Lightning send failed";
+  if (
+    isSubmarineSuccessStatus(swap.status) ||
+    swap.status === "invoice.paid" ||
+    swap.status === "transaction.claim.pending"
+  ) {
+    return "Lightning sent";
   }
+  return "Lightning payment";
 }
 
 function metadataBySwapId(
@@ -86,6 +126,97 @@ function submarineAmountSats(
 }
 
 /**
+ * Common metadata projected for every Lightning Activity row.
+ *
+ * IMPORTANT: never project `BoltzReverseSwap.preimage` /
+ * `BoltzSubmarineSwap.preimage` / `BoltzChainSwap.preimage`. Preimages are
+ * the proof-of-payment secret and must not land in `Activity.metadata`,
+ * which is persisted to AsyncStorage.
+ */
+function baseLightningMetadata(
+  swap: BoltzSwap,
+  meta: LocalSwapMetadata | undefined,
+  ctx: ProjectionContext,
+): NonNullable<Activity["metadata"]> {
+  const out: NonNullable<Activity["metadata"]> = {
+    swapId: swap.id,
+    swapType: swap.type,
+    provider: "boltz",
+  };
+  if (ctx.network) {
+    out.network = ctx.network;
+    const apiUrl = boltzApiUrlForNetwork(ctx.network);
+    if (apiUrl) out.boltzApiUrl = apiUrl;
+  }
+  if (meta?.linkSource) out.linkSource = meta.linkSource;
+  if (meta?.invoiceAmountSats != null) {
+    out.invoiceAmountSats = meta.invoiceAmountSats;
+  }
+  if (meta?.arkadeAmountSats != null) {
+    out.arkadeAmountSats = meta.arkadeAmountSats;
+  }
+  if (meta?.paymentHash) out.paymentHash = meta.paymentHash;
+  if (meta?.walletTxId) out.walletTxId = meta.walletTxId;
+  return out;
+}
+
+function reverseLightningMetadata(
+  swap: BoltzReverseSwap,
+  meta: LocalSwapMetadata | undefined,
+  ctx: ProjectionContext,
+): NonNullable<Activity["metadata"]> {
+  const out = baseLightningMetadata(swap, meta, ctx);
+  if (swap.response.invoice) out.invoice = swap.response.invoice;
+  if (out.paymentHash == null && swap.request.preimageHash) {
+    out.paymentHash = swap.request.preimageHash;
+  }
+  if (out.invoiceAmountSats == null && swap.request.invoiceAmount != null) {
+    out.invoiceAmountSats = swap.request.invoiceAmount;
+  }
+  if (out.arkadeAmountSats == null && swap.response.onchainAmount != null) {
+    out.arkadeAmountSats = swap.response.onchainAmount;
+  }
+  // Reverse swap (Lightning -> Arkade): user receives `arkadeAmountSats` on
+  // Arkade after Boltz takes a fee from the invoice value. Fee is the
+  // positive difference.
+  if (
+    typeof out.invoiceAmountSats === "number" &&
+    typeof out.arkadeAmountSats === "number"
+  ) {
+    const fee = out.invoiceAmountSats - out.arkadeAmountSats;
+    if (fee > 0) out.lightningFeeSats = fee;
+  }
+  return out;
+}
+
+function submarineLightningMetadata(
+  swap: BoltzSubmarineSwap,
+  meta: LocalSwapMetadata | undefined,
+  ctx: ProjectionContext,
+): NonNullable<Activity["metadata"]> {
+  const out = baseLightningMetadata(swap, meta, ctx);
+  if (swap.request.invoice) out.invoice = swap.request.invoice;
+  if (out.paymentHash == null && swap.preimageHash) {
+    out.paymentHash = swap.preimageHash;
+  }
+  if (out.arkadeAmountSats == null && swap.response.expectedAmount != null) {
+    out.arkadeAmountSats = swap.response.expectedAmount;
+  }
+  // Submarine swap (Arkade -> Lightning): user sends `arkadeAmountSats` on
+  // Arkade, of which `invoiceAmountSats` reaches the Lightning destination.
+  // Fee is the positive difference.
+  if (
+    typeof out.arkadeAmountSats === "number" &&
+    typeof out.invoiceAmountSats === "number"
+  ) {
+    const fee = out.arkadeAmountSats - out.invoiceAmountSats;
+    if (fee > 0) out.lightningFeeSats = fee;
+  }
+  if (swap.refunded) out.refunded = true;
+  return out;
+}
+
+/**
  * Build an Activity row from a Boltz swap. Caller has already filtered the
  * swap to be either reverse or submarine — chain swaps are tolerated by the
  * mapper but rendered as a generic Lightning activity row.
@@ -93,6 +224,7 @@ function submarineAmountSats(
 function mapSwapToActivity(
   swap: BoltzSwap,
   meta: LocalSwapMetadata | undefined,
+  ctx: ProjectionContext,
 ): Activity {
   const baseId = meta?.walletTxId ?? `swap:${swap.id}`;
   const timestampMs = swap.createdAt * 1000;
@@ -104,7 +236,7 @@ function mapSwapToActivity(
       direction: "in",
       amountSats: reverseAmountSats(swap, meta),
       timestamp: timestampMs,
-      title: reverseTitle(status),
+      title: reverseTitle(swap),
       status,
       rail: "lightning",
       source: {
@@ -113,6 +245,7 @@ function mapSwapToActivity(
         swapId: swap.id,
         swapType: "reverse",
       },
+      metadata: reverseLightningMetadata(swap, meta, ctx),
     };
   }
   if (swap.type === "submarine") {
@@ -123,7 +256,7 @@ function mapSwapToActivity(
       direction: status === "refunded" ? "in" : "out",
       amountSats: submarineAmountSats(swap, meta),
       timestamp: timestampMs,
-      title: submarineTitle(status),
+      title: submarineTitle(swap),
       status,
       rail: "lightning",
       source: {
@@ -132,6 +265,7 @@ function mapSwapToActivity(
         swapId: swap.id,
         swapType: "submarine",
       },
+      metadata: submarineLightningMetadata(swap, meta, ctx),
     };
   }
   // Chain swap fallback — kept generic; Milestone 2 UI does not focus on them.
@@ -148,36 +282,50 @@ function mapSwapToActivity(
       swapId: swap.id,
       swapType: "chain",
     },
+    metadata: baseLightningMetadata(swap, meta, ctx),
   };
 }
 
 /**
- * Merge SDK transactions, Boltz swap rows, and the local linkage table into a
- * single user-facing Activity list.
+ * Merge Arkade Activities (built by `getActivityHistory`), Boltz swap rows,
+ * and the local linkage table into a single user-facing Activity list.
  *
- * Dedup rules (per MILESTONE_2):
- * - When a swap row has a linked walletTxId, the Lightning row gets that id and
- *   the matching Arkade-tx row is suppressed.
+ * Dedup rules:
+ * - When a swap row has a linked `walletTxId` (raw `arkTxid` | `commitmentTxid`
+ *   | `boardingTxid`, depending on what the linkage handshake captured), the
+ *   Lightning row keeps that raw id, and the matching Arkade payment row is
+ *   suppressed. Suppression is keyed off namespaced Activity ids, so the
+ *   linked raw txid is expanded into all candidate Arkade payment id forms.
+ * - Wallet-event rows (renewal, settlement, asset) are never suppressed by
+ *   Lightning linkage — those are not Lightning-equivalent payments.
  * - When a swap row is unlinked, both the swap row (id `swap:${swapId}`) and
- *   any Arkade rows are kept; the linkage handshake (Task #8) populates the
- *   linkage as txids become known.
+ *   any Arkade rows coexist; the linkage handshake populates the linkage as
+ *   txids become known.
  */
 export function mergeActivities(sources: ActivitySources): Activity[] {
   const metaById = metadataBySwapId(sources.metadata);
-  const linkedWalletTxIds = new Set<string>();
+  const linkedActivityIds = new Set<string>();
   for (const m of sources.metadata) {
-    if (m.walletTxId) linkedWalletTxIds.add(m.walletTxId);
+    if (!m.walletTxId) continue;
+    const t = m.walletTxId;
+    linkedActivityIds.add(`arkade:offchain:${t}`);
+    linkedActivityIds.add(`arkade:batch:${t}`);
+    linkedActivityIds.add(`arkade:boarding:${t}`);
+    linkedActivityIds.add(`arkade:exit:${t}`);
+    // Intentionally NOT included: arkade:renewal, arkade:settlement,
+    // arkade:asset — wallet-event rows must remain visible.
   }
+  const ctx: ProjectionContext = { network: sources.network };
   const swapActivities: Activity[] = sources.swaps.map((swap) =>
-    mapSwapToActivity(swap, metaById.get(swap.id)),
+    mapSwapToActivity(swap, metaById.get(swap.id), ctx),
   );
   const arkadeActivities: Activity[] = sources.arkadeActivities.filter(
-    (a) => !linkedWalletTxIds.has(a.id),
+    (a) => !linkedActivityIds.has(a.id),
   );
-  // Deduplicate by Activity id (Lightning row wins over Arkade row when both
-  // reference the same walletTxId — already handled by the filter above, but
-  // the Map ensures stability when a swap row inherited a tx id that doesn't
-  // appear in the SDK history yet).
+  // Deduplicate by Activity id. Lightning rows win when both sides reference
+  // the same id — the filter above already strips matching Arkade payment
+  // rows, but the Map guarantees stability when a swap row carries an id that
+  // doesn't (yet) appear in the Arkade history.
   const byId = new Map<string, Activity>();
   for (const a of swapActivities) byId.set(a.id, a);
   for (const a of arkadeActivities) {

@@ -55,14 +55,13 @@ export default function ProfileScreen() {
       {/* User Section */}
       <View style={styles.userSection}>
         <View
-          style={[
-            styles.avatar,
-            { backgroundColor: theme.colors.primarySoft },
-          ]}
+          style={[styles.avatar, { backgroundColor: theme.colors.primarySoft }]}
         >
           <CircleUserRound color={theme.colors.primary} size={40} />
         </View>
-        <Text style={[styles.walletIdLabel, { color: theme.colors.textSubtle }]}>
+        <Text
+          style={[styles.walletIdLabel, { color: theme.colors.textSubtle }]}
+        >
           {shortId}
         </Text>
       </View>

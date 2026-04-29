@@ -1,11 +1,5 @@
 import * as React from "react";
-import {
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Lock } from "lucide-react-native";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";

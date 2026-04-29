@@ -1,9 +1,5 @@
 import * as React from "react";
-import {
-  Animated,
-  StyleSheet,
-  Text,
-} from "react-native";
+import { Animated, StyleSheet, Text } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { radius, spacing, typography, useAppTheme } from "../theme/theme";
 

@@ -1,20 +1,25 @@
-import { RestDelegatorProvider, Wallet } from "@arkade-os/sdk";
+import {
+  type IncomingFunds,
+  RestDelegatorProvider,
+  Wallet,
+} from "@arkade-os/sdk";
 import {
   ExpoArkProvider,
   ExpoIndexerProvider,
 } from "@arkade-os/sdk/adapters/expo";
 import type {
+  Activity,
   ArkadeServerInfo,
   ArkadeWalletMetadata,
   WalletBehavior,
 } from "../../store/types";
+import { getActivityHistory } from "./activity-history";
 import { ArkadeError, toArkadeError } from "./errors";
 import {
   buildIdentityFromSecret,
   bytesToHex,
   type IdentityArtifacts,
 } from "./identity";
-import { mapArkTxs } from "./mappers";
 import {
   defaultDelegatorUrlForNetwork,
   isMainnetForNetworkName,
@@ -33,13 +38,50 @@ export type WalletSnapshot = {
     preconfirmed: number;
     boardingTotal: number;
   };
-  activities: ReturnType<typeof mapArkTxs>;
+  activities: Activity[];
 };
 
 let activeWalletId: string | null = null;
 let activeBehaviorKey: string | null = null;
 let activeWalletPromise: Promise<Wallet> | null = null;
 let activeWalletInstance: Wallet | null = null;
+let incomingFundsListener: ((funds: IncomingFunds) => void) | null = null;
+let incomingFundsUnsubscribe: (() => void) | null = null;
+
+export function setIncomingFundsListener(
+  listener: ((funds: IncomingFunds) => void) | null,
+): void {
+  incomingFundsListener = listener;
+}
+
+async function attachIncomingFundsSubscription(wallet: Wallet): Promise<void> {
+  detachIncomingFundsSubscription();
+  try {
+    incomingFundsUnsubscribe = await wallet.notifyIncomingFunds((funds) => {
+      const listener = incomingFundsListener;
+      if (!listener) return;
+      try {
+        listener(funds);
+      } catch {
+        // listener errors must not crash the SSE / mempool watchers
+      }
+    });
+  } catch {
+    // best-effort; activity will still update on the next manual refresh
+  }
+}
+
+function detachIncomingFundsSubscription(): void {
+  const stop = incomingFundsUnsubscribe;
+  incomingFundsUnsubscribe = null;
+  if (stop) {
+    try {
+      stop();
+    } catch {
+      // ignore
+    }
+  }
+}
 
 function behaviorKey(behavior: WalletBehavior): string {
   return `${behavior.vtxoAutoRenewal ? "renew" : "manual"}:${
@@ -163,16 +205,29 @@ async function buildWallet(
   }
 }
 
-export async function snapshotWallet(wallet: Wallet): Promise<WalletSnapshot> {
+export type SnapshotWalletOptions = {
+  /** Active network — stamped onto every emitted Activity for offline detail rendering. */
+  network?: string | null;
+};
+
+export async function snapshotWallet(
+  wallet: Wallet,
+  arkServerUrl: string,
+  options: SnapshotWalletOptions = {},
+): Promise<WalletSnapshot> {
   try {
-    const [publicKeyBytes, arkAddress, boardingAddress, balance, txs] =
+    const [publicKeyBytes, arkAddress, boardingAddress, balance] =
       await Promise.all([
         wallet.identity.compressedPublicKey(),
         wallet.getAddress(),
         wallet.getBoardingAddress(),
         wallet.getBalance(),
-        wallet.getTransactionHistory(),
       ]);
+    const activities = await getActivityHistory(wallet, arkServerUrl, {
+      network: options.network ?? null,
+      arkadeAddress: arkAddress,
+      boardingAddress,
+    });
     return {
       publicKeyHex: bytesToHex(publicKeyBytes),
       arkAddress,
@@ -184,7 +239,7 @@ export async function snapshotWallet(wallet: Wallet): Promise<WalletSnapshot> {
         preconfirmed: balance.preconfirmed,
         boardingTotal: balance.boarding.total,
       },
-      activities: mapArkTxs(txs),
+      activities,
     };
   } catch (e) {
     throw toArkadeError("refresh_failed", "Failed to refresh wallet state", e);
@@ -215,7 +270,10 @@ export async function createWalletInstance(
   activeBehaviorKey = behaviorKey(input.behavior);
   activeWalletInstance = wallet;
   activeWalletPromise = Promise.resolve(wallet);
-  const snapshot = await snapshotWallet(wallet);
+  await attachIncomingFundsSubscription(wallet);
+  const snapshot = await snapshotWallet(wallet, input.arkServerUrl, {
+    network: input.network,
+  });
   return { wallet, snapshot };
 }
 
@@ -253,6 +311,7 @@ export async function ensureWallet(input: EnsureWalletInput): Promise<Wallet> {
       metadata.esploraUrl,
     );
     activeWalletInstance = wallet;
+    await attachIncomingFundsSubscription(wallet);
     return wallet;
   })();
   activeWalletId = metadata.id;
@@ -284,11 +343,14 @@ export async function refreshWalletSnapshot(
   behavior: WalletBehavior,
 ): Promise<WalletSnapshot> {
   const wallet = await ensureWallet({ behavior, metadata });
-  return snapshotWallet(wallet);
+  return snapshotWallet(wallet, metadata.arkServerUrl, {
+    network: metadata.network,
+  });
 }
 
 export async function disposeWallet(): Promise<void> {
   const instance = activeWalletInstance;
+  detachIncomingFundsSubscription();
   activeWalletId = null;
   activeBehaviorKey = null;
   activeWalletInstance = null;

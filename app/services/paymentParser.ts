@@ -132,7 +132,10 @@ function decodeLightning(invoice: string): LightningDecodeResult {
         : undefined;
     return {
       amountSats: sats > 0 ? sats : undefined,
-      memo: typeof description === "string" && description ? description : undefined,
+      memo:
+        typeof description === "string" && description
+          ? description
+          : undefined,
       expiresAt,
       paymentHash: typeof paymentHash === "string" ? paymentHash : undefined,
     };

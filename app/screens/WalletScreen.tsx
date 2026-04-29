@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Clock,
   Inbox,
+  Repeat,
 } from "lucide-react-native";
 import * as React from "react";
 import {
@@ -182,15 +183,23 @@ export default function WalletScreen() {
             const sign =
               isSelf || item.amountSats == null ? "" : isIn ? "+" : "-";
             return (
-              <View
+              <Pressable
                 key={item.id}
-                style={[
+                onPress={() =>
+                  nav.navigate("ActivityDetails", { activityId: item.id })
+                }
+                style={({ pressed }) => [
                   styles.txRow,
-                  { borderBottomColor: theme.colors.divider },
+                  {
+                    borderBottomColor: theme.colors.divider,
+                    opacity: pressed ? 0.6 : 1,
+                  },
                 ]}
               >
                 <View style={[styles.txIcon, { backgroundColor: iconBg }]}>
-                  {isIn ? (
+                  {isSelf ? (
+                    <Repeat color={iconColor} size={18} />
+                  ) : isIn ? (
                     <ArrowDownLeft color={iconColor} size={18} />
                   ) : (
                     <ArrowUpRight color={iconColor} size={18} />
@@ -213,7 +222,7 @@ export default function WalletScreen() {
                     {formatSats(item.amountSats)}
                   </Text>
                 ) : null}
-              </View>
+              </Pressable>
             );
           })
         )}

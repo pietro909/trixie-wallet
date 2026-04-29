@@ -9,7 +9,7 @@ export function useResolvedTheme(): AppTheme {
     themePref !== "system"
       ? themePref
       : systemScheme === "dark"
-      ? "dark"
-      : "light";
+        ? "dark"
+        : "light";
   return themes[resolved];
 }

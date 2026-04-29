@@ -13,12 +13,14 @@ import {
   type IdentityArtifacts,
 } from "../services/arkade/identity";
 import {
+  clearAllSwaps,
   disposeLightning,
   ensureLightning,
   findRecentSubmarineSwapId,
   getLightningActivitySources,
   getNonTerminalSwapCount,
   isLightningSupportedForNetwork,
+  refreshSwapsStatus,
   restoreLightningActivity,
   sendLightningPayment,
   setSwapEventListener,
@@ -35,12 +37,14 @@ import {
   ensureWallet,
   probeServer,
   refreshWalletSnapshot,
+  setIncomingFundsListener,
   snapshotWallet,
   type WalletSnapshot,
 } from "../services/arkade/runtime";
 import { deleteSecret, saveSecret } from "../services/arkade/secret-store";
 import { mergeActivities } from "../services/arkade/swap-mappers";
 import {
+  clearSwapMetadataForWallet,
   linkSwapToWalletTx,
   recordSwapMetadata,
 } from "../services/arkade/swap-storage";
@@ -164,12 +168,14 @@ async function persist(state: AppState) {
 async function buildActivities(
   walletId: string,
   arkadeActivities: Activity[],
+  network: string | null,
 ): Promise<Activity[]> {
   const sources = await getLightningActivitySources(walletId);
   return mergeActivities({
     arkadeActivities,
     swaps: sources.swaps,
     metadata: sources.metadata,
+    network,
   });
 }
 
@@ -255,6 +261,7 @@ function scheduleLightningRestore(walletId: string): void {
         const refreshedActivities = await buildActivities(
           walletId,
           after.activities.filter((a) => a.source.type !== "boltz_swap"),
+          useAppStore.getState().network.detectedNetwork ?? after.network,
         ).catch(() => after.activities);
         useAppStore.setState({
           wallet: {
@@ -435,7 +442,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
         snapshot.activities,
       );
       await maybeEnsureLightning(draft, get().walletBehavior);
-      const activities = await buildActivities(walletId, snapshot.activities);
+      const activities = await buildActivities(
+        walletId,
+        snapshot.activities,
+        serverNetwork,
+      );
       const metadata: ArkadeWalletMetadata = { ...draft, activities };
       set((s) => ({
         wallet: metadata,
@@ -515,7 +526,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
         snapshot.activities,
       );
       await maybeEnsureLightning(draft, get().walletBehavior);
-      const activities = await buildActivities(walletId, snapshot.activities);
+      const activities = await buildActivities(
+        walletId,
+        snapshot.activities,
+        serverNetwork,
+      );
       const metadata: ArkadeWalletMetadata = { ...draft, activities };
       set((s) => ({
         wallet: metadata,
@@ -546,7 +561,15 @@ export const useAppStore = create<StoreState>((set, get) => ({
       get().walletBehavior,
     );
     await maybeEnsureLightning(metadata, get().walletBehavior);
-    const activities = await buildActivities(metadata.id, snapshot.activities);
+    // Pull the latest Boltz status for non-final swaps before merging into
+    // Activity. Best-effort: a stale or unreachable Boltz API must not break
+    // wallet refresh, so the helper itself swallows errors.
+    await refreshSwapsStatus();
+    const activities = await buildActivities(
+      metadata.id,
+      snapshot.activities,
+      get().network.detectedNetwork ?? metadata.network,
+    );
     set({ wallet: applySnapshot(metadata, snapshot, activities) });
     await persist(get());
   },
@@ -576,10 +599,13 @@ export const useAppStore = create<StoreState>((set, get) => ({
       throw toArkadeError("send_failed", "Send failed", e);
     }
     try {
-      const snapshot = await snapshotWallet(wallet);
+      const snapshot = await snapshotWallet(wallet, metadata.arkServerUrl, {
+        network: get().network.detectedNetwork ?? metadata.network,
+      });
       const activities = await buildActivities(
         metadata.id,
         snapshot.activities,
+        get().network.detectedNetwork ?? metadata.network,
       );
       set({ wallet: applySnapshot(metadata, snapshot, activities) });
       await persist(get());
@@ -628,10 +654,13 @@ export const useAppStore = create<StoreState>((set, get) => ({
         metadata,
         behavior: get().walletBehavior,
       });
-      const snapshot = await snapshotWallet(wallet);
+      const snapshot = await snapshotWallet(wallet, metadata.arkServerUrl, {
+        network: get().network.detectedNetwork ?? metadata.network,
+      });
       const activities = await buildActivities(
         metadata.id,
         snapshot.activities,
+        get().network.detectedNetwork ?? metadata.network,
       );
       set({ wallet: applySnapshot(metadata, snapshot, activities) });
       await persist(get());
@@ -702,9 +731,19 @@ export const useAppStore = create<StoreState>((set, get) => ({
       } catch {
         // best-effort cleanup
       }
+      try {
+        await clearSwapMetadataForWallet(metadata.id);
+      } catch {
+        // best-effort cleanup
+      }
       await deleteSecret(metadata.id);
     } else {
       await disposeWallet();
+    }
+    try {
+      await clearAllSwaps();
+    } catch {
+      // best-effort cleanup
     }
     set({ ...DEFAULT_STATE, _hydrated: true });
     await AsyncStorage.removeItem(STORAGE_KEY);
@@ -772,6 +811,22 @@ setSwapEventListener(() => {
       .refreshWallet()
       .catch(() => {
         // background refresh; surface only via next user interaction
+      });
+  }, 250);
+});
+
+// Refresh wallet snapshot + Activity list whenever the SDK reports newly
+// received funds (boarding utxo or incoming vtxo). Coalesces bursts.
+let incomingFundsRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+setIncomingFundsListener(() => {
+  if (incomingFundsRefreshTimer) return;
+  incomingFundsRefreshTimer = setTimeout(() => {
+    incomingFundsRefreshTimer = null;
+    useAppStore
+      .getState()
+      .refreshWallet()
+      .catch(() => {
+        // background refresh
       });
   }, 250);
 });

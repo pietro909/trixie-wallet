@@ -1,0 +1,631 @@
+import type { Asset, VirtualCoin, Wallet } from "@arkade-os/sdk";
+import { ExpoIndexerProvider } from "@arkade-os/sdk/adapters/expo";
+import type { Activity, ActivityDirection } from "../../store/types";
+
+// ===== Activity id helpers =====
+
+export type ActivityIdKind =
+  | "boarding"
+  | "offchain"
+  | "batch"
+  | "exit"
+  | "renewal"
+  | "settlement"
+  | "asset";
+
+export function activityId(kind: ActivityIdKind, idValue: string): string {
+  return `arkade:${kind}:${idValue}`;
+}
+
+// ===== Pure aggregation helpers =====
+
+export function sumValue(vtxos: VirtualCoin[]): number {
+  let total = 0;
+  for (const v of vtxos) total += v.value;
+  return total;
+}
+
+export function collectAssets(vtxos: VirtualCoin[]): Asset[] {
+  const map = new Map<string, number>();
+  for (const v of vtxos) {
+    if (!v.assets) continue;
+    for (const a of v.assets) {
+      map.set(a.assetId, (map.get(a.assetId) ?? 0) + a.amount);
+    }
+  }
+  const out: Asset[] = [];
+  for (const [assetId, amount] of map) {
+    if (amount !== 0) out.push({ assetId, amount });
+  }
+  return out;
+}
+
+/**
+ * Net asset delta from the wallet's perspective: positive entries are received,
+ * negative are sent. Mirrors the SDK's `subtractAssets(spent, change)` and is
+ * the primary signal for asset row classification.
+ */
+export function subtractAssets(
+  spent: VirtualCoin[],
+  received: VirtualCoin[],
+): Asset[] {
+  const map = new Map<string, number>();
+  for (const v of received) {
+    if (!v.assets) continue;
+    for (const a of v.assets) {
+      map.set(a.assetId, (map.get(a.assetId) ?? 0) + a.amount);
+    }
+  }
+  for (const v of spent) {
+    if (!v.assets) continue;
+    for (const a of v.assets) {
+      map.set(a.assetId, (map.get(a.assetId) ?? 0) - a.amount);
+    }
+  }
+  const out: Asset[] = [];
+  for (const [assetId, amount] of map) {
+    if (amount !== 0) out.push({ assetId, amount });
+  }
+  return out;
+}
+
+export function assetDeltas(
+  spent: VirtualCoin[],
+  received: VirtualCoin[],
+): Asset[] {
+  return subtractAssets(spent, received);
+}
+
+// ===== Commitment-group decomposition =====
+
+export type CommitmentDecomposition =
+  | { kind: "renewal"; spentAmount: number; createdAmount: number }
+  | { kind: "batch_receive"; createdAmount: number }
+  | { kind: "exit"; spentAmount: number }
+  | {
+      kind: "renewal_plus_receive";
+      renewalAmount: number;
+      receiveAmount: number;
+    }
+  | { kind: "renewal_plus_exit"; renewalAmount: number; exitAmount: number }
+  | {
+      kind: "settlement";
+      spentAmount: number;
+      createdAmount: number;
+      reason:
+        | "boarding_mixed_unresolved"
+        | "asset_bearing_settlement"
+        | "empty_group";
+    };
+
+export function decomposeCommitmentGroup(args: {
+  spent: VirtualCoin[];
+  created: VirtualCoin[];
+  isBoardingMixed: boolean;
+}): CommitmentDecomposition {
+  const spentAmount = sumValue(args.spent);
+  const createdAmount = sumValue(args.created);
+  const assetDelta = subtractAssets(args.spent, args.created);
+  const hasAssetDelta = assetDelta.length > 0;
+
+  if (args.spent.length === 0 && args.created.length === 0) {
+    return {
+      kind: "settlement",
+      spentAmount,
+      createdAmount,
+      reason: "empty_group",
+    };
+  }
+
+  if (args.isBoardingMixed) {
+    if (
+      args.spent.length > 0 &&
+      args.created.length > 0 &&
+      createdAmount >= spentAmount &&
+      !hasAssetDelta
+    ) {
+      // Refresh component covered; leftover (createdAmount - spentAmount) is
+      // attributable to boarding and must NOT be emitted as a separate receive.
+      return { kind: "renewal", spentAmount, createdAmount };
+    }
+    return {
+      kind: "settlement",
+      spentAmount,
+      createdAmount,
+      reason: "boarding_mixed_unresolved",
+    };
+  }
+
+  if (hasAssetDelta) {
+    // Conservative: do not classify asset-bearing commitments as renewal/exit.
+    return {
+      kind: "settlement",
+      spentAmount,
+      createdAmount,
+      reason: "asset_bearing_settlement",
+    };
+  }
+
+  if (spentAmount === 0 && createdAmount > 0) {
+    return { kind: "batch_receive", createdAmount };
+  }
+  if (spentAmount > 0 && createdAmount === 0) {
+    return { kind: "exit", spentAmount };
+  }
+
+  const delta = createdAmount - spentAmount;
+  if (delta === 0) {
+    return { kind: "renewal", spentAmount, createdAmount };
+  }
+  if (delta > 0) {
+    return {
+      kind: "renewal_plus_receive",
+      renewalAmount: spentAmount,
+      receiveAmount: delta,
+    };
+  }
+  return {
+    kind: "renewal_plus_exit",
+    renewalAmount: createdAmount,
+    exitAmount: -delta,
+  };
+}
+
+export function isRenewalGroup(args: {
+  spent: VirtualCoin[];
+  created: VirtualCoin[];
+  isBoardingMixed: boolean;
+}): boolean {
+  return decomposeCommitmentGroup(args).kind === "renewal";
+}
+
+// ===== Asset row classification =====
+
+export type AssetClassification =
+  | "asset_issued"
+  | "asset_burned"
+  | "asset_sent"
+  | "asset_received"
+  | "asset_activity";
+
+export function classifyAssetActivity(args: {
+  direction: "send" | "receive";
+  anchorSats: number;
+  assetDelta: Asset[];
+}): AssetClassification {
+  if (args.assetDelta.length === 0) return "asset_activity";
+  const allPositive = args.assetDelta.every((a) => a.amount > 0);
+  const allNegative = args.assetDelta.every((a) => a.amount < 0);
+
+  if (args.direction === "send") {
+    if (args.anchorSats === 0 && allPositive) return "asset_issued";
+    if (args.anchorSats === 0 && allNegative) return "asset_burned";
+    if (allNegative) return "asset_sent";
+    return "asset_activity";
+  }
+  if (allPositive) return "asset_received";
+  return "asset_activity";
+}
+
+function assetTitle(c: AssetClassification): string {
+  switch (c) {
+    case "asset_issued":
+      return "Asset issued";
+    case "asset_burned":
+      return "Asset burned";
+    case "asset_sent":
+      return "Asset sent";
+    case "asset_received":
+      return "Asset received";
+    default:
+      return "Asset activity";
+  }
+}
+
+function assetDirection(c: AssetClassification): ActivityDirection {
+  if (c === "asset_received") return "in";
+  if (c === "asset_sent") return "out";
+  return "self";
+}
+
+function buildAssetActivity(args: {
+  arkTxid: string;
+  timestamp: number;
+  direction: "send" | "receive";
+  anchorSats: number;
+  assetDelta: Asset[];
+  settled: boolean;
+  network: string | null;
+}): Activity {
+  const cls = classifyAssetActivity({
+    direction: args.direction,
+    anchorSats: args.anchorSats,
+    assetDelta: args.assetDelta,
+  });
+  const primary = args.assetDelta[0];
+  const id = activityId("asset", args.arkTxid);
+  const metadata: NonNullable<Activity["metadata"]> = {
+    arkTxid: args.arkTxid,
+    assetId: primary?.assetId ?? null,
+    assetAmount: primary?.amount ?? 0,
+    anchorAmountSats: args.anchorSats,
+    classification: cls,
+  };
+  if (args.network) metadata.network = args.network;
+  return {
+    id,
+    kind: "wallet_event",
+    direction: assetDirection(cls),
+    timestamp: args.timestamp,
+    title: assetTitle(cls),
+    status: args.settled ? "confirmed" : "pending",
+    rail: "arkade",
+    source: { type: "wallet_event", eventId: id },
+    metadata,
+  };
+}
+
+// ===== Main builder =====
+
+export type GetActivityHistoryOptions = {
+  /** Active network — stamped onto each Activity for offline detail rendering. */
+  network: string | null;
+  /** Our own boarding address — stamped onto boarding rows for the details view. */
+  boardingAddress?: string | null;
+  /** Our own Arkade address — stamped onto inbound rows so the details view can show "received at <our address>". */
+  arkadeAddress?: string | null;
+};
+
+function withNetwork(
+  metadata: Activity["metadata"],
+  network: string | null,
+): Activity["metadata"] {
+  if (!network) return metadata;
+  return { ...(metadata ?? {}), network };
+}
+
+export async function getActivityHistory(
+  wallet: Wallet,
+  arkServerUrl: string,
+  options: GetActivityHistoryOptions = { network: null },
+): Promise<Activity[]> {
+  const cm = await wallet.getContractManager();
+  const contracts = await cm.getContractsWithVtxos();
+  const allVtxos: VirtualCoin[] = contracts.flatMap((c) => c.vtxos);
+  const sorted = [...allVtxos].sort(
+    (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+  );
+
+  const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
+
+  const indexer = new ExpoIndexerProvider(arkServerUrl);
+  const getTxCreatedAt = (txid: string): Promise<number | undefined> =>
+    indexer
+      .getVtxos({ outpoints: [{ txid, vout: 0 }] })
+      .then((res) => res.vtxos[0]?.createdAt.getTime())
+      .catch(() => undefined);
+
+  const activities: Activity[] = [];
+  const { network, boardingAddress, arkadeAddress } = options;
+
+  for (const tx of boardingTxs) {
+    const boardingTxid = tx.key.boardingTxid;
+    if (!boardingTxid) continue;
+    const boardingMeta: NonNullable<Activity["metadata"]> = { boardingTxid };
+    if (boardingAddress) boardingMeta.boardingAddress = boardingAddress;
+    activities.push({
+      id: activityId("boarding", boardingTxid),
+      kind: "payment",
+      direction: "in",
+      amountSats: tx.amount,
+      timestamp: tx.createdAt,
+      title: "Boarding deposit",
+      status: tx.settled ? "confirmed" : "pending",
+      rail: "arkade",
+      source: { type: "arkade_tx", walletTxId: boardingTxid },
+      metadata: withNetwork(boardingMeta, network),
+    });
+  }
+
+  const commitmentIds = new Set<string>();
+  for (const v of sorted) {
+    const leafCommitment = v.virtualStatus.commitmentTxIds?.[0];
+    if (v.status.isLeaf && leafCommitment) {
+      commitmentIds.add(leafCommitment);
+    }
+    if (v.settledBy) {
+      commitmentIds.add(v.settledBy);
+    }
+  }
+
+  for (const commitmentTxid of commitmentIds) {
+    const spent = sorted.filter((v) => v.settledBy === commitmentTxid);
+    const created = sorted.filter(
+      (v) =>
+        v.status.isLeaf &&
+        v.virtualStatus.commitmentTxIds?.every((id) => id === commitmentTxid),
+    );
+    const isBoardingMixed = commitmentsToIgnore.has(commitmentTxid);
+    const decomp = decomposeCommitmentGroup({
+      spent,
+      created,
+      isBoardingMixed,
+    });
+
+    const tsCreated =
+      created.length > 0
+        ? Math.min(...created.map((v) => v.createdAt.getTime()))
+        : 0;
+    const tsSpent =
+      spent.length > 0
+        ? Math.min(...spent.map((v) => v.createdAt.getTime()))
+        : 0;
+    const tsAnchor = tsCreated > 0 ? tsCreated : tsSpent + 1;
+
+    switch (decomp.kind) {
+      case "batch_receive": {
+        const meta: NonNullable<Activity["metadata"]> = { commitmentTxid };
+        if (arkadeAddress) meta.arkadeAddress = arkadeAddress;
+        activities.push({
+          id: activityId("batch", commitmentTxid),
+          kind: "payment",
+          direction: "in",
+          amountSats: decomp.createdAmount,
+          timestamp: tsCreated,
+          title: "Arkade received",
+          status: "confirmed",
+          rail: "arkade",
+          source: { type: "arkade_tx", walletTxId: commitmentTxid },
+          metadata: withNetwork(meta, network),
+        });
+        break;
+      }
+      case "exit":
+        activities.push({
+          id: activityId("exit", commitmentTxid),
+          kind: "payment",
+          direction: "out",
+          amountSats: decomp.spentAmount,
+          timestamp: tsAnchor,
+          title: "Collaborative exit",
+          status: "confirmed",
+          rail: "arkade",
+          source: { type: "arkade_tx", walletTxId: commitmentTxid },
+          metadata: withNetwork({ commitmentTxid }, network),
+        });
+        break;
+      case "renewal":
+        activities.push({
+          id: activityId("renewal", commitmentTxid),
+          kind: "wallet_event",
+          direction: "self",
+          timestamp: tsCreated > 0 ? tsCreated : tsSpent,
+          title: "VTXO renewed",
+          status: "confirmed",
+          rail: "arkade",
+          source: {
+            type: "wallet_event",
+            eventId: activityId("renewal", commitmentTxid),
+          },
+          metadata: withNetwork(
+            {
+              commitmentTxid,
+              inputCount: spent.length,
+              outputCount: created.length,
+              renewedAmountSats: decomp.spentAmount,
+            },
+            network,
+          ),
+        });
+        break;
+      case "renewal_plus_receive": {
+        activities.push({
+          id: activityId("renewal", commitmentTxid),
+          kind: "wallet_event",
+          direction: "self",
+          timestamp: tsCreated,
+          title: "VTXO renewed",
+          status: "confirmed",
+          rail: "arkade",
+          source: {
+            type: "wallet_event",
+            eventId: activityId("renewal", commitmentTxid),
+          },
+          metadata: withNetwork(
+            {
+              commitmentTxid,
+              inputCount: spent.length,
+              outputCount: created.length,
+              renewedAmountSats: decomp.renewalAmount,
+              netDeltaSats: decomp.receiveAmount,
+            },
+            network,
+          ),
+        });
+        const receiveMeta: NonNullable<Activity["metadata"]> = {
+          commitmentTxid,
+          mixedWithRenewal: true,
+          netDeltaSats: decomp.receiveAmount,
+        };
+        if (arkadeAddress) receiveMeta.arkadeAddress = arkadeAddress;
+        activities.push({
+          id: activityId("batch", commitmentTxid),
+          kind: "payment",
+          direction: "in",
+          amountSats: decomp.receiveAmount,
+          timestamp: tsCreated,
+          title: "Arkade received",
+          status: "confirmed",
+          rail: "arkade",
+          source: { type: "arkade_tx", walletTxId: commitmentTxid },
+          metadata: withNetwork(receiveMeta, network),
+        });
+        break;
+      }
+      case "renewal_plus_exit":
+        activities.push({
+          id: activityId("renewal", commitmentTxid),
+          kind: "wallet_event",
+          direction: "self",
+          timestamp: tsCreated,
+          title: "VTXO renewed",
+          status: "confirmed",
+          rail: "arkade",
+          source: {
+            type: "wallet_event",
+            eventId: activityId("renewal", commitmentTxid),
+          },
+          metadata: withNetwork(
+            {
+              commitmentTxid,
+              inputCount: spent.length,
+              outputCount: created.length,
+              renewedAmountSats: decomp.renewalAmount,
+              netDeltaSats: -decomp.exitAmount,
+            },
+            network,
+          ),
+        });
+        activities.push({
+          id: activityId("exit", commitmentTxid),
+          kind: "payment",
+          direction: "out",
+          amountSats: decomp.exitAmount,
+          timestamp: tsAnchor,
+          title: "Collaborative exit",
+          status: "confirmed",
+          rail: "arkade",
+          source: { type: "arkade_tx", walletTxId: commitmentTxid },
+          metadata: withNetwork(
+            {
+              commitmentTxid,
+              mixedWithRenewal: true,
+              netDeltaSats: -decomp.exitAmount,
+            },
+            network,
+          ),
+        });
+        break;
+      case "settlement": {
+        if (decomp.reason === "empty_group") break;
+        const unresolved = Math.abs(decomp.createdAmount - decomp.spentAmount);
+        activities.push({
+          id: activityId("settlement", commitmentTxid),
+          kind: "wallet_event",
+          direction: "self",
+          timestamp: tsAnchor,
+          title: "Arkade settlement",
+          status: "info",
+          rail: "arkade",
+          source: {
+            type: "wallet_event",
+            eventId: activityId("settlement", commitmentTxid),
+          },
+          metadata: withNetwork(
+            {
+              commitmentTxid,
+              spentAmount: decomp.spentAmount,
+              createdAmount: decomp.createdAmount,
+              unresolvedAmountSats: unresolved,
+              settlementReason: decomp.reason,
+              inputCount: spent.length,
+              outputCount: created.length,
+            },
+            network,
+          ),
+        });
+        break;
+      }
+    }
+  }
+
+  const offchainSendsEmitted = new Set<string>();
+  const offchainReceivesEmitted = new Set<string>();
+
+  for (const v of sorted) {
+    if (!v.status.isLeaf && v.txid) {
+      const isChangeOfOwnTx = sorted.some((u) => u.arkTxId === v.txid);
+      if (!isChangeOfOwnTx && !offchainReceivesEmitted.has(v.txid)) {
+        offchainReceivesEmitted.add(v.txid);
+        const assets = collectAssets([v]);
+        const settled = v.status.isLeaf || v.isSpent === true;
+        const ts = v.createdAt.getTime();
+        if (assets.length > 0) {
+          activities.push(
+            buildAssetActivity({
+              arkTxid: v.txid,
+              timestamp: ts,
+              direction: "receive",
+              anchorSats: v.value,
+              assetDelta: assets,
+              settled,
+              network,
+            }),
+          );
+        } else {
+          const receiveMeta: NonNullable<Activity["metadata"]> = {
+            arkTxid: v.txid,
+          };
+          if (arkadeAddress) receiveMeta.arkadeAddress = arkadeAddress;
+          activities.push({
+            id: activityId("offchain", v.txid),
+            kind: "payment",
+            direction: "in",
+            amountSats: v.value,
+            timestamp: ts,
+            title: "Arkade received",
+            status: settled ? "confirmed" : "pending",
+            rail: "arkade",
+            source: { type: "arkade_tx", walletTxId: v.txid },
+            metadata: withNetwork(receiveMeta, network),
+          });
+        }
+      }
+    }
+
+    if (v.isSpent && v.arkTxId && !offchainSendsEmitted.has(v.arkTxId)) {
+      offchainSendsEmitted.add(v.arkTxId);
+      const arkTxId = v.arkTxId;
+      const allSpent = sorted.filter((u) => u.arkTxId === arkTxId);
+      const changes = sorted.filter((u) => u.txid === arkTxId);
+      const spentBtc = sumValue(allSpent);
+      const changeBtc = sumValue(changes);
+      const txAmount = changes.length > 0 ? spentBtc - changeBtc : spentBtc;
+      const tsTx =
+        changes.length > 0
+          ? changes[0].createdAt.getTime()
+          : ((await getTxCreatedAt(arkTxId)) ?? v.createdAt.getTime() + 1);
+      const assets = subtractAssets(allSpent, changes);
+
+      if (assets.length > 0) {
+        activities.push(
+          buildAssetActivity({
+            arkTxid: arkTxId,
+            timestamp: tsTx,
+            direction: "send",
+            anchorSats: txAmount,
+            assetDelta: assets,
+            settled: true,
+            network,
+          }),
+        );
+      } else {
+        activities.push({
+          id: activityId("offchain", arkTxId),
+          kind: "payment",
+          direction: "out",
+          amountSats: txAmount,
+          timestamp: tsTx,
+          title: "Arkade sent",
+          status: "confirmed",
+          rail: "arkade",
+          source: { type: "arkade_tx", walletTxId: arkTxId },
+          metadata: withNetwork({ arkTxid: arkTxId }, network),
+        });
+      }
+    }
+  }
+
+  activities.sort((a, b) => b.timestamp - a.timestamp);
+  return activities;
+}

@@ -54,7 +54,13 @@ const neutral = {
 
 function rgba(hex: string, a: number) {
   const h = hex.replace("#", "");
-  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const full =
+    h.length === 3
+      ? h
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : h;
   const n = parseInt(full, 16);
   const r = (n >> 16) & 255;
   const g = (n >> 8) & 255;
@@ -166,10 +172,10 @@ function createTheme(mode: Mode) {
         tabBarTint: brand[500],
         tabBarInactive: neutral[400],
         tabBarBg: rgba(neutral[950], 0.72),
-        tabBarBorder: rgba("#ffffff", 0.10),
+        tabBarBorder: rgba("#ffffff", 0.1),
 
         scrim: rgba("#000000", 0.55),
-        focusRing: rgba(brand[500], 0.40),
+        focusRing: rgba(brand[500], 0.4),
       }
     : {
         background: neutral[0],
@@ -263,8 +269,18 @@ export function TabIcon(props: {
   React.useEffect(() => {
     if (!focused) return;
     Animated.sequence([
-      Animated.spring(pop, { toValue: 1.06, useNativeDriver: true, speed: 18, bounciness: 6 }),
-      Animated.spring(pop, { toValue: 1.0, useNativeDriver: true, speed: 18, bounciness: 6 }),
+      Animated.spring(pop, {
+        toValue: 1.06,
+        useNativeDriver: true,
+        speed: 18,
+        bounciness: 6,
+      }),
+      Animated.spring(pop, {
+        toValue: 1.0,
+        useNativeDriver: true,
+        speed: 18,
+        bounciness: 6,
+      }),
     ]).start();
   }, [focused, pop]);
 
@@ -289,7 +305,11 @@ export function TabIcon(props: {
             borderRadius: dot / 2,
             backgroundColor: theme.colors.primary,
             ...(theme.mode === "dark"
-              ? { shadowColor: theme.colors.primary, shadowOpacity: 0.35, shadowRadius: 6 }
+              ? {
+                  shadowColor: theme.colors.primary,
+                  shadowOpacity: 0.35,
+                  shadowRadius: 6,
+                }
               : null),
           }}
         />
@@ -318,15 +338,28 @@ export function AnimatedTabBarButton({
         speed: 22,
         bounciness: 0,
       }),
-      Animated.timing(opacity, { toValue: 0.95, duration: 90, useNativeDriver: true }),
+      Animated.timing(opacity, {
+        toValue: 0.95,
+        duration: 90,
+        useNativeDriver: true,
+      }),
     ]).start();
     props.onPressIn?.(e);
   };
 
   const onPressOut: PressableProps["onPressOut"] = (e) => {
     Animated.parallel([
-      Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 18, bounciness: 6 }),
-      Animated.timing(opacity, { toValue: 1, duration: 120, useNativeDriver: true }),
+      Animated.spring(scale, {
+        toValue: 1,
+        useNativeDriver: true,
+        speed: 18,
+        bounciness: 6,
+      }),
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 120,
+        useNativeDriver: true,
+      }),
     ]).start();
     props.onPressOut?.(e);
   };
@@ -366,7 +399,7 @@ type TabsOptions = {
  */
 export function makeBottomTabsOptions(
   t: AppTheme,
-  opts: TabsOptions = {}
+  opts: TabsOptions = {},
 ): BottomTabNavigationOptions {
   const isDark = t.mode === "dark";
   const bottomInset = opts.bottomInset ?? 0;

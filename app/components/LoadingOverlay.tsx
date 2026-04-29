@@ -29,15 +29,10 @@ export default function LoadingOverlay({ visible, message, theme }: Props) {
 
   return (
     <Animated.View
-      style={[
-        styles.overlay,
-        { backgroundColor: theme.colors.scrim, opacity },
-      ]}
+      style={[styles.overlay, { backgroundColor: theme.colors.scrim, opacity }]}
       pointerEvents="auto"
     >
-      <View
-        style={[styles.card, { backgroundColor: theme.colors.card }]}
-      >
+      <View style={[styles.card, { backgroundColor: theme.colors.card }]}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
         {message ? (
           <Text style={[styles.message, { color: theme.colors.text }]}>
