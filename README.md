@@ -1,6 +1,6 @@
 # Trixie Wallet
 
-Self-custodial Arkade wallet for iOS and Android, built with Expo. See [TASK.md](./TASK.md) for the original spec, [CLAUDE.md](./CLAUDE.md) for architecture and conventions, and [ISSUES.md](./ISSUES.md) for open items.
+Self-custodial Arkade wallet for iOS and Android, built with Expo. See [SPECS.md](./SPECS.md) for the original spec, [CLAUDE.md](./CLAUDE.md) for architecture and conventions, and [ISSUES.md](./ISSUES.md) for open items.
 
 ## Stack
 
