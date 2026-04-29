@@ -6,7 +6,14 @@ import {
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
-import { AlertCircle, Copy, Plus, Share2 } from "lucide-react-native";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Copy,
+  Plus,
+  Share2,
+  XCircle,
+} from "lucide-react-native";
 import * as React from "react";
 import {
   Animated,
@@ -122,10 +129,46 @@ export default function ReceiveQRScreen() {
     setTitle({ title: paymentTypeLabel(type) });
   }, [setTitle, type]);
 
+  const lightningInvoice = route.params.lightningInvoice;
+  const lightningCreditedSats = route.params.lightningCreditedSats;
+  const lightningExpiresAt = route.params.lightningExpiresAt;
+  const lightningSwapId = route.params.lightningSwapId;
+
+  // Track our swap's status from the store-side activity list. The global swap
+  // listener in useAppStore refreshes activities on every SwapManager event,
+  // so we just react to its state to surface success/failure on this screen.
+  const swapActivity = useAppStore((s) => {
+    if (type !== "lightning" || !lightningSwapId) return null;
+    return (
+      s.wallet?.activities.find(
+        (a) =>
+          a.source.type === "boltz_swap" && a.source.swapId === lightningSwapId,
+      ) ?? null
+    );
+  });
+  const swapStatus = swapActivity?.status;
+
   const [primary, all, error] = React.useMemo<
     [ReceivePayload | null, ReceivePayload[], string | null]
   >(() => {
     if (!wallet) return [null, [], "No wallet available"];
+    if (type === "lightning") {
+      if (!lightningInvoice) {
+        return [null, [], "Missing Lightning invoice"];
+      }
+      const invoiceLabel =
+        amountSats != null
+          ? `Lightning · ${amountSats.toLocaleString()} sats`
+          : "Lightning invoice";
+      const main: ReceivePayload = {
+        type: "lightning",
+        label: invoiceLabel,
+        payload: lightningInvoice,
+        destination: lightningInvoice,
+        amountSats,
+      };
+      return [main, [main], null];
+    }
     try {
       const main = makeReceivePayload(wallet, type, { amountSats });
       const list = makeAllPayloads(wallet, type, { amountSats });
@@ -134,7 +177,18 @@ export default function ReceiveQRScreen() {
       const msg = e instanceof Error ? e.message : "Could not generate payload";
       return [null, [], msg];
     }
-  }, [wallet, type, amountSats]);
+  }, [wallet, type, amountSats, lightningInvoice]);
+
+  const [now, setNow] = React.useState<number>(() => Date.now());
+  React.useEffect(() => {
+    if (type !== "lightning" || !lightningExpiresAt) return;
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, [type, lightningExpiresAt]);
+  const expired =
+    type === "lightning" &&
+    lightningExpiresAt != null &&
+    lightningExpiresAt <= now;
 
   async function handleCopy(p: ReceivePayload) {
     try {
@@ -179,6 +233,12 @@ export default function ReceiveQRScreen() {
 
   const others = all.filter((p) => p.payload !== primary.payload);
   const showAddAmount = type !== "lnurl" && type !== "lightning" && !amountSats;
+  const lightningSettled = swapStatus === "confirmed";
+  const lightningFailed = swapStatus === "failed" || swapStatus === "refunded";
+  const settledAmountSats =
+    lightningSettled && swapActivity?.amountSats != null
+      ? swapActivity.amountSats
+      : (lightningCreditedSats ?? primary.amountSats);
 
   return (
     <SafeAreaView
@@ -196,22 +256,99 @@ export default function ReceiveQRScreen() {
             },
           ]}
         >
-          <View style={styles.qrInner}>
-            <QRCode
-              value={primary.payload}
-              size={232}
-              backgroundColor="#ffffff"
-              color="#000000"
-            />
-          </View>
-          <Text
-            numberOfLines={1}
-            style={[styles.destination, { color: theme.colors.text }]}
-            selectable
-          >
-            {primary.destination}
-          </Text>
-          {primary.amountSats ? (
+          {lightningSettled ? (
+            <View style={styles.lightningSettledWrap}>
+              <CheckCircle2 color={theme.colors.success} size={72} />
+              <Text style={[styles.settledTitle, { color: theme.colors.text }]}>
+                Payment received
+              </Text>
+              {settledAmountSats != null ? (
+                <Text
+                  style={[
+                    styles.settledAmount,
+                    { color: theme.colors.success },
+                  ]}
+                >
+                  +{formatSats(settledAmountSats)} {unitLabel}
+                </Text>
+              ) : null}
+              <Text
+                style={[styles.settledHint, { color: theme.colors.textSubtle }]}
+              >
+                Funds claimed and added to your wallet.
+              </Text>
+            </View>
+          ) : lightningFailed ? (
+            <View style={styles.lightningSettledWrap}>
+              <XCircle color={theme.colors.danger} size={72} />
+              <Text style={[styles.settledTitle, { color: theme.colors.text }]}>
+                Payment failed
+              </Text>
+              <Text
+                style={[styles.settledHint, { color: theme.colors.textSubtle }]}
+              >
+                The swap reached a terminal failure state. Generate a new
+                invoice to try again.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.qrInner}>
+              <QRCode
+                value={primary.payload}
+                size={232}
+                backgroundColor="#ffffff"
+                color="#000000"
+              />
+            </View>
+          )}
+          {!lightningSettled && !lightningFailed ? (
+            <Text
+              numberOfLines={1}
+              style={[styles.destination, { color: theme.colors.text }]}
+              selectable
+            >
+              {primary.destination}
+            </Text>
+          ) : null}
+          {lightningSettled || lightningFailed ? null : type === "lightning" &&
+            primary.amountSats ? (
+            <View style={styles.lightningAmounts}>
+              <Text style={[styles.amount, { color: theme.colors.textSubtle }]}>
+                Payer pays {formatSats(primary.amountSats)} {unitLabel}
+                {" · "}
+                {satsToFiat(primary.amountSats, fiatCurrency)}
+              </Text>
+              {lightningCreditedSats != null ? (
+                <Text
+                  style={[styles.amount, { color: theme.colors.textSubtle }]}
+                >
+                  You receive ≈ {formatSats(lightningCreditedSats)} {unitLabel}{" "}
+                  after Boltz fees
+                </Text>
+              ) : null}
+              {lightningExpiresAt != null ? (
+                <Text
+                  style={[
+                    styles.amount,
+                    {
+                      color: expired
+                        ? theme.colors.danger
+                        : theme.colors.textSubtle,
+                    },
+                  ]}
+                >
+                  {expired
+                    ? "Invoice expired — generate a new one"
+                    : `Expires ${new Date(
+                        lightningExpiresAt,
+                      ).toLocaleTimeString(undefined, {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}`}
+                </Text>
+              ) : null}
+            </View>
+          ) : primary.amountSats ? (
             <Text style={[styles.amount, { color: theme.colors.textSubtle }]}>
               {formatSats(primary.amountSats)} {unitLabel} ·{" "}
               {satsToFiat(primary.amountSats, fiatCurrency)}
@@ -227,44 +364,67 @@ export default function ReceiveQRScreen() {
           )}
         </View>
 
-        <View style={styles.actions}>
-          <Pressable
-            accessibilityLabel="Copy payload"
-            onPress={() => handleCopy(primary)}
-            style={({ pressed }) => [
-              styles.actionBtn,
-              {
-                backgroundColor: theme.colors.surfaceSubtle,
-                borderColor: theme.colors.border,
-                opacity: pressed ? 0.85 : 1,
-              },
-            ]}
-          >
-            <Copy color={theme.colors.text} size={18} />
-            <Text style={[styles.actionLabel, { color: theme.colors.text }]}>
-              Copy
-            </Text>
-          </Pressable>
-          <Pressable
-            accessibilityLabel="Share payload"
-            onPress={handleShare}
-            style={({ pressed }) => [
-              styles.actionBtn,
-              {
-                backgroundColor: theme.colors.primary,
-                borderColor: theme.colors.primary,
-                opacity: pressed ? 0.9 : 1,
-              },
-            ]}
-          >
-            <Share2 color={theme.colors.onPrimary} size={18} />
-            <Text
-              style={[styles.actionLabel, { color: theme.colors.onPrimary }]}
+        {lightningSettled || lightningFailed ? (
+          <View style={styles.actions}>
+            <Pressable
+              accessibilityLabel="Back to wallet"
+              onPress={() => nav.popToTop()}
+              style={({ pressed }) => [
+                styles.actionBtn,
+                {
+                  backgroundColor: theme.colors.primary,
+                  borderColor: theme.colors.primary,
+                  opacity: pressed ? 0.9 : 1,
+                },
+              ]}
             >
-              Share
-            </Text>
-          </Pressable>
-        </View>
+              <Text
+                style={[styles.actionLabel, { color: theme.colors.onPrimary }]}
+              >
+                Back to wallet
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.actions}>
+            <Pressable
+              accessibilityLabel="Copy payload"
+              onPress={() => handleCopy(primary)}
+              style={({ pressed }) => [
+                styles.actionBtn,
+                {
+                  backgroundColor: theme.colors.surfaceSubtle,
+                  borderColor: theme.colors.border,
+                  opacity: pressed ? 0.85 : 1,
+                },
+              ]}
+            >
+              <Copy color={theme.colors.text} size={18} />
+              <Text style={[styles.actionLabel, { color: theme.colors.text }]}>
+                Copy
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityLabel="Share payload"
+              onPress={handleShare}
+              style={({ pressed }) => [
+                styles.actionBtn,
+                {
+                  backgroundColor: theme.colors.primary,
+                  borderColor: theme.colors.primary,
+                  opacity: pressed ? 0.9 : 1,
+                },
+              ]}
+            >
+              <Share2 color={theme.colors.onPrimary} size={18} />
+              <Text
+                style={[styles.actionLabel, { color: theme.colors.onPrimary }]}
+              >
+                Share
+              </Text>
+            </Pressable>
+          </View>
+        )}
 
         {showAddAmount ? (
           <Pressable
@@ -336,6 +496,33 @@ const styles = StyleSheet.create({
   amount: {
     marginTop: spacing[2],
     fontSize: typography.size.xs,
+  },
+  lightningAmounts: {
+    marginTop: spacing[2],
+    gap: spacing[1],
+    alignItems: "center",
+  },
+  lightningSettledWrap: {
+    alignItems: "center",
+    paddingVertical: spacing[5],
+    paddingHorizontal: spacing[4],
+    gap: spacing[2],
+  },
+  settledTitle: {
+    marginTop: spacing[3],
+    fontSize: typography.size.lg,
+    fontWeight: typography.weight.semibold,
+  },
+  settledAmount: {
+    fontSize: typography.size.xl,
+    fontWeight: typography.weight.bold,
+    fontVariant: ["tabular-nums"],
+  },
+  settledHint: {
+    marginTop: spacing[2],
+    fontSize: typography.size.sm,
+    textAlign: "center",
+    lineHeight: typography.lineHeight.sm,
   },
   actions: {
     flexDirection: "row",

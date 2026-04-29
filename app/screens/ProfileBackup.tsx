@@ -1,3 +1,6 @@
+import * as Clipboard from "expo-clipboard";
+import * as Haptics from "expo-haptics";
+import { AlertTriangle, Copy, Eye, EyeOff } from "lucide-react-native";
 import * as React from "react";
 import {
   ActivityIndicator,
@@ -7,15 +10,22 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { AlertTriangle, Copy, Eye, EyeOff } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
-import * as Clipboard from "expo-clipboard";
-import { useResolvedTheme } from "../hooks/useResolvedTheme";
-import { useAppStore } from "../store/useAppStore";
 import { useToast } from "../components/ToastProvider";
-import { readSecret } from "../services/arkade/secret-store";
+import { useResolvedTheme } from "../hooks/useResolvedTheme";
+import { privateKeyHexToNsec } from "../services/arkade/identity";
 import type { StoredSecret } from "../services/arkade/secret-store";
-import { spacing, typography, radius } from "../theme/theme";
+import { readSecret } from "../services/arkade/secret-store";
+import { useAppStore } from "../store/useAppStore";
+import { radius, spacing, typography } from "../theme/theme";
+
+function backupTextForSecret(secret: StoredSecret): string | null {
+  if (secret.kind === "mnemonic") return secret.mnemonic;
+  try {
+    return privateKeyHexToNsec(secret.privateKeyHex);
+  } catch {
+    return null;
+  }
+}
 
 export default function ProfileBackup() {
   const theme = useResolvedTheme();
@@ -58,7 +68,8 @@ export default function ProfileBackup() {
   }
 
   const kindLabel =
-    wallet?.identityKind === "mnemonic" ? "Seed phrase" : "Private key (hex)";
+    wallet?.identityKind === "mnemonic" ? "Seed phrase" : "Private key (nsec)";
+  const backupText = secret ? backupTextForSecret(secret) : null;
 
   return (
     <SafeAreaView
@@ -66,7 +77,10 @@ export default function ProfileBackup() {
       style={[styles.container, { backgroundColor: theme.colors.background }]}
     >
       <View
-        style={[styles.warning, { backgroundColor: `${theme.colors.danger}15` }]}
+        style={[
+          styles.warning,
+          { backgroundColor: `${theme.colors.danger}15` },
+        ]}
       >
         <AlertTriangle color={theme.colors.danger} size={20} />
         <Text style={[styles.warningText, { color: theme.colors.danger }]}>
@@ -77,7 +91,9 @@ export default function ProfileBackup() {
 
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
+          <Text
+            style={[styles.sectionTitle, { color: theme.colors.textMuted }]}
+          >
             {kindLabel}
           </Text>
           <View style={styles.sectionActions}>
@@ -90,14 +106,8 @@ export default function ProfileBackup() {
             </Pressable>
             {revealed && secret ? (
               <Pressable
-                onPress={() =>
-                  handleCopy(
-                    secret.kind === "mnemonic"
-                      ? secret.mnemonic
-                      : secret.privateKeyHex,
-                    kindLabel,
-                  )
-                }
+                onPress={() => handleCopy(backupText ?? "", kindLabel)}
+                disabled={!backupText}
               >
                 <Copy color={theme.colors.textMuted} size={20} />
               </Pressable>
@@ -118,9 +128,7 @@ export default function ProfileBackup() {
               selectable={revealed}
             >
               {revealed && secret
-                ? secret.kind === "mnemonic"
-                  ? secret.mnemonic
-                  : secret.privateKeyHex
+                ? (backupText ?? "Could not encode private key")
                 : "•".repeat(48)}
             </Text>
           )}
@@ -135,7 +143,9 @@ export default function ProfileBackup() {
       {wallet ? (
         <>
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
+            <Text
+              style={[styles.sectionTitle, { color: theme.colors.textMuted }]}
+            >
               Public key (compressed)
             </Text>
             <View
@@ -153,7 +163,9 @@ export default function ProfileBackup() {
             </View>
           </View>
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
+            <Text
+              style={[styles.sectionTitle, { color: theme.colors.textMuted }]}
+            >
               Arkade address
             </Text>
             <View

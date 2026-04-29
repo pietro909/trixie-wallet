@@ -1,9 +1,9 @@
-import * as SQLite from "expo-sqlite";
 import {
+  type SQLExecutor,
   SQLiteContractRepository,
   SQLiteWalletRepository,
-  type SQLExecutor,
 } from "@arkade-os/sdk/repositories/sqlite";
+import * as SQLite from "expo-sqlite";
 
 const DB_NAME = "trixie-arkade.db";
 
@@ -21,18 +21,21 @@ function makeExecutor(db: SQLite.SQLiteDatabase): SQLExecutor {
     run: async (sql, params) => {
       await db.runAsync(sql, (params ?? []) as SQLite.SQLiteBindParams);
     },
-    get: async <T = Record<string, unknown>>(sql: string, params?: unknown[]) => {
+    get: async <T = Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+    ) => {
       const result = await db.getFirstAsync<T>(
         sql,
         (params ?? []) as SQLite.SQLiteBindParams,
       );
       return result ?? undefined;
     },
-    all: async <T = Record<string, unknown>>(sql: string, params?: unknown[]) => {
-      return db.getAllAsync<T>(
-        sql,
-        (params ?? []) as SQLite.SQLiteBindParams,
-      );
+    all: async <T = Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+    ) => {
+      return db.getAllAsync<T>(sql, (params ?? []) as SQLite.SQLiteBindParams);
     },
   };
 }
@@ -52,9 +55,16 @@ export function createRepositories(walletId: string): ArkadeRepositories {
   };
 }
 
+export function getSharedSqlExecutor(): SQLExecutor {
+  return makeExecutor(getDatabase());
+}
+
 export async function clearWalletData(walletId: string): Promise<void> {
   const repos = createRepositories(walletId);
-  await Promise.all([repos.walletRepository.clear(), repos.contractRepository.clear()]);
+  await Promise.all([
+    repos.walletRepository.clear(),
+    repos.contractRepository.clear(),
+  ]);
 }
 
 function sanitize(walletId: string): string {

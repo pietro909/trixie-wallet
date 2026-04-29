@@ -1,3 +1,7 @@
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import * as Haptics from "expo-haptics";
+import { Bitcoin, ChevronRight, Globe, Layers, Zap } from "lucide-react-native";
 import * as React from "react";
 import {
   Animated,
@@ -8,19 +12,11 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
-import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import {
-  Bitcoin,
-  ChevronRight,
-  Globe,
-  Layers,
-  Zap,
-} from "lucide-react-native";
-import * as Haptics from "expo-haptics";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
+import { isLightningSupportedForNetwork } from "../../services/arkade/lightning";
 import type { ReceiveType } from "../../services/receive";
+import { useAppStore } from "../../store/useAppStore";
 import { motion, radius, spacing, typography } from "../../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "ReceiveSelect">;
@@ -33,34 +29,39 @@ type Option = {
   unavailable?: boolean;
 };
 
-const OPTIONS: Option[] = [
-  {
-    type: "arkade",
-    title: "Arkade",
-    helper: "Instant off-chain VTXO transfer.",
-    Icon: Layers,
-  },
-  {
-    type: "bitcoin",
-    title: "Bitcoin boarding",
-    helper: "On-chain payment to your boarding address.",
-    Icon: Bitcoin,
-  },
-  {
-    type: "lightning",
-    title: "Lightning",
-    helper: "Coming later — invoice generation not available yet.",
-    Icon: Zap,
-    unavailable: true,
-  },
-  {
-    type: "lnurl",
-    title: "LNURL",
-    helper: "Coming later — LNURL pay not available yet.",
-    Icon: Globe,
-    unavailable: true,
-  },
-];
+function buildOptions(network: string | null | undefined): Option[] {
+  const lightningAvailable = isLightningSupportedForNetwork(network);
+  return [
+    {
+      type: "arkade",
+      title: "Arkade",
+      helper: "Instant off-chain VTXO transfer.",
+      Icon: Layers,
+    },
+    {
+      type: "bitcoin",
+      title: "Bitcoin boarding",
+      helper: "On-chain payment to your boarding address.",
+      Icon: Bitcoin,
+    },
+    {
+      type: "lightning",
+      title: "Lightning",
+      helper: lightningAvailable
+        ? "Receive a BOLT11 invoice via Boltz reverse swap."
+        : "Lightning is not configured for this network.",
+      Icon: Zap,
+      unavailable: !lightningAvailable,
+    },
+    {
+      type: "lnurl",
+      title: "LNURL",
+      helper: "Coming later — LNURL pay not available yet.",
+      Icon: Globe,
+      unavailable: true,
+    },
+  ];
+}
 
 function OptionCard({
   option,
@@ -137,6 +138,8 @@ function OptionCard({
 export default function ReceiveSelectScreen() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
+  const network = useAppStore((s) => s.wallet?.network ?? null);
+  const options = React.useMemo(() => buildOptions(network), [network]);
 
   function handleSelect(type: ReceiveType) {
     if (type === "lightning") {
@@ -157,7 +160,7 @@ export default function ReceiveSelectScreen() {
           rail.
         </Text>
         <View style={styles.list}>
-          {OPTIONS.map((opt) => (
+          {options.map((opt) => (
             <OptionCard
               key={opt.type}
               option={opt}

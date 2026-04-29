@@ -33,7 +33,7 @@ export type WalletSnapshot = {
     preconfirmed: number;
     boardingTotal: number;
   };
-  transactions: ReturnType<typeof mapArkTxs>;
+  activities: ReturnType<typeof mapArkTxs>;
 };
 
 let activeWalletId: string | null = null;
@@ -184,7 +184,7 @@ export async function snapshotWallet(wallet: Wallet): Promise<WalletSnapshot> {
         preconfirmed: balance.preconfirmed,
         boardingTotal: balance.boarding.total,
       },
-      transactions: mapArkTxs(txs),
+      activities: mapArkTxs(txs),
     };
   } catch (e) {
     throw toArkadeError("refresh_failed", "Failed to refresh wallet state", e);

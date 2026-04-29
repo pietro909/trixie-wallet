@@ -29,6 +29,12 @@ import { useToast } from "../components/ToastProvider";
 import { useFormatSats } from "../hooks/useFormatSats";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import {
+  boltzApiUrlForNetwork,
+  getLightningFees,
+  getLightningLimits,
+  isLightningSupportedForNetwork,
+} from "../services/arkade/lightning";
+import {
   defaultDelegatorUrlForNetwork,
   normalizeServerUrl,
 } from "../services/arkade/network";
@@ -298,6 +304,75 @@ export default function AdvancedScreen() {
   const esploraOverride = wallet?.esploraUrl ?? null;
   const esploraDefault = defaultEsploraUrl(detectedNetwork);
   const esploraUrl = esploraOverride ?? esploraDefault;
+
+  const lightningNetwork = wallet?.network ?? detectedNetwork ?? null;
+  const lightningSupported = isLightningSupportedForNetwork(lightningNetwork);
+  const boltzUrl = lightningNetwork
+    ? boltzApiUrlForNetwork(lightningNetwork)
+    : null;
+  const lightningRestore = wallet?.lightningRestore ?? null;
+  const [lightningLimits, setLightningLimits] = React.useState<{
+    min: number;
+    max: number;
+  } | null>(null);
+  const [lightningFees, setLightningFees] = React.useState<{
+    submarinePercent: number;
+    submarineMinerSats: number;
+    reversePercent: number;
+    reverseMinerSats: number;
+  } | null>(null);
+  const [lightningStatus, setLightningStatus] = React.useState<
+    "idle" | "loading" | "online" | "offline"
+  >("idle");
+
+  React.useEffect(() => {
+    if (!lightningSupported || !lightningNetwork || !wallet) {
+      setLightningStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    setLightningStatus("loading");
+    (async () => {
+      try {
+        const [limits, fees] = await Promise.all([
+          getLightningLimits(lightningNetwork),
+          getLightningFees(lightningNetwork),
+        ]);
+        if (cancelled) return;
+        setLightningLimits({ min: limits.min, max: limits.max });
+        setLightningFees({
+          submarinePercent: fees.submarine.percentage,
+          submarineMinerSats: fees.submarine.minerFees,
+          reversePercent: fees.reverse.percentage,
+          reverseMinerSats:
+            fees.reverse.minerFees.lockup + fees.reverse.minerFees.claim,
+        });
+        setLightningStatus("online");
+      } catch {
+        if (cancelled) return;
+        setLightningStatus("offline");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [lightningSupported, lightningNetwork, wallet]);
+
+  function copyLightningDiagnostics() {
+    const payload = {
+      network: lightningNetwork,
+      boltzUrl,
+      status: lightningStatus,
+      limits: lightningLimits,
+      fees: lightningFees,
+      restore: lightningRestore,
+    };
+    handleCopy(JSON.stringify(payload, null, 2), "Lightning diagnostics");
+  }
+
+  function formatRestoreTimestamp(ts: number): string {
+    return new Date(ts).toLocaleString();
+  }
 
   return (
     <ScrollView
@@ -605,6 +680,93 @@ export default function AdvancedScreen() {
         />
       </View>
 
+      {lightningSupported ? (
+        <>
+          <Text
+            style={[styles.sectionLabel, { color: theme.colors.textMuted }]}
+          >
+            Lightning
+          </Text>
+          <View
+            style={[
+              styles.cardFlush,
+              {
+                backgroundColor: theme.colors.card,
+                borderColor: theme.colors.border,
+              },
+            ]}
+          >
+            <DetailRow
+              theme={theme}
+              label="Boltz API"
+              value={boltzUrl ?? "—"}
+              mono
+              onCopy={
+                boltzUrl ? () => handleCopy(boltzUrl, "Boltz URL") : undefined
+              }
+            />
+            <DetailRow
+              theme={theme}
+              label="Status"
+              value={
+                lightningStatus === "online"
+                  ? "Connected"
+                  : lightningStatus === "loading"
+                    ? "Loading…"
+                    : lightningStatus === "offline"
+                      ? "Offline"
+                      : "Idle"
+              }
+            />
+            <DetailRow
+              theme={theme}
+              label="Min / Max"
+              value={
+                lightningLimits
+                  ? `${lightningLimits.min.toLocaleString()} – ${lightningLimits.max.toLocaleString()} sats`
+                  : "—"
+              }
+            />
+            <DetailRow
+              theme={theme}
+              label="Submarine fee"
+              value={
+                lightningFees
+                  ? `${lightningFees.submarinePercent}% + ${lightningFees.submarineMinerSats.toLocaleString()} sats miner`
+                  : "—"
+              }
+            />
+            <DetailRow
+              theme={theme}
+              label="Reverse fee"
+              value={
+                lightningFees
+                  ? `${lightningFees.reversePercent}% + ${lightningFees.reverseMinerSats.toLocaleString()} sats miner`
+                  : "—"
+              }
+            />
+            <DetailRow
+              theme={theme}
+              label="Last restore"
+              value={
+                lightningRestore
+                  ? `${lightningRestore.lastCount} swap(s) at ${formatRestoreTimestamp(
+                      lightningRestore.lastAt,
+                    )}`
+                  : "Not run yet"
+              }
+            />
+            {lightningRestore?.lastError ? (
+              <DetailRow
+                theme={theme}
+                label="Restore error"
+                value={lightningRestore.lastError}
+              />
+            ) : null}
+          </View>
+        </>
+      ) : null}
+
       <Text style={[styles.sectionLabel, { color: theme.colors.textMuted }]}>
         Diagnostics
       </Text>
@@ -661,6 +823,17 @@ export default function AdvancedScreen() {
           hint="Everything Trixie persists — passwords are redacted"
           onPress={copyAppStateJson}
         />
+        {lightningSupported ? (
+          <>
+            <Divider theme={theme} />
+            <RawRow
+              theme={theme}
+              label="Lightning diagnostics"
+              hint="Boltz URL, limits, fees, last restore — preimages omitted"
+              onPress={copyLightningDiagnostics}
+            />
+          </>
+        ) : null}
       </View>
     </ScrollView>
   );

@@ -79,7 +79,7 @@ export default function WalletScreen() {
     );
   }
 
-  const recentTxns = wallet.transactions.slice(0, 4);
+  const recentActivity = wallet.activities.slice(0, 4);
 
   return (
     <ScrollView
@@ -134,14 +134,14 @@ export default function WalletScreen() {
         />
       </View>
 
-      {/* Recent Transactions */}
+      {/* Recent Activity */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
             Recent Activity
           </Text>
           <Pressable
-            onPress={() => nav.navigate("Transactions")}
+            onPress={() => nav.navigate("Activity")}
             style={styles.seeAll}
           >
             <Text style={[styles.seeAllText, { color: theme.colors.primary }]}>
@@ -151,68 +151,71 @@ export default function WalletScreen() {
           </Pressable>
         </View>
 
-        {recentTxns.length === 0 ? (
+        {recentActivity.length === 0 ? (
           <View style={styles.emptyTxns}>
             <Clock color={theme.colors.textSubtle} size={32} />
             <Text
               style={[styles.emptyTxnsText, { color: theme.colors.textMuted }]}
             >
-              No transactions yet
+              No activity yet
             </Text>
           </View>
         ) : (
-          recentTxns.map((tx) => (
-            <View
-              key={tx.id}
-              style={[
-                styles.txRow,
-                { borderBottomColor: theme.colors.divider },
-              ]}
-            >
+          recentActivity.map((item) => {
+            const isIn = item.direction === "in";
+            const isSelf = item.direction === "self";
+            const iconBg = isSelf
+              ? `${theme.colors.textSubtle}20`
+              : isIn
+                ? `${theme.colors.success}20`
+                : `${theme.colors.danger}20`;
+            const iconColor = isSelf
+              ? theme.colors.textSubtle
+              : isIn
+                ? theme.colors.success
+                : theme.colors.danger;
+            const amountColor = isSelf
+              ? theme.colors.text
+              : isIn
+                ? theme.colors.success
+                : theme.colors.text;
+            const sign =
+              isSelf || item.amountSats == null ? "" : isIn ? "+" : "-";
+            return (
               <View
+                key={item.id}
                 style={[
-                  styles.txIcon,
-                  {
-                    backgroundColor:
-                      tx.direction === "in"
-                        ? `${theme.colors.success}20`
-                        : `${theme.colors.danger}20`,
-                  },
+                  styles.txRow,
+                  { borderBottomColor: theme.colors.divider },
                 ]}
               >
-                {tx.direction === "in" ? (
-                  <ArrowDownLeft color={theme.colors.success} size={18} />
-                ) : (
-                  <ArrowUpRight color={theme.colors.danger} size={18} />
-                )}
+                <View style={[styles.txIcon, { backgroundColor: iconBg }]}>
+                  {isIn ? (
+                    <ArrowDownLeft color={iconColor} size={18} />
+                  ) : (
+                    <ArrowUpRight color={iconColor} size={18} />
+                  )}
+                </View>
+                <View style={styles.txInfo}>
+                  <Text style={[styles.txLabel, { color: theme.colors.text }]}>
+                    {item.title}
+                  </Text>
+                  <Text
+                    style={[styles.txTime, { color: theme.colors.textSubtle }]}
+                  >
+                    {formatRelativeTime(item.timestamp)}
+                    {item.status === "pending" ? " · Pending" : ""}
+                  </Text>
+                </View>
+                {item.amountSats != null ? (
+                  <Text style={[styles.txAmount, { color: amountColor }]}>
+                    {sign}
+                    {formatSats(item.amountSats)}
+                  </Text>
+                ) : null}
               </View>
-              <View style={styles.txInfo}>
-                <Text style={[styles.txLabel, { color: theme.colors.text }]}>
-                  {tx.counterpartyLabel}
-                </Text>
-                <Text
-                  style={[styles.txTime, { color: theme.colors.textSubtle }]}
-                >
-                  {formatRelativeTime(tx.timestamp)}
-                  {tx.status === "pending" ? " · Pending" : ""}
-                </Text>
-              </View>
-              <Text
-                style={[
-                  styles.txAmount,
-                  {
-                    color:
-                      tx.direction === "in"
-                        ? theme.colors.success
-                        : theme.colors.text,
-                  },
-                ]}
-              >
-                {tx.direction === "in" ? "+" : "-"}
-                {formatSats(tx.amountSats)}
-              </Text>
-            </View>
-          ))
+            );
+          })
         )}
       </View>
 

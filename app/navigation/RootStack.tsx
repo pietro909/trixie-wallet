@@ -1,39 +1,37 @@
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
-import { ChevronLeft } from "lucide-react-native";
 import {
   createNativeStackNavigator,
   type NativeStackHeaderProps,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
+import { ChevronLeft } from "lucide-react-native";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-import { useAppStore } from "../store/useAppStore";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
-import { type AppTheme, spacing, typography } from "../theme/theme";
-
-import RootTabs from "./RootTabs";
-import LandingNoWallet from "../screens/LandingNoWallet";
+import ActivityScreen from "../screens/ActivityScreen";
 import IntroCarousel from "../screens/IntroCarousel";
-import RestoreWallet from "../screens/RestoreWallet";
-import UnlockScreen from "../screens/UnlockScreen";
-import TransactionsScreen from "../screens/TransactionsScreen";
-import ProfilePreferences from "../screens/ProfilePreferences";
+import LandingNoWallet from "../screens/LandingNoWallet";
 import ProfileBackup from "../screens/ProfileBackup";
 import ProfileLock from "../screens/ProfileLock";
+import ProfilePreferences from "../screens/ProfilePreferences";
 import ProfileReset from "../screens/ProfileReset";
-import ReceiveSelectScreen from "../screens/receive/ReceiveSelectScreen";
+import RestoreWallet from "../screens/RestoreWallet";
 import ReceiveLightningAmountScreen from "../screens/receive/ReceiveLightningAmountScreen";
 import ReceiveQRScreen from "../screens/receive/ReceiveQRScreen";
+import ReceiveSelectScreen from "../screens/receive/ReceiveSelectScreen";
+import SendAmountScreen from "../screens/send/SendAmountScreen";
 import SendEntryScreen from "../screens/send/SendEntryScreen";
 import SendOptionsScreen from "../screens/send/SendOptionsScreen";
-import SendAmountScreen from "../screens/send/SendAmountScreen";
-import SendReviewScreen from "../screens/send/SendReviewScreen";
 import SendResultScreen from "../screens/send/SendResultScreen";
-import type { ReceiveType } from "../services/receive";
+import SendReviewScreen from "../screens/send/SendReviewScreen";
+import UnlockScreen from "../screens/UnlockScreen";
 import type {
   ParsedPaymentOption,
   PaymentType,
 } from "../services/paymentParser";
+import type { ReceiveType } from "../services/receive";
+import { useAppStore } from "../store/useAppStore";
+import { type AppTheme, spacing, typography } from "../theme/theme";
+import RootTabs from "./RootTabs";
 
 export type RootStackParamList = {
   Landing: undefined;
@@ -41,14 +39,21 @@ export type RootStackParamList = {
   RestoreWallet: undefined;
   Unlock: undefined;
   Main: undefined;
-  Transactions: undefined;
+  Activity: undefined;
   ProfilePreferences: undefined;
   ProfileBackup: undefined;
   ProfileLock: undefined;
   ProfileReset: undefined;
   ReceiveSelect: undefined;
   ReceiveLightningAmount: undefined;
-  ReceiveQR: { type: ReceiveType; amountSats?: number };
+  ReceiveQR: {
+    type: ReceiveType;
+    amountSats?: number;
+    lightningInvoice?: string;
+    lightningCreditedSats?: number;
+    lightningExpiresAt?: number;
+    lightningSwapId?: string;
+  };
   SendEntry: undefined;
   SendOptions: { rawInput: string };
   SendAmount: { option: ParsedPaymentOption };
@@ -192,9 +197,9 @@ export default function RootStack() {
             options={{ animation: "fade" }}
           />
           <Stack.Screen
-            name="Transactions"
-            component={TransactionsScreen}
-            options={{ ...headerOptions, title: "Transactions" }}
+            name="Activity"
+            component={ActivityScreen}
+            options={{ ...headerOptions, title: "Activity" }}
           />
           <Stack.Screen
             name="ProfilePreferences"

@@ -2,16 +2,50 @@ export type ThemePref = "system" | "light" | "dark";
 export type FiatCurrency = "EUR" | "USD" | "GBP";
 export type BitcoinUnit = "sats" | "btc" | "auto";
 
-export type Transaction = {
+export type ActivityDirection = "in" | "out" | "self" | "none";
+export type ActivityStatus =
+  | "pending"
+  | "confirmed"
+  | "failed"
+  | "refunded"
+  | "info";
+export type ActivityRail = "arkade" | "bitcoin" | "lightning";
+export type ActivityKind = "payment" | "lightning_swap" | "wallet_event";
+
+export type ActivitySource =
+  | { type: "arkade_tx"; walletTxId: string }
+  | {
+      type: "boltz_swap";
+      provider: "boltz";
+      swapId: string;
+      swapType: "reverse" | "submarine" | "chain";
+    }
+  | { type: "wallet_event"; eventId: string };
+
+export type Activity = {
   id: string;
-  direction: "in" | "out";
-  amountSats: number;
+  kind: ActivityKind;
+  direction?: ActivityDirection;
+  amountSats?: number;
   timestamp: number;
-  counterpartyLabel: string;
-  status: "pending" | "confirmed";
+  title: string;
+  subtitle?: string;
+  status: ActivityStatus;
+  rail?: ActivityRail;
+  source: ActivitySource;
+  metadata?: Record<string, string | number | boolean | null>;
 };
 
 export type WalletIdentityKind = "mnemonic" | "singleKey";
+
+export type LightningRestoreState = {
+  /** ms-since-epoch of the last `restoreSwaps()` call. */
+  lastAt: number;
+  /** Total swaps reported by the last restore call (across all types). */
+  lastCount: number;
+  /** Last restore error message, if any. */
+  lastError?: string;
+};
 
 export type ArkadeWalletMetadata = {
   id: string;
@@ -27,11 +61,12 @@ export type ArkadeWalletMetadata = {
   balanceSats: number;
   balanceTotalSats: number;
   balanceBoardingSats: number;
-  transactions: Transaction[];
+  activities: Activity[];
   backup: {
     hasMnemonic: boolean;
     hasPrivateKey: boolean;
   };
+  lightningRestore?: LightningRestoreState;
 };
 
 export type ServerStatus = "idle" | "connecting" | "online" | "offline";
@@ -52,7 +87,7 @@ export type ArkadeServerInfo = {
 };
 
 export type AppState = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   wallet: ArkadeWalletMetadata | null;
   network: {
     arkServerUrl: string;

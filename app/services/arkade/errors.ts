@@ -9,7 +9,19 @@ export type ArkadeErrorKind =
   | "insufficient_balance"
   | "unsupported_payment"
   | "send_failed"
-  | "refresh_failed";
+  | "refresh_failed"
+  | "lightning_unavailable"
+  | "lightning_init_failed"
+  | "invoice_invalid"
+  | "invoice_expired"
+  | "invoice_amountless"
+  | "amount_below_limit"
+  | "amount_above_limit"
+  | "swap_create_failed"
+  | "swap_settle_failed"
+  | "swap_claim_failed"
+  | "swap_refund_failed"
+  | "swap_restore_failed";
 
 export class ArkadeError extends Error {
   readonly kind: ArkadeErrorKind;

@@ -1,3 +1,5 @@
+import { decode as decodeBolt11 } from "light-bolt11-decoder";
+
 export type PaymentType = "arkade" | "bitcoin" | "lightning" | "lnurl";
 
 export type ParsedPaymentOption = {
@@ -11,6 +13,10 @@ export type ParsedPaymentOption = {
   memo?: string;
   isPayable: boolean;
   warning?: string;
+  /** Lightning-only: invoice expiry in ms-since-epoch (Unix seconds * 1000). */
+  expiresAt?: number;
+  /** Lightning-only: hex-encoded BOLT11 payment hash. */
+  paymentHash?: string;
 };
 
 export type ParseResult = {
@@ -61,7 +67,10 @@ function detectBareType(value: string): PaymentType | null {
   return null;
 }
 
-function stripUriScheme(input: string): { scheme: string | null; rest: string } {
+function stripUriScheme(input: string): {
+  scheme: string | null;
+  rest: string;
+} {
   const m = input.match(/^([a-zA-Z][a-zA-Z0-9+\-.]*):(.*)$/);
   if (!m) return { scheme: null, rest: input };
   return { scheme: m[1].toLowerCase(), rest: m[2] };
@@ -77,32 +86,93 @@ function splitAddressAndQuery(rest: string): {
   return { address, query: new URLSearchParams(querystring) };
 }
 
-function lightningInvoiceAmountSats(invoice: string): number | undefined {
-  // BOLT-11 amount: optional digits + multiplier (m/u/n/p) right after lnbc
-  const m = invoice.match(/^ln(?:bc|tb|sb|bcrt)(\d+)([munp])?/i);
-  if (!m) return undefined;
-  const digits = Number.parseInt(m[1], 10);
-  if (!Number.isFinite(digits)) return undefined;
-  const mult = m[2]?.toLowerCase();
-  // value in BTC = digits * 10^-(multiplier)
-  const factor: Record<string, number> = { m: 1e-3, u: 1e-6, n: 1e-9, p: 1e-12 };
-  const btc = mult ? digits * factor[mult] : digits;
-  return Math.round(btc * 100_000_000);
+type LightningDecodeResult = {
+  amountSats: number | undefined;
+  memo?: string;
+  expiresAt?: number;
+  paymentHash?: string;
+  error?: string;
+};
+
+/**
+ * Returns the absolute Unix-ms expiry of a BOLT11 invoice, or `undefined` if
+ * the invoice can't be decoded. Use this instead of trusting any `expiry`
+ * field returned by `@arkade-os/boltz-swap` — that wrapper falls back to the
+ * raw default delta (3600 s) when the invoice has no explicit expiry tag,
+ * which would mark every such invoice as expired in 1970.
+ */
+export function lightningInvoiceExpiresAt(invoice: string): number | undefined {
+  return decodeLightning(invoice).expiresAt;
+}
+
+function decodeLightning(invoice: string): LightningDecodeResult {
+  try {
+    // Parse directly with light-bolt11-decoder rather than the boltz-swap
+    // wrapper: the wrapper returns `expiry ?? 3600` and 3600 is the *default
+    // delta* in seconds, not an absolute Unix timestamp — multiplying by 1000
+    // would mark every invoice without an explicit expiry tag as expired.
+    const decoded = decodeBolt11(invoice) as unknown as {
+      sections: Array<{ name: string; value?: unknown }>;
+    };
+    const sections = decoded.sections;
+    const findValue = (name: string): unknown =>
+      sections.find((s) => s.name === name)?.value;
+    const timestamp = findValue("timestamp");
+    const expiryDelta = findValue("expiry");
+    const amountMillisats = findValue("amount");
+    const description = findValue("description");
+    const paymentHash = findValue("payment_hash");
+    const sats = amountMillisats
+      ? Math.floor(Number(amountMillisats) / 1000)
+      : 0;
+    const expiresAt =
+      typeof timestamp === "number"
+        ? (timestamp + (typeof expiryDelta === "number" ? expiryDelta : 3600)) *
+          1000
+        : undefined;
+    return {
+      amountSats: sats > 0 ? sats : undefined,
+      memo: typeof description === "string" && description ? description : undefined,
+      expiresAt,
+      paymentHash: typeof paymentHash === "string" ? paymentHash : undefined,
+    };
+  } catch (e) {
+    return {
+      amountSats: undefined,
+      error: e instanceof Error ? e.message : "Could not decode invoice",
+    };
+  }
+}
+
+function buildLightningOption(
+  rawInput: string,
+  invoice: string,
+): ParsedPaymentOption {
+  const decoded = decodeLightning(invoice);
+  const expired = decoded.expiresAt != null && decoded.expiresAt <= Date.now();
+  const amountless = decoded.amountSats == null;
+  const isPayable = !decoded.error && !expired && !amountless;
+  let warning: string | undefined;
+  if (decoded.error) warning = decoded.error;
+  else if (expired) warning = "Invoice expired";
+  else if (amountless) warning = "Amountless invoices are not supported";
+  return {
+    id: makeId("lightning", invoice),
+    type: "lightning",
+    raw: rawInput,
+    destination: shorten(invoice, 14, 6),
+    amountSats: decoded.amountSats,
+    memo: decoded.memo,
+    isPayable,
+    warning,
+    expiresAt: decoded.expiresAt,
+    paymentHash: decoded.paymentHash,
+  };
 }
 
 function buildBareLightning(rawInput: string, invoice: string): ParseResult {
-  const amountSats = lightningInvoiceAmountSats(invoice);
   return {
-    options: [
-      {
-        id: makeId("lightning", invoice),
-        type: "lightning",
-        raw: rawInput,
-        destination: shorten(invoice, 14, 6),
-        amountSats,
-        isPayable: true,
-      },
-    ],
+    options: [buildLightningOption(rawInput, invoice)],
     metadata: {},
   };
 }
@@ -185,18 +255,20 @@ function parseBitcoinBody(rawInput: string, body: string): ParseResult {
 
   const lightningParam = query.get("lightning");
   if (lightningParam) {
-    const subAmount = lightningInvoiceAmountSats(lightningParam);
-    const valid = LN_INVOICE_RE.test(lightningParam);
-    options.push({
-      id: makeId("lightning", lightningParam),
-      type: "lightning",
-      raw: lightningParam,
-      destination: shorten(lightningParam, 14, 6),
-      amountSats: subAmount ?? amountSats,
-      memo,
-      isPayable: valid,
-      warning: valid ? undefined : "Embedded lightning invoice is not valid",
-    });
+    if (LN_INVOICE_RE.test(lightningParam)) {
+      options.push(buildLightningOption(lightningParam, lightningParam));
+    } else {
+      options.push({
+        id: makeId("lightning", lightningParam),
+        type: "lightning",
+        raw: lightningParam,
+        destination: shorten(lightningParam, 14, 6),
+        amountSats,
+        memo,
+        isPayable: false,
+        warning: "Embedded lightning invoice is not valid",
+      });
+    }
   }
 
   const lnurlParam = query.get("lnurl");
@@ -229,7 +301,11 @@ function parseBitcoinBody(rawInput: string, body: string): ParseResult {
   }
 
   if (options.length === 0) {
-    return { options, metadata, error: "No payable target found in BIP-21 URI" };
+    return {
+      options,
+      metadata,
+      error: "No payable target found in BIP-21 URI",
+    };
   }
   return { options, metadata };
 }
@@ -247,7 +323,11 @@ export function parsePaymentInput(input: string): ParseResult {
     const sub = detectBareType(value);
     if (sub === "lightning") return buildBareLightning(trimmed, value);
     if (sub === "lnurl") return buildBareLnurl(trimmed, value);
-    return { options: [], metadata: {}, error: "Unsupported lightning: payload" };
+    return {
+      options: [],
+      metadata: {},
+      error: "Unsupported lightning: payload",
+    };
   }
 
   if (scheme === "arkade" || scheme === "ark") {

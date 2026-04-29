@@ -1,24 +1,26 @@
+import { Info } from "lucide-react-native";
 import * as React from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Info } from "lucide-react-native";
-import { useResolvedTheme } from "../hooks/useResolvedTheme";
-import { useLoading } from "../hooks/useLoading";
-import { useAppStore } from "../store/useAppStore";
-import { useToast } from "../components/ToastProvider";
 import Button from "../components/Button";
 import LoadingOverlay from "../components/LoadingOverlay";
+import { useToast } from "../components/ToastProvider";
+import { useLoading } from "../hooks/useLoading";
+import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import {
   isValidMnemonic,
+  isValidNsec,
   isValidPrivateKeyHex,
 } from "../services/arkade/identity";
-import { spacing, typography, radius } from "../theme/theme";
+import { useAppStore } from "../store/useAppStore";
+import { radius, spacing, typography } from "../theme/theme";
 
-type ValidationKind = "mnemonic" | "hex" | null;
+type ValidationKind = "mnemonic" | "nsec" | "hex" | null;
 
 function classifyInput(value: string): ValidationKind {
   const trimmed = value.trim();
   if (!trimmed) return null;
+  if (isValidNsec(trimmed)) return "nsec";
   if (isValidPrivateKeyHex(trimmed)) return "hex";
   if (isValidMnemonic(trimmed)) return "mnemonic";
   return null;
@@ -48,7 +50,9 @@ export default function RestoreWallet() {
       const input =
         kind === "mnemonic"
           ? ({ kind: "mnemonic", mnemonic: value.trim() } as const)
-          : ({ kind: "hex", privateKeyHex: value.trim() } as const);
+          : kind === "nsec"
+            ? ({ kind: "nsec", nsec: value.trim() } as const)
+            : ({ kind: "hex", privateKeyHex: value.trim() } as const);
       const stagePromise = (async () => {
         for (let i = 1; i < STAGES.length; i++) {
           await new Promise((r) => setTimeout(r, 600));
@@ -79,7 +83,7 @@ export default function RestoreWallet() {
         <TextInput
           value={value}
           onChangeText={setValue}
-          placeholder="12/24 words, or 64-char hex"
+          placeholder="12/24 words, nsec, or 64-char hex"
           placeholderTextColor={theme.colors.placeholder}
           autoCapitalize="none"
           autoCorrect={false}
@@ -108,9 +112,11 @@ export default function RestoreWallet() {
           >
             {kind === "mnemonic"
               ? "Valid BIP-39 seed phrase"
-              : kind === "hex"
-                ? "Valid 64-char hex private key"
-                : "Not a valid mnemonic or hex private key"}
+              : kind === "nsec"
+                ? "Valid nsec private key"
+                : kind === "hex"
+                  ? "Valid 64-char hex private key"
+                  : "Not a valid mnemonic, nsec, or hex private key"}
           </Text>
         ) : null}
 
@@ -119,7 +125,8 @@ export default function RestoreWallet() {
         >
           <Info color={theme.colors.primary} size={18} />
           <Text style={[styles.bannerText, { color: theme.colors.primary }]}>
-            Restore connects to {arkServerUrl} and rebuilds your Arkade addresses.
+            Restore connects to {arkServerUrl} and rebuilds your Arkade
+            addresses.
           </Text>
         </View>
 
