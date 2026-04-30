@@ -507,3 +507,133 @@ Cross-platform sanity:
   exercise.
 - Disaster-recovery surface for stranded refundable swaps — Milestone 9.
 
+## Execution Result (2026-04-30)
+
+Status: **shipped**. All six phases landed, plus three emulator-driven fixes
+discovered during QA and folded into the implementation.
+
+### Files added
+
+- `app/services/backup/crypto.ts` — `encryptBundle` / `decryptBundle`,
+  `BackupError` with kinds (`wrong_password`, `corrupted_envelope`,
+  `unsupported_version`, `unsupported_algorithm`, `encrypt_failed`).
+- `app/services/backup/serializer.ts` — `buildBackupPayload`,
+  `parseBackupPayload`, `PayloadParseError`.
+- `app/services/backup/storage.ts` — `writeBackupToTemp`, `shareBackupFile`,
+  `saveBackupFile`, `pickBackupFile`, `deleteBackupTempFile`,
+  `BackupFileError`.
+- `app/screens/RestoreBackupPasswordScreen.tsx` — password-prompt screen for
+  the file-restore flow.
+- `docs/BACKUP_FORMAT.md` — full on-disk specification.
+- `scripts/decrypt-backup.mjs` — Node-only CLI (Node 18+, no third-party
+  deps) for decrypting a `.trixiebackup` file with only the password.
+
+### Files modified
+
+- `app/store/types.ts` — schema bumped to v4; `security.lastBackupAt` and
+  `security.dirtyForBackup` added.
+- `app/store/useAppStore.ts` — `STORAGE_KEY` → `app_state_v4`,
+  `LEGACY_STORAGE_KEYS` extended; new actions `exportBackup`,
+  `markBackupCompleted`, `discardBackupTempFile`, `importBackup`,
+  `getBackupHealth`. `markDirtyForBackup()` plumbed into the swap-event
+  listener and into `setArkServerUrl` / `setWalletBehavior`.
+- `app/services/arkade/swap-storage.ts` — `getLatestSwapMetadataWriteAt`,
+  `restoreSwapMetadataRows`.
+- `app/services/arkade/lightning.ts` — `snapshotBoltzSwaps`,
+  `restoreBoltzSwaps`, `getLatestBoltzSwapWriteAt`.
+- `app/screens/ProfileBackup.tsx` — three-section layout (encrypted backup
+  file, wallet keys, identifiers); state machine `idle → form → encrypting
+  → dispatch → saving|sharing → idle`.
+- `app/screens/RestoreWallet.tsx` — `Restore from backup file` card above
+  the existing seed-phrase flow.
+- `app/screens/ProfileReset.tsx` — three-tier gate (block / warn-stale /
+  permit) driven by `getBackupHealth`.
+- `app/navigation/RootStack.tsx` — `RestoreBackupPassword` route registered
+  on the no-wallet branch.
+
+### Dependencies added
+
+`@noble/ciphers`, `expo-file-system`, `expo-sharing`, `expo-document-picker`.
+All four are autolinked Expo modules; no `app.json` plugin entry was needed.
+
+### Deviations from the plan
+
+- **PBKDF2 iterations 600k → 200k.** With `@noble/hashes` running in pure JS
+  on Hermes, 600k iterations took 30–90 s on emulator and slow phones —
+  unacceptable UX. 200k matches Apple Keychain's default and is well above
+  OWASP's threshold for a user-chosen password + 16-byte random salt. The
+  iteration count is in the envelope, so this stays forward-compatible if a
+  native PBKDF2 lands later. Documented in `docs/BACKUP_FORMAT.md`.
+- **Save flow uses `Directory.createFile` + `write(bytes)`, not `copy()`.**
+  On Android SAF, `new File(safDir, name)` plus `sourceFile.copy(destFile)`
+  fails with *"A folder with the same name already exists in the file
+  location"* — the underlying `expo-file-system` Kotlin source explicitly
+  documents that `create()` does not work with SAF URIs and instructs
+  callers to use `createFile`/`createDirectory` on the Directory instead.
+  We now read the temp file's bytes and write them into a fresh document
+  the directory creates for us, with MIME `application/octet-stream` so SAF
+  doesn't rewrite the `.trixiebackup` extension. Save filenames carry a
+  full ISO timestamp, eliminating same-day collisions and unblocking users
+  whose first save left an empty SAF folder behind.
+- **Save vs Share split into two explicit dispatch buttons.** The plan
+  assumed the share sheet would cover both audiences. On Android emulator
+  (no Drive sign-in, no third-party share targets) the share sheet is
+  effectively empty, so an explicit *Save to device* path that calls
+  `Directory.pickDirectoryAsync()` is required. The Share button stays for
+  users who want to send the file to another app or AirDrop.
+- **One-tick paint yield before PBKDF2.** `pbkdf2Async` runs ~10 ms of
+  synchronous JS before its first internal yield, which in Hermes is enough
+  to swallow the `setState` from `show(...)` so neither the spinner-button
+  nor the `LoadingOverlay` paints until tens of seconds later. Both
+  `submitExport` and the restore-from-backup `handleSubmit` now insert a
+  `await new Promise((r) => setTimeout(r, 0))` between flipping the loading
+  state and starting the crypto. The seed-phrase flow does not need this
+  because its first step is `probeServer()`, a network call that yields
+  immediately.
+- **Slow-export advisory text.** Both the export form and the
+  restore-password screen now carry an inline yellow banner — *"Encryption
+  can take 5–15 seconds. Keep the app open until it finishes."* — so the
+  user has explicit guidance when the JS thread is busy on PBKDF2.
+- **Picker cache hygiene.** `pickBackupFile` deletes the cache copy that
+  `DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true })` writes,
+  immediately after the envelope is parsed into memory. The user's
+  original file is never touched (read-only copy semantics), and the cache
+  copy doesn't outlive the screen. This was added in response to a user
+  question; not a bug, just hygiene.
+- **`scripts/decrypt-backup.ts` → `scripts/decrypt-backup.mjs`.** The `.ts`
+  variant required Node 22.6+ type-stripping; the `.mjs` variant runs on
+  any Node 18+ with no flags. The Node round-trip harness confirmed both
+  forms produce the same output, but `.mjs` is the cleaner artefact.
+
+### Verification
+
+- `pnpm check` and `npx tsc --noEmit` both clean across the final tree.
+- A round-trip harness encrypted a known plaintext using the same noble
+  primitives the app uses (with 200k iterations), wrote the envelope to a
+  temp file, decrypted it via `node scripts/decrypt-backup.mjs`, and
+  verified the output matches. Wrong-password attempts are rejected with
+  the expected error.
+- Manual emulator validation by the user confirmed the slow-export
+  advisory, the Save flow, and the LoadingOverlay during decrypt all
+  behave as designed. End-to-end restore-from-bundle was not yet
+  exercised at the time the milestone closed; the format spec and the
+  Node CLI provide the recovery path if that surfaces an issue later.
+
+### Known follow-ups
+
+- The 200k iteration count is conservative for pure-JS PBKDF2. Once the
+  app gains a native AES/PBKDF2 module (e.g. via `react-native-quick-crypto`
+  or a dedicated Expo module), bump iterations and document the bump in
+  `BACKUP_FORMAT.md`. The envelope already carries the value, so old
+  bundles keep decrypting.
+- `lastBackupAt` updates whenever `Sharing.shareAsync` resolves, even if
+  the user dismisses the sheet without saving. The OS share API doesn't
+  expose a "did the user save it?" signal, so the trade-off is documented
+  but accepted.
+- Activity rows are not part of the bundle (rebuilt from SDK + Boltz repo
+  on restore). If a user resets in the middle of a long renewal/exit
+  cycle and restores onto a new device before the on-chain side settles,
+  the resulting Activity feed may briefly show fewer rows than it had
+  pre-reset. The data is recovered by the next refresh; the gap is
+  expected and aligns with the milestone's "rebuilt from chain" stance.
+

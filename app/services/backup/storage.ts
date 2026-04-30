@@ -1,6 +1,7 @@
 import * as DocumentPicker from "expo-document-picker";
 import { Directory, File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
+import { recordError } from "../diagnostics/recorder";
 import { type EncryptedEnvelope, isEncryptedEnvelope } from "./crypto";
 
 const FILE_EXTENSION = "trixiebackup";
@@ -166,6 +167,7 @@ export class BackupFileError extends Error {
     this.name = "BackupFileError";
     this.kind = kind;
     this.cause = cause;
+    recordError("backup", `${kind}: ${message}`);
   }
 }
 

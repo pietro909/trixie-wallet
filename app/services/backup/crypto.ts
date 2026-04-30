@@ -4,6 +4,7 @@ import { pbkdf2Async } from "@noble/hashes/pbkdf2.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { base64 } from "@scure/base";
 import * as ExpoCrypto from "expo-crypto";
+import { recordError } from "../diagnostics/recorder";
 
 const MAGIC = "trixie.backup" as const;
 const ENVELOPE_VERSION = 1 as const;
@@ -52,6 +53,7 @@ export class BackupError extends Error {
     this.name = "BackupError";
     this.kind = kind;
     this.cause = cause;
+    recordError("backup", `${kind}: ${message}`);
   }
 }
 

@@ -7,6 +7,7 @@ import {
 } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { Address, OutScript } from "@scure/btc-signer";
+import { recordError } from "../diagnostics/recorder";
 
 export type OffboardFeeEstimate = {
   /** Total fee in satoshis (input fees + output fee). */
@@ -29,6 +30,7 @@ export class OffboardFeeEstimateError extends Error {
     super(message);
     this.kind = kind;
     this.name = "OffboardFeeEstimateError";
+    recordError("send", `offboard_fee: ${kind}: ${message}`);
   }
 }
 

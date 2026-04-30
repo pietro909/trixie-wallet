@@ -83,6 +83,7 @@ import {
   deleteBackupTempFile,
   writeBackupToTemp,
 } from "../services/backup/storage";
+import { recordError } from "../services/diagnostics/recorder";
 import {
   isBitcoinAddressForNetwork,
   networkNameOrNull,
@@ -370,6 +371,7 @@ function scheduleLightningRestore(walletId: string): void {
         const after = useAppStore.getState().wallet;
         if (!after || after.id !== walletId) return;
         const message = e instanceof Error ? e.message : "Restore failed";
+        recordError("lightning", `restore_swaps_failed: ${message}`);
         useAppStore.setState({
           wallet: {
             ...after,
@@ -1320,8 +1322,11 @@ setSwapEventListener(() => {
     useAppStore
       .getState()
       .refreshWallet()
-      .catch(() => {
-        // background refresh; surface only via next user interaction
+      .catch((e) => {
+        recordError(
+          "swap",
+          `refresh_after_swap_event_failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
       });
   }, 250);
 });
@@ -1336,8 +1341,11 @@ setIncomingFundsListener(() => {
     useAppStore
       .getState()
       .refreshWallet()
-      .catch(() => {
-        // background refresh
+      .catch((e) => {
+        recordError(
+          "wallet",
+          `refresh_after_incoming_funds_failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
       });
   }, 250);
 });

@@ -53,6 +53,20 @@
     ],
     "experiments": {
       "reactCompiler": true
+    },
+    "extra": {
+      "versions": {
+        "sdk": "0.4.22",
+        "boltzSwap": "0.3.23"
+      },
+      "git": {
+        "commit": "a7738be",
+        "describe": "a7738be-dirty"
+      },
+      "router": {},
+      "eas": {
+        "projectId": "dea0ea57-4275-45d6-82c2-398f20804515"
+      }
     }
   }
 }

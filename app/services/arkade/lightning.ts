@@ -19,6 +19,7 @@ import {
 import { SQLiteSwapRepository } from "@arkade-os/boltz-swap/repositories/sqlite";
 import { type ArkTransaction, type NetworkName, TxType } from "@arkade-os/sdk";
 import type { ArkadeWalletMetadata, WalletBehavior } from "../../store/types";
+import { recordError } from "../diagnostics/recorder";
 import { ArkadeError, toArkadeError } from "./errors";
 import { ensureWallet, getWallet } from "./runtime";
 import { getSharedSqlExecutor } from "./storage";
@@ -88,8 +89,12 @@ function notify(event: SwapEvent): void {
   if (!listener) return;
   try {
     listener(event);
-  } catch {
-    // listener errors must not crash the swap manager
+  } catch (e) {
+    // Listener errors must not crash the swap manager.
+    recordError(
+      "swap",
+      `swap_listener_failed: ${event.kind}: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
 }
 
@@ -116,7 +121,11 @@ async function attemptReverseLinkage(swap: BoltzSwap): Promise<void> {
   try {
     const wallet = await getWallet();
     history = await wallet.getTransactionHistory();
-  } catch {
+  } catch (e) {
+    recordError(
+      "swap",
+      `reverse_linkage_history_unavailable: ${e instanceof Error ? e.message : String(e)}`,
+    );
     return;
   }
   const swapCreatedAtMs = swap.createdAt * 1000;
@@ -194,8 +203,11 @@ async function attachSwapManagerSubscriptions(
       await manager.onSwapCompleted(async (swap) => {
         try {
           await attemptReverseLinkage(swap);
-        } catch {
-          // best-effort linkage
+        } catch (e) {
+          recordError(
+            "swap",
+            `reverse_linkage_failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
         }
         notify({ kind: "completed", swap });
       }),
@@ -211,7 +223,11 @@ async function attachSwapManagerSubscriptions(
       }),
     );
     activeUnsubscribers = unsubs;
-  } catch {
+  } catch (e) {
+    recordError(
+      "swap",
+      `swap_subscription_failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
     for (const u of unsubs) {
       try {
         u();
@@ -606,7 +622,11 @@ export async function getLightningActivitySources(
       getAllSwapMetadata(walletId),
     ]);
     return { swaps, metadata };
-  } catch {
+  } catch (e) {
+    recordError(
+      "activity",
+      `lightning_activity_sources_failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
     return { swaps: [], metadata: [] };
   }
 }

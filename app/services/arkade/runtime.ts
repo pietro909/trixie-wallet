@@ -13,6 +13,7 @@ import type {
   ArkadeWalletMetadata,
   WalletBehavior,
 } from "../../store/types";
+import { recordError } from "../diagnostics/recorder";
 import { getActivityHistory } from "./activity-history";
 import { ArkadeError, toArkadeError } from "./errors";
 import {
@@ -62,12 +63,20 @@ async function attachIncomingFundsSubscription(wallet: Wallet): Promise<void> {
       if (!listener) return;
       try {
         listener(funds);
-      } catch {
-        // listener errors must not crash the SSE / mempool watchers
+      } catch (e) {
+        // Listener errors must not crash the SSE / mempool watchers.
+        recordError(
+          "wallet",
+          `incoming_funds_listener_failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     });
-  } catch {
-    // best-effort; activity will still update on the next manual refresh
+  } catch (e) {
+    // Best-effort; activity will still update on the next manual refresh.
+    recordError(
+      "wallet",
+      `incoming_funds_subscribe_failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
 }
 

@@ -6,6 +6,7 @@ import type {
 } from "../../store/types";
 import type { StoredSecret } from "../arkade/secret-store";
 import type { LocalSwapMetadata } from "../arkade/swap-storage";
+import { recordError } from "../diagnostics/recorder";
 
 export const PAYLOAD_VERSION = 1 as const;
 
@@ -66,6 +67,7 @@ export class PayloadParseError extends Error {
     super(message);
     this.name = "PayloadParseError";
     this.kind = kind;
+    recordError("backup", `${kind}: ${message}`);
   }
 }
 

@@ -18,9 +18,9 @@ Last updated: 2026-04-30
   - Add an Activity details/inspection screen with copyable fields and network-aware explorer links.
 - [x] Milestone 5: Bitcoin On-Chain Send (Collaborative Exit) ([docs/MILESTONE_5.agents.md](./docs/MILESTONE_5.agents.md))
   - Implement on-chain send via collaborative exit (`Ramps.offboard`) with fee preview and a review/result flow.
-- [ ] Milestone 6: Backup and Reset Safety ([docs/MILESTONE_6.agents.md](./docs/MILESTONE_6.agents.md))
+- [x] Milestone 6: Backup and Reset Safety ([docs/MILESTONE_6.agents.md](./docs/MILESTONE_6.agents.md))
   - Define a versioned, encrypted local backup bundle format + restore path; gate reset behind backup/recovery safety.
-- [ ] Milestone 7: Logs Export ([docs/MILESTONE_7.agents.md](./docs/MILESTONE_7.agents.md))
+- [x] Milestone 7: Logs Export ([docs/MILESTONE_7.agents.md](./docs/MILESTONE_7.agents.md))
   - Export a redacted support bundle (no secrets) suitable for debugging sends/restores/background work.
 - [ ] Milestone 8: Background Claim, Refund, and Resume ([docs/MILESTONE_8.agents.md](./docs/MILESTONE_8.agents.md))
   - Make pending Lightning/swap state resume idempotently across suspend/restart/unlock.

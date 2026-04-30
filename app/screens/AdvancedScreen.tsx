@@ -38,7 +38,14 @@ import {
   defaultDelegatorUrlForNetwork,
   normalizeServerUrl,
 } from "../services/arkade/network";
-import { fetchRawServerInfo, probeServer } from "../services/arkade/runtime";
+import { probeServer } from "../services/arkade/runtime";
+import { buildSupportBundle } from "../services/diagnostics/bundle";
+import {
+  deleteBundleTempFile,
+  saveBundleFile,
+  shareBundleFile,
+  writeBundleToTemp,
+} from "../services/diagnostics/storage";
 import type {
   ArkadeServerInfo,
   ServerStatus,
@@ -169,16 +176,38 @@ export default function AdvancedScreen() {
     [showToast],
   );
 
-  async function copyServerInfoJson() {
-    setBusyKey("server");
+  function bundleBasename(): string {
+    const stamp = new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")
+      .replace(/-?Z$/, "");
+    return `trixie-support-${stamp}`;
+  }
+
+  async function withBundle<T>(
+    fn: (b: { uri: string; filename: string }) => Promise<T>,
+  ): Promise<T> {
+    const bundle = await buildSupportBundle();
+    const written = writeBundleToTemp({
+      bundle,
+      basename: bundleBasename(),
+    });
     try {
-      const raw = await fetchRawServerInfo(networkState.arkServerUrl);
-      await Clipboard.setStringAsync(JSON.stringify(raw, null, 2));
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      showToast("Server info copied", "success");
+      return await fn(written);
+    } finally {
+      deleteBundleTempFile(written.uri);
+    }
+  }
+
+  async function shareSupportBundle() {
+    setBusyKey("bundle");
+    try {
+      await withBundle(async (file) => {
+        await shareBundleFile(file.uri);
+      });
     } catch (e) {
       showToast(
-        e instanceof Error ? e.message : "Could not fetch server info",
+        e instanceof Error ? e.message : "Could not share support bundle",
         "error",
       );
     } finally {
@@ -186,41 +215,54 @@ export default function AdvancedScreen() {
     }
   }
 
-  async function copyWalletMetadataJson() {
-    if (!wallet) {
-      showToast("No wallet to copy", "error");
-      return;
-    }
+  async function saveSupportBundle() {
+    setBusyKey("bundle");
     try {
-      await Clipboard.setStringAsync(JSON.stringify(wallet, null, 2));
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      showToast("Wallet metadata copied", "success");
-    } catch {
-      showToast("Could not copy", "error");
+      const result = await withBundle((file) =>
+        saveBundleFile({ sourceUri: file.uri, filename: file.filename }),
+      );
+      if (result.kind === "saved") {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        showToast("Support bundle saved", "success");
+      }
+    } catch (e) {
+      showToast(
+        e instanceof Error ? e.message : "Could not save support bundle",
+        "error",
+      );
+    } finally {
+      setBusyKey(null);
     }
   }
 
-  async function copyAppStateJson() {
-    const s = useAppStore.getState();
-    const sanitized = {
-      schemaVersion: s.schemaVersion,
-      wallet: s.wallet,
-      network: s.network,
-      walletBehavior: s.walletBehavior,
-      preferences: s.preferences,
-      security: {
-        isLocked: s.security.isLocked,
-        biometricsEnabled: s.security.biometricsEnabled,
-        passwordHash: s.security.passwordHash ? "[redacted]" : undefined,
-      },
-    };
+  async function copySupportBundle() {
+    setBusyKey("bundle");
     try {
-      await Clipboard.setStringAsync(JSON.stringify(sanitized, null, 2));
+      const bundle = await buildSupportBundle();
+      await Clipboard.setStringAsync(JSON.stringify(bundle, null, 2));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      showToast("App state copied", "success");
-    } catch {
-      showToast("Could not copy", "error");
+      showToast("Support bundle copied", "success");
+    } catch (e) {
+      showToast(
+        e instanceof Error ? e.message : "Could not copy support bundle",
+        "error",
+      );
+    } finally {
+      setBusyKey(null);
     }
+  }
+
+  function presentBundleActions() {
+    Alert.alert(
+      "Support bundle",
+      "Bundles a redacted snapshot of wallet, server, and recent error events. Safe to share with support.",
+      [
+        { text: "Save to device", onPress: () => void saveSupportBundle() },
+        { text: "Share…", onPress: () => void shareSupportBundle() },
+        { text: "Copy as JSON", onPress: () => void copySupportBundle() },
+        { text: "Cancel", style: "cancel" },
+      ],
+    );
   }
 
   const applyWalletBehavior = React.useCallback(
@@ -357,18 +399,6 @@ export default function AdvancedScreen() {
       cancelled = true;
     };
   }, [lightningSupported, lightningNetwork, wallet]);
-
-  function copyLightningDiagnostics() {
-    const payload = {
-      network: lightningNetwork,
-      boltzUrl,
-      status: lightningStatus,
-      limits: lightningLimits,
-      fees: lightningFees,
-      restore: lightningRestore,
-    };
-    handleCopy(JSON.stringify(payload, null, 2), "Lightning diagnostics");
-  }
 
   function formatRestoreTimestamp(ts: number): string {
     return new Date(ts).toLocaleString();
@@ -803,37 +833,11 @@ export default function AdvancedScreen() {
         ) : null}
         <RawRow
           theme={theme}
-          label="Server info"
-          hint="Fresh snapshot from the Arkade server"
-          busy={busyKey === "server"}
-          onPress={copyServerInfoJson}
+          label="Support bundle"
+          hint="Wallet, server, recovery counts, and recent error events. Redacted — safe to share."
+          busy={busyKey === "bundle"}
+          onPress={presentBundleActions}
         />
-        <Divider theme={theme} />
-        <RawRow
-          theme={theme}
-          label="Wallet record"
-          hint={wallet ? "On-device wallet data (no secrets)" : "No wallet"}
-          disabled={!wallet}
-          onPress={copyWalletMetadataJson}
-        />
-        <Divider theme={theme} />
-        <RawRow
-          theme={theme}
-          label="App state"
-          hint="Everything Trixie persists — passwords are redacted"
-          onPress={copyAppStateJson}
-        />
-        {lightningSupported ? (
-          <>
-            <Divider theme={theme} />
-            <RawRow
-              theme={theme}
-              label="Lightning diagnostics"
-              hint="Boltz URL, limits, fees, last restore — preimages omitted"
-              onPress={copyLightningDiagnostics}
-            />
-          </>
-        ) : null}
       </View>
     </ScrollView>
   );
