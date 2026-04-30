@@ -314,6 +314,54 @@ export async function clearAllSwaps(): Promise<void> {
   await repo.clear();
 }
 
+/**
+ * Snapshots every Boltz swap row in the local repository, parsed into
+ * `BoltzSwap` objects. Used by the backup-export flow.
+ */
+export async function snapshotBoltzSwaps(): Promise<BoltzSwap[]> {
+  const repo = new SQLiteSwapRepository(getSharedSqlExecutor());
+  return repo.getAllSwaps();
+}
+
+/**
+ * Restores Boltz swap rows verbatim into the local repository. Used by the
+ * backup-import flow. Existing rows with the same id are overwritten (the
+ * backup wins) — this matches how the package's `saveSwap` already behaves.
+ */
+export async function restoreBoltzSwaps(swaps: BoltzSwap[]): Promise<void> {
+  if (swaps.length === 0) return;
+  const repo = new SQLiteSwapRepository(getSharedSqlExecutor());
+  for (const swap of swaps) {
+    await repo.saveSwap(swap);
+  }
+}
+
+/**
+ * Returns the timestamp of the most recent Boltz swap row, in milliseconds
+ * since epoch. Null when no rows exist.
+ *
+ * The `boltz_swaps` table records `created_at` (seconds, populated by the
+ * package). It has no `updated_at` column, so this is a lower bound on
+ * "latest write" — sufficient for the backup-health calculation, which
+ * combines this with an in-memory `dirtyForBackup` flag bumped on every
+ * swap event.
+ */
+export async function getLatestBoltzSwapWriteAt(): Promise<number | null> {
+  const exec = getSharedSqlExecutor();
+  try {
+    const row = await exec.get<{ ts: number | null }>(
+      `SELECT MAX(created_at) AS ts FROM boltz_swaps`,
+    );
+    if (row?.ts == null) return null;
+    // The package stores `created_at` in seconds. Convert to ms for parity
+    // with `trixie_swap_meta.updated_at`.
+    return row.ts * 1000;
+  } catch {
+    // Table may not exist yet (no Boltz interaction has happened).
+    return null;
+  }
+}
+
 export async function createLightningInvoice(
   args: CreateLightningInvoiceRequest,
 ): Promise<CreateLightningInvoiceResponse> {

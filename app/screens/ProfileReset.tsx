@@ -1,43 +1,72 @@
-import { AlertTriangle } from "lucide-react-native";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { AlertTriangle, ShieldCheck } from "lucide-react-native";
 import * as React from "react";
-import { StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Button from "../components/Button";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
-import { useAppStore } from "../store/useAppStore";
+import type { RootStackParamList } from "../navigation/RootStack";
+import { type BackupHealth, useAppStore } from "../store/useAppStore";
 import { radius, spacing, typography } from "../theme/theme";
+
+type Nav = NativeStackNavigationProp<RootStackParamList, "ProfileReset">;
+
+type Gate = "block_pending" | "warn_stale" | "permit";
+
+function gateForState(pendingCount: number, health: BackupHealth | null): Gate {
+  if (pendingCount > 0) return "block_pending";
+  if (health?.isStale) return "warn_stale";
+  return "permit";
+}
+
+function tokenForGate(gate: Gate): string {
+  return gate === "block_pending" ? "RESET PENDING" : "RESET";
+}
 
 export default function ProfileReset() {
   const theme = useResolvedTheme();
+  const nav = useNavigation<Nav>();
   const resetWallet = useAppStore((s) => s.resetWallet);
   const getPendingLightningSwapCount = useAppStore(
     (s) => s.getPendingLightningSwapCount,
   );
+  const getBackupHealth = useAppStore((s) => s.getBackupHealth);
+  const lastBackupAt = useAppStore((s) => s.security.lastBackupAt ?? null);
+  const dirtyForBackup = useAppStore((s) => s.security.dirtyForBackup === true);
+
   const [input, setInput] = React.useState("");
   const [pendingCount, setPendingCount] = React.useState<number | null>(null);
+  const [health, setHealth] = React.useState<BackupHealth | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run on backup-state signals
   React.useEffect(() => {
     let cancelled = false;
-    getPendingLightningSwapCount()
-      .then((count) => {
-        if (!cancelled) setPendingCount(count);
-      })
-      .catch(() => {
-        if (!cancelled) setPendingCount(0);
-      });
+    Promise.all([
+      getPendingLightningSwapCount().catch(() => 0),
+      getBackupHealth().catch(() => null),
+    ]).then(([count, h]) => {
+      if (cancelled) return;
+      setPendingCount(count);
+      setHealth(h);
+    });
     return () => {
       cancelled = true;
     };
-  }, [getPendingLightningSwapCount]);
+  }, [
+    getPendingLightningSwapCount,
+    getBackupHealth,
+    lastBackupAt,
+    dirtyForBackup,
+  ]);
 
-  const requireExtraConfirmation = (pendingCount ?? 0) > 0;
-  const canReset = requireExtraConfirmation
-    ? input === "RESET PENDING"
-    : input === "RESET";
+  const gate = gateForState(pendingCount ?? 0, health);
+  const expected = tokenForGate(gate);
+  const canReset = input === expected;
 
   async function handleReset() {
     await resetWallet();
-    // Navigation auto-redirects to Landing because wallet becomes null
+    // Navigation auto-redirects to Landing because wallet becomes null.
   }
 
   return (
@@ -63,30 +92,28 @@ export default function ProfileReset() {
           style={[styles.list, { backgroundColor: theme.colors.surfaceSubtle }]}
         >
           <Text style={[styles.listItem, { color: theme.colors.textMuted }]}>
-            {"\u2022"} All wallet keys will be deleted
+            {"•"} All wallet keys will be deleted
           </Text>
           <Text style={[styles.listItem, { color: theme.colors.textMuted }]}>
-            {"\u2022"} Activity history will be lost
+            {"•"} Activity history will be lost
           </Text>
           <Text style={[styles.listItem, { color: theme.colors.textMuted }]}>
-            {"\u2022"} Preferences will be reset
+            {"•"} Preferences will be reset
           </Text>
           <Text style={[styles.listItem, { color: theme.colors.textMuted }]}>
-            {"\u2022"} This cannot be recovered
+            {"•"} This cannot be recovered
           </Text>
         </View>
 
-        {requireExtraConfirmation ? (
+        {gate === "block_pending" ? (
           <View
             style={[
-              styles.pendingWarning,
-              { backgroundColor: `${theme.colors.warning}20` },
+              styles.banner,
+              { backgroundColor: `${theme.colors.danger}20` },
             ]}
           >
-            <AlertTriangle color={theme.colors.warning} size={18} />
-            <Text
-              style={[styles.pendingWarningText, { color: theme.colors.text }]}
-            >
+            <AlertTriangle color={theme.colors.danger} size={18} />
+            <Text style={[styles.bannerText, { color: theme.colors.text }]}>
               {pendingCount === 1
                 ? "1 Lightning swap is still pending."
                 : `${pendingCount} Lightning swaps are still pending.`}{" "}
@@ -96,13 +123,44 @@ export default function ProfileReset() {
           </View>
         ) : null}
 
+        {gate === "warn_stale" ? (
+          <View
+            style={[
+              styles.banner,
+              { backgroundColor: `${theme.colors.warning}25` },
+            ]}
+          >
+            <ShieldCheck color={theme.colors.warning} size={18} />
+            <View style={styles.bannerBody}>
+              <Text style={[styles.bannerText, { color: theme.colors.text }]}>
+                {lastBackupAt == null
+                  ? "You have swap history that hasn't been backed up. Reset will discard it."
+                  : "Your backup is out of date. New swap activity since the last export will be lost."}
+              </Text>
+              <Pressable
+                onPress={() => nav.navigate("ProfileBackup")}
+                style={styles.bannerLink}
+              >
+                <Text
+                  style={[
+                    styles.bannerLinkText,
+                    { color: theme.colors.primary },
+                  ]}
+                >
+                  Back up first
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
         <Text style={[styles.confirmLabel, { color: theme.colors.text }]}>
-          Type {requireExtraConfirmation ? "RESET PENDING" : "RESET"} to confirm
+          Type {expected} to confirm
         </Text>
         <TextInput
           value={input}
           onChangeText={setInput}
-          placeholder={requireExtraConfirmation ? "RESET PENDING" : "RESET"}
+          placeholder={expected}
           placeholderTextColor={theme.colors.placeholder}
           autoCapitalize="characters"
           style={[
@@ -181,7 +239,7 @@ const styles = StyleSheet.create({
   resetBtn: {
     marginTop: spacing[5],
   },
-  pendingWarning: {
+  banner: {
     flexDirection: "row",
     gap: spacing[2],
     padding: spacing[3],
@@ -189,9 +247,19 @@ const styles = StyleSheet.create({
     marginTop: spacing[5],
     alignItems: "flex-start",
   },
-  pendingWarningText: {
+  bannerBody: {
     flex: 1,
+  },
+  bannerText: {
     fontSize: typography.size.xs,
     lineHeight: typography.lineHeight.xs,
+  },
+  bannerLink: {
+    marginTop: spacing[2],
+    alignSelf: "flex-start",
+  },
+  bannerLinkText: {
+    fontSize: typography.size.xs,
+    fontWeight: typography.weight.semibold,
   },
 });

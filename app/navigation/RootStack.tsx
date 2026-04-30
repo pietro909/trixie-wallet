@@ -15,6 +15,7 @@ import ProfileBackup from "../screens/ProfileBackup";
 import ProfileLock from "../screens/ProfileLock";
 import ProfilePreferences from "../screens/ProfilePreferences";
 import ProfileReset from "../screens/ProfileReset";
+import RestoreBackupPasswordScreen from "../screens/RestoreBackupPasswordScreen";
 import RestoreWallet from "../screens/RestoreWallet";
 import ReceiveLightningAmountScreen from "../screens/receive/ReceiveLightningAmountScreen";
 import ReceiveQRScreen from "../screens/receive/ReceiveQRScreen";
@@ -25,6 +26,7 @@ import SendOptionsScreen from "../screens/send/SendOptionsScreen";
 import SendResultScreen from "../screens/send/SendResultScreen";
 import SendReviewScreen from "../screens/send/SendReviewScreen";
 import UnlockScreen from "../screens/UnlockScreen";
+import type { EncryptedEnvelope } from "../services/backup/crypto";
 import type {
   ParsedPaymentOption,
   PaymentType,
@@ -38,6 +40,7 @@ export type RootStackParamList = {
   Landing: undefined;
   IntroCarousel: undefined;
   RestoreWallet: undefined;
+  RestoreBackupPassword: { envelope: EncryptedEnvelope };
   Unlock: undefined;
   Main: undefined;
   Activity: undefined;
@@ -183,6 +186,11 @@ export default function RootStack() {
             name="RestoreWallet"
             component={RestoreWallet}
             options={{ ...headerOptions, title: "Restore Wallet" }}
+          />
+          <Stack.Screen
+            name="RestoreBackupPassword"
+            component={RestoreBackupPasswordScreen}
+            options={{ ...headerOptions, title: "Restore Backup" }}
           />
         </>
       ) : security.isLocked ? (

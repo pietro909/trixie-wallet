@@ -95,7 +95,7 @@ export type ArkadeServerInfo = {
 };
 
 export type AppState = {
-  schemaVersion: 3;
+  schemaVersion: 4;
   wallet: ArkadeWalletMetadata | null;
   network: {
     arkServerUrl: string;
@@ -114,5 +114,17 @@ export type AppState = {
     isLocked: boolean;
     passwordHash?: string;
     biometricsEnabled: boolean;
+    /**
+     * Timestamp (ms since epoch) of the last successful encrypted-backup
+     * export. Drives the "needs backup" warning on Reset.
+     */
+    lastBackupAt?: number;
+    /**
+     * Sticky flag: set whenever any backup-relevant state mutates (swap
+     * events, behavior changes, server URL changes). Cleared on a successful
+     * export. Combined with `lastBackupAt` to compute backup health without
+     * needing wall-clock comparisons against opaque SQLite tables.
+     */
+    dirtyForBackup?: boolean;
   };
 };

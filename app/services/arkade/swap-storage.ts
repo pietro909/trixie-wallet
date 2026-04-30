@@ -222,3 +222,61 @@ export async function clearSwapMetadataForWallet(
   const exec = getSharedSqlExecutor();
   await exec.run(`DELETE FROM ${TABLE} WHERE wallet_id = ?`, [walletId]);
 }
+
+/**
+ * Returns the timestamp of the most recent metadata write for the given
+ * wallet, in milliseconds since epoch. Null when no rows exist.
+ *
+ * Used by the backup-health calculation to decide whether the wallet has
+ * unbacked-up swap material. We compare against `MAX(updated_at)` because
+ * `updated_at` reflects every linkage / status / restore touch, not just
+ * row creation.
+ */
+export async function getLatestSwapMetadataWriteAt(
+  walletId: string,
+): Promise<number | null> {
+  await ensureInit();
+  const exec = getSharedSqlExecutor();
+  const row = await exec.get<{ ts: number | null }>(
+    `SELECT MAX(updated_at) AS ts FROM ${TABLE} WHERE wallet_id = ?`,
+    [walletId],
+  );
+  return row?.ts ?? null;
+}
+
+/**
+ * Restores swap metadata rows verbatim, preserving their original timestamps.
+ * Used by the backup import flow. Existing rows with the same `swap_id` are
+ * overwritten (the backup wins).
+ */
+export async function restoreSwapMetadataRows(
+  rows: LocalSwapMetadata[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  await ensureInit();
+  const exec = getSharedSqlExecutor();
+  for (const row of rows) {
+    await exec.run(
+      `INSERT OR REPLACE INTO ${TABLE} (
+        swap_id, wallet_id, direction, created_for_flow,
+        invoice_amount_sats, arkade_amount_sats,
+        wallet_tx_id, payment_hash, link_source,
+        restored_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.swapId,
+        row.walletId,
+        row.direction,
+        row.createdForFlow,
+        row.invoiceAmountSats,
+        row.arkadeAmountSats,
+        row.walletTxId,
+        row.paymentHash,
+        row.linkSource,
+        row.restoredAt,
+        row.createdAt,
+        row.updatedAt,
+      ],
+    );
+  }
+}

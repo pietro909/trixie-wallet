@@ -1,19 +1,25 @@
-import { Info } from "lucide-react-native";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { ChevronRight, FileLock2, Info } from "lucide-react-native";
 import * as React from "react";
-import { StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Button from "../components/Button";
 import LoadingOverlay from "../components/LoadingOverlay";
 import { useToast } from "../components/ToastProvider";
 import { useLoading } from "../hooks/useLoading";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
+import type { RootStackParamList } from "../navigation/RootStack";
 import {
   isValidMnemonic,
   isValidNsec,
   isValidPrivateKeyHex,
 } from "../services/arkade/identity";
+import { BackupFileError, pickBackupFile } from "../services/backup/storage";
 import { useAppStore } from "../store/useAppStore";
 import { radius, spacing, typography } from "../theme/theme";
+
+type Nav = NativeStackNavigationProp<RootStackParamList, "RestoreWallet">;
 
 type ValidationKind = "mnemonic" | "nsec" | "hex" | null;
 
@@ -34,6 +40,7 @@ const STAGES = [
 
 export default function RestoreWallet() {
   const theme = useResolvedTheme();
+  const nav = useNavigation<Nav>();
   const { showToast } = useToast();
   const restore = useAppStore((s) => s.restoreWallet);
   const arkServerUrl = useAppStore((s) => s.network.arkServerUrl);
@@ -42,6 +49,27 @@ export default function RestoreWallet() {
   const [value, setValue] = React.useState("");
   const kind = classifyInput(value);
   const showError = value.trim().length > 0 && kind === null;
+  const [pickingBackup, setPickingBackup] = React.useState(false);
+
+  async function handlePickBackup() {
+    if (pickingBackup) return;
+    setPickingBackup(true);
+    try {
+      const envelope = await pickBackupFile();
+      if (!envelope) return; // user cancelled
+      nav.navigate("RestoreBackupPassword", { envelope });
+    } catch (e) {
+      const msg =
+        e instanceof BackupFileError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Could not read backup file";
+      showToast(msg, "error");
+    } finally {
+      setPickingBackup(false);
+    }
+  }
 
   async function handleRestore() {
     if (!kind) return;
@@ -77,6 +105,64 @@ export default function RestoreWallet() {
       style={[styles.container, { backgroundColor: theme.colors.background }]}
     >
       <View style={styles.content}>
+        <Pressable
+          onPress={handlePickBackup}
+          disabled={isLoading || pickingBackup}
+          style={({ pressed }) => [
+            styles.backupCard,
+            {
+              backgroundColor: theme.colors.card,
+              ...theme.shadow("card"),
+            },
+            pressed && { opacity: 0.7 },
+          ]}
+        >
+          <View
+            style={[
+              styles.backupIconWrap,
+              { backgroundColor: theme.colors.primarySoft },
+            ]}
+          >
+            <FileLock2 color={theme.colors.primary} size={22} />
+          </View>
+          <View style={styles.backupCardText}>
+            <Text
+              style={[styles.backupCardTitle, { color: theme.colors.text }]}
+            >
+              Restore from backup file
+            </Text>
+            <Text
+              style={[
+                styles.backupCardSubtitle,
+                { color: theme.colors.textMuted },
+              ]}
+            >
+              Use a `.trixiebackup` file you exported earlier.
+            </Text>
+          </View>
+          <ChevronRight color={theme.colors.textSubtle} size={18} />
+        </Pressable>
+
+        <View style={styles.divider}>
+          <View
+            style={[
+              styles.dividerLine,
+              { backgroundColor: theme.colors.divider },
+            ]}
+          />
+          <Text
+            style={[styles.dividerText, { color: theme.colors.textSubtle }]}
+          >
+            or use a seed phrase
+          </Text>
+          <View
+            style={[
+              styles.dividerLine,
+              { backgroundColor: theme.colors.divider },
+            ]}
+          />
+        </View>
+
         <Text style={[styles.label, { color: theme.colors.text }]}>
           Seed phrase or private key
         </Text>
@@ -153,6 +239,47 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: spacing[5],
     paddingTop: spacing[5],
+  },
+  backupCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[3],
+    padding: spacing[4],
+    borderRadius: radius.lg,
+  },
+  backupIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  backupCardText: {
+    flex: 1,
+  },
+  backupCardTitle: {
+    fontSize: typography.size.md,
+    fontWeight: typography.weight.semibold,
+  },
+  backupCardSubtitle: {
+    fontSize: typography.size.xs,
+    marginTop: spacing[1],
+    lineHeight: typography.lineHeight.xs,
+  },
+  divider: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: spacing[5],
+    gap: spacing[3],
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+  },
+  dividerText: {
+    fontSize: typography.size.xs,
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
   label: {
     fontSize: typography.size.sm,

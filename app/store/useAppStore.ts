@@ -1,5 +1,7 @@
 import { Ramps } from "@arkade-os/sdk";
+import { bytesToUtf8, utf8ToBytes } from "@noble/ciphers/utils.js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
 import * as LocalAuthentication from "expo-local-authentication";
 import { create } from "zustand";
@@ -23,14 +25,17 @@ import {
   disposeLightning,
   ensureLightning,
   findRecentSubmarineSwapId,
+  getLatestBoltzSwapWriteAt,
   getLightningActivitySources,
   getNonTerminalSwapCount,
   isLightningSupportedForNetwork,
   quoteArkToBtcChainSwap,
   refreshSwapsStatus,
+  restoreBoltzSwaps,
   restoreLightningActivity,
   sendLightningPayment,
   setSwapEventListener,
+  snapshotBoltzSwaps,
   waitAndClaimChainSwap,
 } from "../services/arkade/lightning";
 import {
@@ -49,13 +54,35 @@ import {
   snapshotWallet,
   type WalletSnapshot,
 } from "../services/arkade/runtime";
-import { deleteSecret, saveSecret } from "../services/arkade/secret-store";
+import {
+  deleteSecret,
+  readSecret,
+  saveSecret,
+} from "../services/arkade/secret-store";
 import { mergeActivities } from "../services/arkade/swap-mappers";
 import {
   clearSwapMetadataForWallet,
+  getAllSwapMetadata,
+  getLatestSwapMetadataWriteAt,
   linkSwapToWalletTx,
   recordSwapMetadata,
+  restoreSwapMetadataRows,
 } from "../services/arkade/swap-storage";
+import {
+  BackupError,
+  decryptBundle,
+  type EncryptedEnvelope,
+  encryptBundle,
+} from "../services/backup/crypto";
+import {
+  buildBackupPayload,
+  PayloadParseError,
+  parseBackupPayload,
+} from "../services/backup/serializer";
+import {
+  deleteBackupTempFile,
+  writeBackupToTemp,
+} from "../services/backup/storage";
 import {
   isBitcoinAddressForNetwork,
   networkNameOrNull,
@@ -70,9 +97,13 @@ import type {
   WalletBehavior,
 } from "./types";
 
-const STORAGE_KEY = "app_state_v3";
-const CURRENT_SCHEMA_VERSION: AppState["schemaVersion"] = 3;
-const LEGACY_STORAGE_KEYS = ["app_state_v1", "app_state_v2"] as const;
+const STORAGE_KEY = "app_state_v4";
+const CURRENT_SCHEMA_VERSION: AppState["schemaVersion"] = 4;
+const LEGACY_STORAGE_KEYS = [
+  "app_state_v1",
+  "app_state_v2",
+  "app_state_v3",
+] as const;
 
 async function clearLegacyStorage(): Promise<void> {
   await Promise.all(
@@ -95,6 +126,20 @@ function newWalletId(): string {
   return bytesToHex(bytes);
 }
 
+function appVersionString(): string {
+  const cfg = Constants.expoConfig as { version?: string } | null;
+  return cfg?.version ?? "unknown";
+}
+
+function markDirtyForBackup(): void {
+  const current = useAppStore.getState();
+  if (current.security.dirtyForBackup) return;
+  useAppStore.setState({
+    security: { ...current.security, dirtyForBackup: true },
+  });
+  void persist(useAppStore.getState());
+}
+
 const DEFAULT_WALLET_BEHAVIOR: WalletBehavior = {
   vtxoAutoRenewal: true,
   delegatedRenewal: true,
@@ -111,7 +156,7 @@ function normalizeWalletBehavior(
 }
 
 const DEFAULT_STATE: AppState = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   wallet: null,
   network: {
     arkServerUrl: DEFAULT_ARK_SERVER_URL,
@@ -138,6 +183,19 @@ export type RestoreInput =
   | { kind: "mnemonic"; mnemonic: string }
   | { kind: "nsec"; nsec: string }
   | { kind: "hex"; privateKeyHex: string };
+
+export type BackupHealth = {
+  /** True when the wallet has any persisted swap-recovery material. */
+  hasSwapMaterial: boolean;
+  /** Timestamp of the last successful backup export, or null. */
+  lastBackupAt: number | null;
+  /**
+   * True when there is recoverable material that has not been captured by an
+   * export, either because no export has happened yet or because state has
+   * mutated since the last one.
+   */
+  isStale: boolean;
+};
 
 type StoreState = AppState & {
   _hydrated: boolean;
@@ -171,6 +229,18 @@ type StoreState = AppState & {
   unlockWithBiometrics: () => Promise<boolean>;
   resetWallet: () => Promise<void>;
   getPendingLightningSwapCount: () => Promise<number>;
+  exportBackup: (password: string) => Promise<{
+    uri: string;
+    filename: string;
+    createdAt: number;
+  }>;
+  markBackupCompleted: (createdAt: number) => Promise<void>;
+  discardBackupTempFile: (uri: string) => void;
+  importBackup: (
+    envelope: EncryptedEnvelope,
+    password: string,
+  ) => Promise<void>;
+  getBackupHealth: () => Promise<BackupHealth>;
   setTheme: (theme: ThemePref) => void;
   setFiatCurrency: (currency: FiatCurrency) => void;
   setBitcoinUnit: (unit: BitcoinUnit) => void;
@@ -409,6 +479,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
         serverInfo: null,
       },
     }));
+    if (get().wallet) markDirtyForBackup();
     await persist(get());
   },
 
@@ -925,6 +996,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
       return;
     }
     set({ walletBehavior: next });
+    markDirtyForBackup();
     await disposeLightning();
     await disposeWallet();
     await persist(get());
@@ -1006,6 +1078,199 @@ export const useAppStore = create<StoreState>((set, get) => ({
     }
   },
 
+  exportBackup: async (password) => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet to back up");
+    }
+    const secret = await readSecret(metadata.id);
+    const swapMetadata = await getAllSwapMetadata(metadata.id).catch(() => []);
+    const boltzSwaps = await snapshotBoltzSwaps().catch(() => []);
+    const payload = buildBackupPayload({
+      wallet: metadata,
+      walletBehavior: get().walletBehavior,
+      preferences: get().preferences,
+      secret,
+      swapMetadata,
+      boltzSwaps,
+    });
+    const plaintext = utf8ToBytes(JSON.stringify(payload));
+    const envelope = await encryptBundle({
+      plaintext,
+      password,
+      appVersion: appVersionString(),
+    });
+    // Full ISO timestamp (with `:` / `.` replaced) so two saves the same day
+    // don't collide on the destination filesystem, and so users with leftover
+    // empty folders from prior buggy saves can keep saving.
+    const stamp = new Date(envelope.createdAt)
+      .toISOString()
+      .replace(/[:.]/g, "-")
+      .replace(/-?Z$/, "");
+    const basename = `trixie-backup-${stamp}`;
+    const filename = `${basename}.trixiebackup`;
+    const uri = writeBackupToTemp({ envelope, basename });
+    return { uri, filename, createdAt: envelope.createdAt };
+  },
+
+  markBackupCompleted: async (createdAt) => {
+    set((s) => ({
+      security: {
+        ...s.security,
+        lastBackupAt: createdAt,
+        dirtyForBackup: false,
+      },
+    }));
+    await persist(get());
+  },
+
+  discardBackupTempFile: (uri) => {
+    deleteBackupTempFile(uri);
+  },
+
+  importBackup: async (envelope, password) => {
+    if (get().wallet) {
+      throw new ArkadeError(
+        "wallet_init_failed",
+        "A wallet already exists. Reset before restoring from a backup.",
+      );
+    }
+    const plaintext = await decryptBundle(envelope, password);
+    let payload: ReturnType<typeof parseBackupPayload>;
+    try {
+      payload = parseBackupPayload(JSON.parse(bytesToUtf8(plaintext)));
+    } catch (e) {
+      if (e instanceof PayloadParseError) throw e;
+      throw new PayloadParseError(
+        "malformed_payload",
+        "Backup file contents could not be read",
+      );
+    }
+
+    const arkServerUrl = payload.wallet.arkServerUrl;
+    set((s) => ({
+      network: {
+        ...s.network,
+        arkServerUrl,
+        status: "connecting",
+        detectedNetwork: null,
+        lastError: null,
+        serverInfo: null,
+      },
+      walletBehavior: payload.walletBehavior,
+      preferences: payload.preferences,
+    }));
+
+    let probed: Awaited<ReturnType<typeof probeServer>>;
+    try {
+      probed = await probeServer(arkServerUrl);
+    } catch (e) {
+      const err = toArkadeError(
+        "server_unreachable",
+        "Could not reach Arkade server",
+        e,
+      );
+      set((s) => ({
+        network: {
+          ...s.network,
+          status: "offline",
+          lastError: err.message,
+        },
+      }));
+      throw err;
+    }
+    const serverNetwork = probed.network;
+    const isMainnet = isMainnetForNetworkName(serverNetwork);
+    const artifacts =
+      payload.secret.kind === "mnemonic"
+        ? buildMnemonicIdentity(payload.secret.mnemonic, isMainnet)
+        : buildSingleKeyIdentityFromHex(payload.secret.privateKeyHex);
+
+    const walletId = payload.wallet.id;
+    try {
+      await saveSecret(walletId, payload.secret);
+      await restoreSwapMetadataRows(payload.swapMetadata);
+      await restoreBoltzSwaps(payload.boltzSwaps);
+
+      const { snapshot } = await createWalletInstance({
+        walletId,
+        artifacts,
+        arkServerUrl,
+        network: serverNetwork,
+        behavior: payload.walletBehavior,
+      });
+      const draft = buildMetadata(
+        walletId,
+        arkServerUrl,
+        payload.wallet.esploraUrl ?? undefined,
+        serverNetwork,
+        artifacts,
+        snapshot,
+        snapshot.activities,
+      );
+      const restored: ArkadeWalletMetadata = {
+        ...draft,
+        label: payload.wallet.label,
+      };
+      await maybeEnsureLightning(restored, payload.walletBehavior);
+      const activities = await buildActivities(
+        walletId,
+        snapshot.activities,
+        serverNetwork,
+      );
+      const metadata: ArkadeWalletMetadata = { ...restored, activities };
+      set((s) => ({
+        wallet: metadata,
+        security: {
+          ...s.security,
+          lastBackupAt: envelope.createdAt,
+          dirtyForBackup: false,
+        },
+        network: {
+          ...s.network,
+          status: "online",
+          detectedNetwork: serverNetwork,
+          lastError: null,
+          serverInfo: probed,
+        },
+      }));
+      await persist(get());
+      if (isLightningSupportedForNetwork(serverNetwork)) {
+        scheduleLightningRestore(walletId);
+      }
+    } catch (e) {
+      // Best-effort rollback: clear the partially-written secret/sql state so
+      // the user can retry without a stuck half-import.
+      await deleteSecret(walletId).catch(() => {});
+      await disposeWallet().catch(() => {});
+      if (e instanceof BackupError || e instanceof PayloadParseError) throw e;
+      throw toArkadeError(
+        "wallet_init_failed",
+        "Failed to restore wallet from backup",
+        e,
+      );
+    }
+  },
+
+  getBackupHealth: async () => {
+    const metadata = get().wallet;
+    const lastBackupAt = get().security.lastBackupAt ?? null;
+    if (!metadata) {
+      return { hasSwapMaterial: false, lastBackupAt, isStale: false };
+    }
+    const [metaTs, boltzTs] = await Promise.all([
+      getLatestSwapMetadataWriteAt(metadata.id).catch(() => null),
+      getLatestBoltzSwapWriteAt().catch(() => null),
+    ]);
+    const hasSwapMaterial = metaTs != null || boltzTs != null;
+    const dirty = get().security.dirtyForBackup === true;
+    const latest = Math.max(metaTs ?? 0, boltzTs ?? 0);
+    const isStale =
+      hasSwapMaterial &&
+      (lastBackupAt == null || dirty || lastBackupAt < latest);
+    return { hasSwapMaterial, lastBackupAt, isStale };
+  },
+
   setTheme: (theme) => {
     set((s) => ({
       preferences: { ...s.preferences, theme },
@@ -1044,9 +1309,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
 
 // Refresh wallet snapshot + Activity list whenever the SwapManager fires.
 // Coalesces bursts of events (e.g. update → action → completed in close
-// succession) into a single refresh.
+// succession) into a single refresh. Also bumps the dirty-for-backup flag
+// so the Reset gate can warn about unbacked-up state.
 let swapEventRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 setSwapEventListener(() => {
+  markDirtyForBackup();
   if (swapEventRefreshTimer) return;
   swapEventRefreshTimer = setTimeout(() => {
     swapEventRefreshTimer = null;

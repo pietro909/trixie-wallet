@@ -45,3 +45,5 @@ app-example
 
 # AI
 .claude
+
+*.trixiebackup
