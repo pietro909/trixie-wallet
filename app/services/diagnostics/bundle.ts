@@ -7,7 +7,12 @@ import {
 } from "../arkade/lightning";
 import { fetchRawServerInfo } from "../arkade/runtime";
 import { getAllSwapMetadata } from "../arkade/swap-storage";
-import { type ErrorEntry, getRecentErrors, recordError } from "./recorder";
+import {
+  type ErrorEntry,
+  getRecentErrors,
+  recordError,
+  redactString,
+} from "./recorder";
 
 export const BUNDLE_SCHEMA_VERSION = 1 as const;
 
@@ -34,6 +39,7 @@ export type SupportBundle = {
   serverInfoFetchError: string | null;
   wallet: {
     present: boolean;
+    id: string | null;
     label: string | null;
     network: string | null;
     identityKind: string | null;
@@ -74,6 +80,11 @@ export type SupportBundle = {
 
 function readString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function redactNullable(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  return redactString(value);
 }
 
 function readExtra(): {
@@ -181,12 +192,13 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
       arkServerUrl: state.network.arkServerUrl,
       detectedNetwork: state.network.detectedNetwork,
       status: state.network.status,
-      lastError: state.network.lastError,
+      lastError: redactNullable(state.network.lastError),
     },
     serverInfo,
-    serverInfoFetchError,
+    serverInfoFetchError: redactNullable(serverInfoFetchError),
     wallet: {
       present: wallet != null,
+      id: wallet?.id ?? null,
       label: wallet?.label ?? null,
       network: wallet?.network ?? null,
       identityKind: wallet?.identityKind ?? null,
@@ -198,7 +210,7 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
         ? {
             lastAt: wallet.lightningRestore.lastAt,
             lastCount: wallet.lightningRestore.lastCount,
-            lastError: wallet.lightningRestore.lastError ?? null,
+            lastError: redactNullable(wallet.lightningRestore.lastError),
           }
         : null,
     },

@@ -89,14 +89,26 @@ const REDACTORS: Array<{ regex: RegExp; replacement: string }> = [
     regex: /\b(tark1|ark1)[0-9a-z]{20,}/gi,
     replacement: "[ark-address]",
   },
+  // Nostr private keys (bech32-encoded): nsec1...
+  {
+    regex: /\bnsec1[0-9a-z]{20,}/gi,
+    replacement: "[nsec]",
+  },
   // BIP39-style mnemonics: 12 or 24 short lowercase words.
   {
     regex: /\b(?:[a-z]{3,10}\s+){11,23}[a-z]{3,10}\b/g,
     replacement: "[mnemonic]",
   },
+  // 32-byte hex tokens — covers raw private keys, payment hashes, preimages,
+  // and txids. They are indistinguishable by shape, so redact them all at
+  // word boundaries.
+  {
+    regex: /\b[0-9a-f]{64}\b/gi,
+    replacement: "[hex32]",
+  },
 ];
 
-function redactString(input: string): string {
+export function redactString(input: string): string {
   let s = input;
   for (const { regex, replacement } of REDACTORS) {
     s = s.replace(regex, replacement);
@@ -125,4 +137,4 @@ function redactDetails(
 }
 
 // Exposed for unit-style verification only; not part of the public API.
-export const __internal = { redactString, MAX_ENTRIES, MAX_FIELD_LEN };
+export const __internal = { MAX_ENTRIES, MAX_FIELD_LEN };
