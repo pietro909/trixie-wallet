@@ -1,8 +1,13 @@
+import { Ramps } from "@arkade-os/sdk";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Crypto from "expo-crypto";
 import * as LocalAuthentication from "expo-local-authentication";
 import { create } from "zustand";
 import { ArkadeError, toArkadeError } from "../services/arkade/errors";
+import {
+  estimateOffboardFee,
+  OffboardFeeEstimateError,
+} from "../services/arkade/feePreview";
 import {
   buildMnemonicIdentity,
   buildRandomSingleKeyIdentity,
@@ -14,16 +19,19 @@ import {
 } from "../services/arkade/identity";
 import {
   clearAllSwaps,
+  createArkToBtcChainSwap,
   disposeLightning,
   ensureLightning,
   findRecentSubmarineSwapId,
   getLightningActivitySources,
   getNonTerminalSwapCount,
   isLightningSupportedForNetwork,
+  quoteArkToBtcChainSwap,
   refreshSwapsStatus,
   restoreLightningActivity,
   sendLightningPayment,
   setSwapEventListener,
+  waitAndClaimChainSwap,
 } from "../services/arkade/lightning";
 import {
   DEFAULT_ARK_SERVER_URL,
@@ -48,6 +56,10 @@ import {
   linkSwapToWalletTx,
   recordSwapMetadata,
 } from "../services/arkade/swap-storage";
+import {
+  isBitcoinAddressForNetwork,
+  networkNameOrNull,
+} from "../services/paymentParser";
 import type {
   Activity,
   AppState,
@@ -140,6 +152,19 @@ type StoreState = AppState & {
     invoice: string,
     amountSats: number,
   ) => Promise<{ txId: string; feeSats: number; amountSats: number }>;
+  sendOnchain: (
+    address: string,
+    amountSats: number,
+  ) => Promise<{ txId: string; feeSats: number; amountSats: number }>;
+  sendChainSwap: (
+    address: string,
+    amountSats: number,
+  ) => Promise<{
+    txId: string;
+    feeSats: number;
+    amountSats: number;
+    swapId: string;
+  }>;
   setWalletBehavior: (behavior: Partial<WalletBehavior>) => Promise<void>;
   lockWallet: () => Promise<void>;
   unlockWithPassword: (password: string) => Promise<boolean>;
@@ -669,6 +694,225 @@ export const useAppStore = create<StoreState>((set, get) => ({
     }
     const feeSats = Math.max(0, response.amount - amountSats);
     return { txId: response.txid, feeSats, amountSats: response.amount };
+  },
+
+  sendOnchain: async (address, amountSats) => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet available");
+    }
+    if (amountSats <= 0) {
+      throw new ArkadeError("send_failed", "Amount must be greater than zero");
+    }
+    if (amountSats > metadata.balanceSats) {
+      throw new ArkadeError(
+        "insufficient_balance",
+        "Insufficient offchain balance for this amount",
+      );
+    }
+    const network = get().network.detectedNetwork ?? metadata.network;
+    if (!isBitcoinAddressForNetwork(address, network)) {
+      throw new ArkadeError(
+        "send_failed",
+        `Address does not belong to the active network (${network})`,
+      );
+    }
+    const serverInfo = get().network.serverInfo;
+    if (!serverInfo) {
+      throw new ArkadeError(
+        "server_unreachable",
+        "Server fee info is not available — refresh the network and try again",
+      );
+    }
+    const wallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
+
+    let vtxos: Awaited<ReturnType<typeof wallet.getVtxos>>;
+    try {
+      vtxos = await wallet.getVtxos({
+        withRecoverable: true,
+        withUnrolled: false,
+      });
+    } catch (e) {
+      throw toArkadeError("send_failed", "Failed to load offchain coins", e);
+    }
+
+    let estimate: ReturnType<typeof estimateOffboardFee>;
+    try {
+      estimate = estimateOffboardFee({
+        vtxos,
+        amountSats,
+        destinationAddress: address,
+        feeInfo: { intentFee: serverInfo.intentFee },
+        network: networkNameOrNull(network),
+      });
+    } catch (e) {
+      if (e instanceof OffboardFeeEstimateError) {
+        if (e.kind === "amount_exceeds_balance") {
+          throw new ArkadeError("insufficient_balance", e.message, e);
+        }
+        throw new ArkadeError("send_failed", e.message, e);
+      }
+      throw toArkadeError("send_failed", "Failed to estimate fee", e);
+    }
+
+    let txId: string;
+    try {
+      txId = await new Ramps(wallet).offboard(
+        address,
+        {
+          intentFee: serverInfo.intentFee,
+          txFeeRate: serverInfo.txFeeRate,
+        },
+        BigInt(amountSats),
+      );
+    } catch (e) {
+      throw toArkadeError("send_failed", "Collaborative exit failed", e);
+    }
+
+    try {
+      const snapshot = await snapshotWallet(wallet, metadata.arkServerUrl, {
+        network,
+      });
+      const activities = await buildActivities(
+        metadata.id,
+        snapshot.activities,
+        network,
+      );
+      set({ wallet: applySnapshot(metadata, snapshot, activities) });
+      await persist(get());
+    } catch {
+      // refresh failure; ignore — txId is still returned
+    }
+    return { txId, feeSats: estimate.feeSats, amountSats };
+  },
+
+  sendChainSwap: async (address, amountSats) => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet available");
+    }
+    if (amountSats <= 0) {
+      throw new ArkadeError("send_failed", "Amount must be greater than zero");
+    }
+    if (!isLightningSupportedForNetwork(metadata.network)) {
+      throw new ArkadeError(
+        "lightning_unavailable",
+        `Chain swap is not configured for ${metadata.network}`,
+      );
+    }
+    const network = get().network.detectedNetwork ?? metadata.network;
+    if (!isBitcoinAddressForNetwork(address, network)) {
+      throw new ArkadeError(
+        "send_failed",
+        `Address does not belong to the active network (${network})`,
+      );
+    }
+
+    const quote = await quoteArkToBtcChainSwap(network, amountSats);
+    if (!quote) {
+      throw new ArkadeError(
+        "server_unreachable",
+        "Could not reach Boltz to quote chain swap",
+      );
+    }
+    if (!quote.withinLimits) {
+      throw new ArkadeError(
+        amountSats < quote.min ? "amount_below_limit" : "amount_above_limit",
+        `Chain swap supports ${quote.min}–${quote.max} sats`,
+      );
+    }
+    if (amountSats + quote.feeSats > metadata.balanceSats) {
+      throw new ArkadeError(
+        "insufficient_balance",
+        "Insufficient offchain balance for amount + chain swap fees",
+      );
+    }
+
+    await maybeEnsureLightning(metadata, get().walletBehavior);
+
+    const response = await createArkToBtcChainSwap({
+      btcAddress: address,
+      receiverLockAmount: amountSats,
+    });
+
+    if (response.amountToPay > metadata.balanceSats) {
+      throw new ArkadeError(
+        "insufficient_balance",
+        "Insufficient balance for the Boltz-quoted lockup amount",
+      );
+    }
+
+    try {
+      await recordSwapMetadata({
+        swapId: response.pendingSwap.id,
+        walletId: metadata.id,
+        direction: "out",
+        createdForFlow: "send",
+        invoiceAmountSats: amountSats,
+        arkadeAmountSats: response.amountToPay,
+      });
+    } catch {
+      // best-effort metadata; the offchain leg can still proceed
+    }
+
+    const wallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
+    let walletTxId: string;
+    try {
+      walletTxId = await wallet.send({
+        address: response.arkAddress,
+        amount: response.amountToPay,
+      });
+    } catch (e) {
+      throw toArkadeError(
+        "send_failed",
+        "Offchain send to Boltz lockup failed",
+        e,
+      );
+    }
+
+    try {
+      await linkSwapToWalletTx({
+        swapId: response.pendingSwap.id,
+        walletTxId,
+        source: "send_result",
+      });
+    } catch {
+      // best-effort linkage
+    }
+
+    // Kick off the mainnet claim in the background. Status updates flow back
+    // into the store via `setSwapEventListener` → `refreshWallet`.
+    void waitAndClaimChainSwap(response.pendingSwap).catch(() => {
+      // Failures surface via SwapManager events / Activity row status.
+    });
+
+    try {
+      const snapshot = await snapshotWallet(wallet, metadata.arkServerUrl, {
+        network,
+      });
+      const activities = await buildActivities(
+        metadata.id,
+        snapshot.activities,
+        network,
+      );
+      set({ wallet: applySnapshot(metadata, snapshot, activities) });
+      await persist(get());
+    } catch {
+      // refresh failure; offchain leg is still confirmed locally
+    }
+
+    return {
+      txId: walletTxId,
+      feeSats: Math.max(0, response.amountToPay - amountSats),
+      amountSats,
+      swapId: response.pendingSwap.id,
+    };
   },
 
   setWalletBehavior: async (behavior) => {

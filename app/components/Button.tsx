@@ -1,3 +1,4 @@
+import * as Haptics from "expo-haptics";
 import * as React from "react";
 import {
   ActivityIndicator,
@@ -7,7 +8,6 @@ import {
   Text,
   type ViewStyle,
 } from "react-native";
-import * as Haptics from "expo-haptics";
 import {
   type AppTheme,
   motion,

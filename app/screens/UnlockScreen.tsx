@@ -1,12 +1,12 @@
+import * as Haptics from "expo-haptics";
+import { Fingerprint, WalletMinimal } from "lucide-react-native";
 import * as React from "react";
 import { Animated, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Fingerprint, WalletMinimal } from "lucide-react-native";
-import * as Haptics from "expo-haptics";
+import Button from "../components/Button";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import { useAppStore } from "../store/useAppStore";
-import Button from "../components/Button";
-import { spacing, typography, radius } from "../theme/theme";
+import { radius, spacing, typography } from "../theme/theme";
 
 export default function UnlockScreen() {
   const theme = useResolvedTheme();

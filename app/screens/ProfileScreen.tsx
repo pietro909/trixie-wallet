@@ -1,5 +1,3 @@
-import type * as React from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import {
@@ -10,10 +8,12 @@ import {
   Shield,
   Trash2,
 } from "lucide-react-native";
+import type * as React from "react";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
-import { useAppStore } from "../store/useAppStore";
 import type { RootStackParamList } from "../navigation/RootStack";
-import { spacing, typography, radius } from "../theme/theme";
+import { useAppStore } from "../store/useAppStore";
+import { radius, spacing, typography } from "../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Main">;
 

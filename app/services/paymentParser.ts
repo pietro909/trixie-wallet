@@ -1,6 +1,43 @@
+import { type NetworkName, networks } from "@arkade-os/sdk";
+import { Address } from "@scure/btc-signer";
 import { decode as decodeBolt11 } from "light-bolt11-decoder";
 
 export type PaymentType = "arkade" | "bitcoin" | "lightning" | "lnurl";
+
+const KNOWN_NETWORK_NAMES = new Set<NetworkName>([
+  "bitcoin",
+  "regtest",
+  "testnet",
+  "signet",
+  "mutinynet",
+]);
+
+export function networkNameOrNull(network: string | null): NetworkName | null {
+  return network && KNOWN_NETWORK_NAMES.has(network as NetworkName)
+    ? (network as NetworkName)
+    : null;
+}
+
+/**
+ * Returns true when the address decodes against the given network's parameters.
+ * `bc1…` only matches `bitcoin`; `tb1…` matches `testnet`/`signet`/`mutinynet`;
+ * `bcrt1…` only matches `regtest`.
+ */
+export function isBitcoinAddressForNetwork(
+  address: string,
+  network: string | null | undefined,
+): boolean {
+  const trimmed = address.trim();
+  if (!trimmed) return false;
+  const name = networkNameOrNull(network ?? null);
+  if (!name) return BTC_ADDRESS_RE.test(trimmed);
+  try {
+    Address(networks[name]).decode(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export type ParsedPaymentOption = {
   id: string;
@@ -24,6 +61,11 @@ export type ParseResult = {
   /** Unrecognised key/value pairs from BIP-21, kept for future SDK use. */
   metadata: Record<string, string>;
   error?: string;
+};
+
+export type ParsePaymentOptions = {
+  /** Active wallet network. When set, Bitcoin addresses on a different network are downgraded to non-payable. */
+  network?: NetworkName | null;
 };
 
 const BTC_ADDRESS_RE =
@@ -224,8 +266,12 @@ function parseArkadeBody(rawInput: string, body: string): ParseResult {
   };
 }
 
-function parseBitcoinBody(rawInput: string, body: string): ParseResult {
-  const options: ParsedPaymentOption[] = [];
+function parseBitcoinBody(
+  rawInput: string,
+  body: string,
+  options: ParsePaymentOptions,
+): ParseResult {
+  const parsedOptions: ParsedPaymentOption[] = [];
   const metadata: Record<string, string> = {};
   const { address, query } = splitAddressAndQuery(body);
 
@@ -234,17 +280,23 @@ function parseBitcoinBody(rawInput: string, body: string): ParseResult {
   const memo = query.get("message") ?? query.get("label") ?? undefined;
 
   if (BTC_ADDRESS_RE.test(address)) {
-    options.push({
+    const networkName = options.network ?? null;
+    const matchesNetwork =
+      !networkName || isBitcoinAddressForNetwork(address, networkName);
+    parsedOptions.push({
       id: makeId("bitcoin", address),
       type: "bitcoin",
       raw: rawInput,
       destination: shorten(address),
       amountSats,
       memo,
-      isPayable: true,
+      isPayable: matchesNetwork,
+      warning: matchesNetwork
+        ? undefined
+        : `Wrong-network Bitcoin address (expected ${networkName})`,
     });
   } else if (address) {
-    options.push({
+    parsedOptions.push({
       id: makeId("bitcoin", address),
       type: "bitcoin",
       raw: rawInput,
@@ -259,9 +311,9 @@ function parseBitcoinBody(rawInput: string, body: string): ParseResult {
   const lightningParam = query.get("lightning");
   if (lightningParam) {
     if (LN_INVOICE_RE.test(lightningParam)) {
-      options.push(buildLightningOption(lightningParam, lightningParam));
+      parsedOptions.push(buildLightningOption(lightningParam, lightningParam));
     } else {
-      options.push({
+      parsedOptions.push({
         id: makeId("lightning", lightningParam),
         type: "lightning",
         raw: lightningParam,
@@ -276,7 +328,7 @@ function parseBitcoinBody(rawInput: string, body: string): ParseResult {
 
   const lnurlParam = query.get("lnurl");
   if (lnurlParam && LNURL_RE.test(lnurlParam)) {
-    options.push({
+    parsedOptions.push({
       id: makeId("lnurl", lnurlParam),
       type: "lnurl",
       raw: lnurlParam,
@@ -288,7 +340,7 @@ function parseBitcoinBody(rawInput: string, body: string): ParseResult {
 
   const arkParam = query.get("ark") ?? query.get("arkade");
   if (arkParam && ARKADE_RE.test(arkParam)) {
-    options.push({
+    parsedOptions.push({
       id: makeId("arkade", arkParam),
       type: "arkade",
       raw: arkParam,
@@ -303,17 +355,20 @@ function parseBitcoinBody(rawInput: string, body: string): ParseResult {
     if (!KNOWN_BIP21_KEYS.has(k)) metadata[k] = v;
   }
 
-  if (options.length === 0) {
+  if (parsedOptions.length === 0) {
     return {
-      options,
+      options: parsedOptions,
       metadata,
       error: "No payable target found in BIP-21 URI",
     };
   }
-  return { options, metadata };
+  return { options: parsedOptions, metadata };
 }
 
-export function parsePaymentInput(input: string): ParseResult {
+export function parsePaymentInput(
+  input: string,
+  options: ParsePaymentOptions = {},
+): ParseResult {
   const trimmed = input.trim();
   if (!trimmed) {
     return { options: [], metadata: {}, error: "Enter a payment string" };
@@ -338,7 +393,7 @@ export function parsePaymentInput(input: string): ParseResult {
   }
 
   if (scheme === "bitcoin") {
-    return parseBitcoinBody(trimmed, rest);
+    return parseBitcoinBody(trimmed, rest, options);
   }
 
   // No scheme — accept raw addresses/invoices/LNURL, optionally followed by a
@@ -351,7 +406,7 @@ export function parsePaymentInput(input: string): ParseResult {
   if (bare === "lightning") return buildBareLightning(trimmed, addressPart);
   if (bare === "lnurl") return buildBareLnurl(trimmed, addressPart);
   if (bare === "arkade") return parseArkadeBody(trimmed, trimmed);
-  return parseBitcoinBody(trimmed, trimmed);
+  return parseBitcoinBody(trimmed, trimmed, options);
 }
 
 export function paymentTypeLabel(type: PaymentType): string {

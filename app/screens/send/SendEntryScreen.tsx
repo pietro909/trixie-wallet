@@ -1,3 +1,14 @@
+import { useIsFocused, useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Clipboard from "expo-clipboard";
+import * as Haptics from "expo-haptics";
+import {
+  Camera as CameraIcon,
+  ClipboardPaste,
+  ScanLine,
+  X,
+} from "lucide-react-native";
 import * as React from "react";
 import {
   ActivityIndicator,
@@ -11,22 +22,15 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useIsFocused, useNavigation } from "@react-navigation/native";
-import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { CameraView, useCameraPermissions } from "expo-camera";
-import * as Clipboard from "expo-clipboard";
-import * as Haptics from "expo-haptics";
-import {
-  ClipboardPaste,
-  ScanLine,
-  X,
-  Camera as CameraIcon,
-} from "lucide-react-native";
-import { useResolvedTheme } from "../../hooks/useResolvedTheme";
-import { useToast } from "../../components/ToastProvider";
 import Button from "../../components/Button";
-import { parsePaymentInput } from "../../services/paymentParser";
+import { useToast } from "../../components/ToastProvider";
+import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
+import {
+  networkNameOrNull,
+  parsePaymentInput,
+} from "../../services/paymentParser";
+import { useAppStore } from "../../store/useAppStore";
 import { radius, spacing, typography } from "../../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "SendEntry">;
@@ -42,6 +46,9 @@ export default function SendEntryScreen() {
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const scanLockRef = React.useRef(false);
+  const network = useAppStore(
+    (s) => s.network.detectedNetwork ?? s.wallet?.network ?? null,
+  );
 
   // Reset scanner lock when the screen regains focus so the user can re-scan.
   React.useEffect(() => {
@@ -76,7 +83,9 @@ export default function SendEntryScreen() {
     setError(null);
     setBusy(true);
     try {
-      const result = parsePaymentInput(input);
+      const result = parsePaymentInput(input, {
+        network: networkNameOrNull(network),
+      });
       if (result.error || result.options.length === 0) {
         setError(result.error ?? "No payable target found");
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);

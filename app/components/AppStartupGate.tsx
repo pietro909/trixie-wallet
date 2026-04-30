@@ -1,15 +1,15 @@
-import * as React from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import {
-  useFonts,
   Inter_400Regular,
   Inter_500Medium,
   Inter_600SemiBold,
   Inter_700Bold,
+  useFonts,
 } from "@expo-google-fonts/inter";
 import { WalletMinimal } from "lucide-react-native";
-import { useAppStore } from "../store/useAppStore";
+import * as React from "react";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
+import { useAppStore } from "../store/useAppStore";
 import { spacing, typography } from "../theme/theme";
 
 export default function AppStartupGate({

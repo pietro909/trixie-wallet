@@ -1,15 +1,15 @@
-import { StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ShieldCheck } from "lucide-react-native";
-import { useResolvedTheme } from "../hooks/useResolvedTheme";
-import { useLoading } from "../hooks/useLoading";
-import { useAppStore, type CreateWalletKind } from "../store/useAppStore";
-import { useToast } from "../components/ToastProvider";
+import { StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Button from "../components/Button";
 import LoadingOverlay from "../components/LoadingOverlay";
+import { useToast } from "../components/ToastProvider";
+import { useLoading } from "../hooks/useLoading";
+import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../navigation/RootStack";
+import { type CreateWalletKind, useAppStore } from "../store/useAppStore";
 import { spacing, typography } from "../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Landing">;

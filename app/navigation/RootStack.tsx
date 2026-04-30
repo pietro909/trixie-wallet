@@ -68,6 +68,8 @@ export type RootStackParamList = {
     feeSats?: number;
     txId?: string;
     message?: string;
+    /** For Bitcoin rails: which path was taken so the success copy can match. */
+    bitcoinRail?: "collab" | "chainswap";
   };
 };
 

@@ -103,6 +103,12 @@ async function fetchServerInfo(
       dustSats: Number(info.dust),
       unilateralExitDelaySeconds: Number(info.unilateralExitDelay),
       txFeeRate: info.fees.txFeeRate,
+      intentFee: {
+        offchainInput: info.fees.intentFee.offchainInput,
+        onchainInput: info.fees.intentFee.onchainInput,
+        offchainOutput: info.fees.intentFee.offchainOutput,
+        onchainOutput: info.fees.intentFee.onchainOutput,
+      },
     };
   } catch (e) {
     throw toArkadeError(

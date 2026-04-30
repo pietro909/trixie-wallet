@@ -1,21 +1,21 @@
+import type {
+  BottomTabBarButtonProps,
+  BottomTabNavigationOptions,
+} from "@react-navigation/bottom-tabs";
+import type { Theme as NavigationTheme } from "@react-navigation/native";
+import { DefaultTheme } from "@react-navigation/native";
+import { BlurView } from "expo-blur";
 import * as React from "react";
 import {
   Animated,
   Platform,
   Pressable,
+  type PressableProps,
   StyleSheet,
   useColorScheme,
   View,
-  type PressableProps,
   type ViewStyle,
 } from "react-native";
-import type { Theme as NavigationTheme } from "@react-navigation/native";
-import { DefaultTheme } from "@react-navigation/native";
-import type {
-  BottomTabBarButtonProps,
-  BottomTabNavigationOptions,
-} from "@react-navigation/bottom-tabs";
-import { BlurView } from "expo-blur";
 
 type Mode = "light" | "dark";
 

@@ -310,3 +310,208 @@ Manual emulator checks:
 - Trigger an offboard with delegated auto-renewal on → background renewal
   should not race or surface an extra Activity row beyond the expected exit
   + renewal pair documented in M3.
+
+## Phase 6 — Chain Swap Rail (Deferred Follow-Up)
+
+A second rail to the same destination: send to a Bitcoin address through a
+Boltz **ARK → BTC chain swap** instead of waiting for the next batch round.
+The user-facing axis is *fast vs cheap*, not *collab exit vs chain swap* — both
+land sats at the same address, they just price and time differently.
+
+The economics (verified against the live Boltz quote):
+
+- Chain swap = mainnet miner fee for Boltz's claim tx + percentage spread
+  (e.g. 168 sats + 485 sats on a 100k mainnet send). The percentage scales
+  with amount and is unavoidable — Boltz needs revenue to broadcast a real
+  mainnet tx for *just your output*.
+- Collab exit = sum of `Estimator.evalOffchainInput` per consumed vtxo plus
+  `evalOnchainOutput` for the destination. No third-party spread. On
+  mainnet this will be non-zero (mutinynet returns empty CEL programs and
+  `txFeeRate=0`, so it estimates to 0 there) but expected to be lower than
+  any reasonable Boltz spread.
+- Latency: chain swap settles in ~1 mainnet confirmation (~10 min). Collab
+  exit waits for the next Arkade settlement round (~minutes on mutinynet,
+  variable on mainnet).
+
+### Current State
+
+- `app/services/arkade/lightning.ts` already constructs `ArkadeSwaps`. The
+  chain swap APIs (`arkToBtc`, `getChainFees`, `getChainLimits`, `claimBtc`,
+  `refundArk`, `waitAndClaimBtc`) are exposed via the same instance and are
+  unused.
+- `app/services/arkade/lightning.ts:restoreLightningActivity` already
+  surfaces `chainCount` from `restoreSwaps()`, but there is no further
+  plumbing.
+- `app/services/arkade/swap-mappers.ts:221` notes chain swaps are
+  "tolerated by the mapper but rendered as a generic Lightning activity
+  row" — needs proper chain-swap mapping to render as a Bitcoin rail row.
+- `app/screens/send/SendReviewScreen.tsx` currently quotes only the collab
+  exit estimate for `option.type === "bitcoin"`.
+
+### SDK Findings
+
+- `ArkadeSwaps.arkToBtc({ btcAddress, receiverLockAmount })` →
+  `ArkToBtcResponse = { arkAddress, amountToPay, pendingSwap: BoltzChainSwap }`.
+  Use `receiverLockAmount` (recipient gets exactly this; sender pays
+  `amountToPay`) to keep the user's typed amount = destination amount,
+  matching Lightning's UX.
+- After creation: `wallet.send({ address: arkAddress, amount: amountToPay })`
+  is the offchain leg into Boltz's lockup vtxo. Then
+  `arkadeSwaps.waitAndClaimBtc(pendingSwap)` resolves with the mainnet
+  `{ txid }` once Boltz claims and broadcasts.
+- Limits: `getChainLimits("ARK", "BTC")` → `{ min, max }` (sats).
+- Fees: `getChainFees("ARK", "BTC")` → `ChainFeesResponse =
+  { percentage, minerFees: { server, user: { claim, lockup } } }`.
+  Total user pays ≈ `receiver + receiver*percentage/100 + minerFees.server +
+  minerFees.user.claim` (mirror `../wallet/src/providers/swaps.tsx:180-184`'s
+  `calcArkToBtcSwapFee`).
+- Refund path: `arkadeSwaps.refundArk(pendingSwap)` if Boltz fails to claim
+  before timeout. Needs persisted `BoltzChainSwap` (preimage, ephemeralKey)
+  to reconstruct the refund tx.
+
+### Product Rules
+
+- **Default rail:** collab exit (cheaper). Surface chain swap as the
+  *Fast* alternative on Review only.
+- **Network gate:** chain swap rail only available where Boltz is
+  configured (mutinynet, bitcoin). Hide entirely on regtest. Reuse
+  `isLightningSupportedForNetwork` rather than introducing a parallel
+  helper — Boltz availability is the same gate.
+- **Limits gate:** if `amount` is outside `getChainLimits`, the rail is
+  disabled with an inline reason ("Chain swap supports 1k–25M sats").
+- **Boltz reachability:** if `getChainFees` fails on mount, hide the chain
+  swap toggle silently and fall back to collab exit only — do not block
+  the Send button.
+- **Receiver semantics:** the destination receives the user's typed amount
+  exactly. Boltz's spread + miner fees are added to the offchain leg, not
+  deducted from the destination. This matches Lightning send.
+- **Pending state:** chain swap creates a row in Activity immediately on
+  submit (consistent with submarine-swap rows from M2). Subsequent status
+  events update the row in place.
+- **Refund:** if `waitAndClaimBtc` fails or times out, the funds stay
+  locked in the Boltz vtxo. Local metadata must persist enough to call
+  `refundArk` later. Full refund UX is M8 territory — for M5b, log the
+  pending refund and surface it in the Activity detail screen.
+- **Cancellability:** once the offchain leg fires, the swap is in flight.
+  No mid-flow cancel.
+
+### Selected Direction
+
+Wrap the create + send + claim cycle in a new store action mirroring
+`sendOnchain`'s shape:
+
+```ts
+sendChainSwap: async (
+  address: string,
+  amountSats: number, // what destination receives
+): Promise<{ txId: string; feeSats: number; amountSats: number; swapId: string }>;
+```
+
+Add a small client-side quote helper for the Review screen so the toggle
+can show both rails' fees side-by-side without firing two settlements.
+
+```ts
+quoteArkToBtcChainSwap(amountSats: number): Promise<{
+  feeSats: number;       // total Boltz cost for the user
+  percentageFee: number;
+  minerFeeSats: number;  // claim + server miner fees
+  withinLimits: boolean;
+  min: number;
+  max: number;
+}>;
+```
+
+Do **not** introduce a new "chainSwap" service file beyond a thin helper.
+The SwapManager / ArkadeSwaps instance already exists; use it directly the
+same way `sendLightning` does.
+
+### Implementation Phasing
+
+Land in phases. Each phase ends with `pnpm check` clean and the app
+running.
+
+#### Phase 6.1 — Chain swap quote helper (no UI yet)
+
+- Add `quoteArkToBtcChainSwap` to `app/services/arkade/lightning.ts` (or
+  a sibling `chainSwap.ts` if `lightning.ts` grows past comprehension).
+- Cache the latest `ChainFeesResponse` and `LimitsResponse` for the active
+  network — refresh on `ensureLightning` boot, not per-quote.
+- Add `isChainSwapSupportedForNetwork(network)` reusing the existing
+  Boltz network gate.
+
+#### Phase 6.2 — `sendChainSwap` store action
+
+- Add `sendChainSwap(address, amountSats)` to `useAppStore.ts`. Steps:
+  1. `arkadeSwaps.arkToBtc({ btcAddress: address, receiverLockAmount: amountSats })`.
+  2. `recordSwapMetadata({ swapId, walletId, direction: "out",
+     createdForFlow: "send", invoiceAmountSats: amountSats,
+     arkadeAmountSats: amountToPay })` — same shape as submarine swaps so
+     the Activity merge layer recognises it.
+  3. `wallet.send({ address: arkAddress, amount: amountToPay })` — offchain
+     leg.
+  4. `linkSwapToWalletTx({ swapId, walletTxId, source: "send_result" })`.
+  5. `arkadeSwaps.waitAndClaimBtc(pendingSwap)` (best-effort; the swap row
+     covers the long-running case).
+  6. `refreshWallet()` — pick up the offchain leg in Activity.
+- Map errors via `toArkadeError` to `swap_create_failed`, `send_failed`,
+  `swap_settle_failed`.
+
+#### Phase 6.3 — Chain swap Activity row
+
+- Update `swap-mappers.ts:mapSwapToActivity` — add a `swap.type === "chain"`
+  branch that renders as `rail: "bitcoin"`, title *"Sent to Bitcoin (Chain
+  swap)"*, status mapped via `isChainPendingStatus` /
+  `isChainSuccessStatus` / `isChainFailedStatus` /
+  `isChainRefundableStatus`, metadata carrying `swapId`, `mainnetTxid`
+  (when known), and the Boltz fee.
+- Refundable status surfaces a "Refund available" pill — wiring the actual
+  refund button is a follow-up, but the metadata must already be there.
+
+#### Phase 6.4 — Review screen rail toggle
+
+- On `SendReviewScreen` for `option.type === "bitcoin"`:
+  - On mount, fire both `estimateOffboardFee` (collab exit) and
+    `quoteArkToBtcChainSwap` (chain swap) in parallel. Each can fail
+    independently.
+  - Render a segmented control: `[ Cheap (next batch) | Fast (chain swap) ]`.
+    Disable the Fast tab when its quote fails; disable Cheap when collab
+    exit estimate fails. If both fail, fall through to existing
+    error-notice path.
+  - Show the selected rail's fee row + timing notice. Timing copy:
+    - Cheap → existing "On-chain sends are settled by Arkade in the next
+      batch round and confirmed on-chain afterwards."
+    - Fast → "Settles in one Bitcoin confirmation (~10 min)."
+  - Default selection: collab exit. Persist the user's last choice across
+    sends (within the session, not across app restarts — keep this purely
+    in `useState` for now).
+- On Send: dispatch to `sendOnchain` or `sendChainSwap` based on the
+  selected rail.
+
+#### Phase 6.5 — Refund recovery surface (deferred to M8)
+
+- When a chain swap surfaces in `isChainRefundableStatus`, the Activity
+  detail screen exposes a "Refund" action that calls
+  `arkadeSwaps.refundArk(pendingSwap)`.
+- Background refund loop is M8's responsibility — for now, only the
+  manual button.
+
+### Testing Notes (Phase 6)
+
+Manual emulator checks, in addition to the M5 list:
+
+- Mutinynet, paste `tb1…`, Review screen renders both fees with the
+  segmented toggle. Toggling between rails updates the fee row and timing
+  notice.
+- Tap Fast, Send: chain swap row appears as pending in Activity within a
+  few seconds; transitions to confirmed once Boltz claims. Mainnet
+  `txid` shown in detail screen.
+- Amount below `min` (typically 1k sats): Fast tab disabled with reason.
+- Amount above `max`: Fast tab disabled with reason.
+- Boltz API down (simulate by blocking `boltz.mutinynet.arkade.sh`): Fast
+  tab hidden, Cheap still works.
+- Force-quit between offchain leg and Boltz claim: on next app start,
+  `restoreLightningActivity` should resurface the pending chain swap row.
+  Refund button reachable via Activity detail.
+- Comparison render: 100k-sat send shows Cheap ≈ small CEL-based fee,
+  Fast ≈ `~percentage*amount + miner fees` — confirm the toggle's number
+  matches the Boltz quote (within rounding).

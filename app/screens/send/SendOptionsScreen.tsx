@@ -28,6 +28,7 @@ import { useFormatSats } from "../../hooks/useFormatSats";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
 import {
+  networkNameOrNull,
   type ParsedPaymentOption,
   type PaymentType,
   parsePaymentInput,
@@ -156,10 +157,16 @@ export default function SendOptionsScreen() {
   const nav = useNavigation<Nav>();
   const route = useRoute<Route>();
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
+  const network = useAppStore(
+    (s) => s.network.detectedNetwork ?? s.wallet?.network ?? null,
+  );
 
   const parsed = React.useMemo(
-    () => parsePaymentInput(route.params.rawInput),
-    [route.params.rawInput],
+    () =>
+      parsePaymentInput(route.params.rawInput, {
+        network: networkNameOrNull(network),
+      }),
+    [route.params.rawInput, network],
   );
 
   function handleSelect(option: ParsedPaymentOption) {

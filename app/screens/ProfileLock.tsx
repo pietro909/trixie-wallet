@@ -1,12 +1,12 @@
+import { Lock } from "lucide-react-native";
 import * as React from "react";
 import { StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Lock } from "lucide-react-native";
+import Button from "../components/Button";
+import { useToast } from "../components/ToastProvider";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import { useAppStore } from "../store/useAppStore";
-import { useToast } from "../components/ToastProvider";
-import Button from "../components/Button";
-import { spacing, typography, radius } from "../theme/theme";
+import { radius, spacing, typography } from "../theme/theme";
 
 export default function ProfileLock() {
   const theme = useResolvedTheme();

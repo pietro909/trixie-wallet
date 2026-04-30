@@ -76,6 +76,13 @@ export type WalletBehavior = {
   delegatedRenewal: boolean;
 };
 
+export type IntentFeeProgramConfig = {
+  offchainInput?: string;
+  onchainInput?: string;
+  offchainOutput?: string;
+  onchainOutput?: string;
+};
+
 export type ArkadeServerInfo = {
   network: string;
   version: string;
@@ -84,6 +91,7 @@ export type ArkadeServerInfo = {
   dustSats: number;
   unilateralExitDelaySeconds: number;
   txFeeRate: string;
+  intentFee: IntentFeeProgramConfig;
 };
 
 export type AppState = {

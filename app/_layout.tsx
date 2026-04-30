@@ -1,9 +1,9 @@
 import { ThemeProvider } from "@react-navigation/native";
-import { toNavigationTheme } from "@/app/theme/theme";
-import { useResolvedTheme } from "@/app/hooks/useResolvedTheme";
 import AppStartupGate from "@/app/components/AppStartupGate";
 import ToastProvider from "@/app/components/ToastProvider";
+import { useResolvedTheme } from "@/app/hooks/useResolvedTheme";
 import RootStack from "@/app/navigation/RootStack";
+import { toNavigationTheme } from "@/app/theme/theme";
 
 export default function RootLayout() {
   const theme = useResolvedTheme();

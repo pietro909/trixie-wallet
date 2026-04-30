@@ -1,7 +1,10 @@
 import {
   ArkadeSwaps,
+  type ArkToBtcResponse,
+  type BoltzChainSwap,
   type BoltzSwap,
   BoltzSwapProvider,
+  type ChainFeesResponse,
   type CreateLightningInvoiceRequest,
   type CreateLightningInvoiceResponse,
   type FeesResponse,
@@ -57,6 +60,14 @@ let activeInstance: ArkadeSwaps | null = null;
 let activeUnsubscribers: Array<() => void> = [];
 let limitsCache: { network: string; limits: LimitsResponse } | null = null;
 let feesCache: { network: string; fees: FeesResponse } | null = null;
+let chainLimitsCache: {
+  network: string;
+  limits: LimitsResponse;
+} | null = null;
+let chainFeesCache: {
+  network: string;
+  fees: ChainFeesResponse;
+} | null = null;
 
 export type SwapEventKind = "update" | "completed" | "failed" | "action";
 export type SwapEvent = {
@@ -398,6 +409,128 @@ export async function quoteSubmarineSwapFee(
 export function clearLightningCaches(): void {
   limitsCache = null;
   feesCache = null;
+  chainLimitsCache = null;
+  chainFeesCache = null;
+}
+
+export type ChainSwapQuote = {
+  feeSats: number;
+  percentage: number;
+  /** Sum of server miner fee + user claim miner fee (lockup is offchain → 0 on Arkade side). */
+  minerFeeSats: number;
+  withinLimits: boolean;
+  min: number;
+  max: number;
+};
+
+/**
+ * Estimate the fee for an ARK → BTC chain swap without creating one. Mirrors
+ * `quoteSubmarineSwapFee`'s shape: standalone provider so the Review screen
+ * can render real numbers before the user taps Send. Returns null when the
+ * network does not have Boltz configured or the fee fetch fails.
+ *
+ * Cost formula matches `../wallet/src/providers/swaps.tsx`'s
+ * `calcArkToBtcSwapFee`: `ceil(amount * pct / 100) + minerFees.server +
+ * minerFees.user.claim`. The lockup miner fee is ignored on the user side
+ * because the lockup leg is offchain (vtxo → Boltz address), not a mainnet tx.
+ */
+export async function quoteArkToBtcChainSwap(
+  network: string,
+  amountSats: number,
+): Promise<ChainSwapQuote | null> {
+  const apiUrl = boltzApiUrlForNetwork(network);
+  const boltzNetwork = asBoltzNetwork(network);
+  if (!apiUrl || !boltzNetwork) return null;
+  try {
+    let fees = chainFeesCache?.network === network ? chainFeesCache.fees : null;
+    let limits =
+      chainLimitsCache?.network === network ? chainLimitsCache.limits : null;
+    if (!fees || !limits) {
+      const provider = new BoltzSwapProvider({ apiUrl, network: boltzNetwork });
+      const [f, l] = await Promise.all([
+        provider.getChainFees("ARK", "BTC"),
+        provider.getChainLimits("ARK", "BTC"),
+      ]);
+      fees = f;
+      limits = l;
+      chainFeesCache = { network, fees };
+      chainLimitsCache = { network, limits };
+    }
+    const percentage = fees.percentage;
+    const minerFeeSats = fees.minerFees.server + fees.minerFees.user.claim;
+    const feeSats = Math.ceil((amountSats * percentage) / 100) + minerFeeSats;
+    const withinLimits = amountSats >= limits.min && amountSats <= limits.max;
+    return {
+      feeSats,
+      percentage,
+      minerFeeSats,
+      withinLimits,
+      min: limits.min,
+      max: limits.max,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function createArkToBtcChainSwap(args: {
+  btcAddress: string;
+  /** Amount the destination receives. */
+  receiverLockAmount: number;
+}): Promise<ArkToBtcResponse> {
+  const swaps = await getLightning();
+  try {
+    return await swaps.arkToBtc({
+      btcAddress: args.btcAddress,
+      receiverLockAmount: args.receiverLockAmount,
+    });
+  } catch (e) {
+    throw toArkadeError("swap_create_failed", "Failed to create chain swap", e);
+  }
+}
+
+export async function waitAndClaimChainSwap(
+  pendingSwap: BoltzChainSwap,
+): Promise<{ txid: string }> {
+  const swaps = await getLightning();
+  try {
+    return await swaps.waitAndClaimBtc(pendingSwap);
+  } catch (e) {
+    throw toArkadeError("swap_settle_failed", "Chain swap claim failed", e);
+  }
+}
+
+export async function refundChainSwap(
+  pendingSwap: BoltzChainSwap,
+): Promise<void> {
+  const swaps = await getLightning();
+  try {
+    await swaps.refundArk(pendingSwap);
+  } catch (e) {
+    throw toArkadeError("swap_refund_failed", "Chain swap refund failed", e);
+  }
+}
+
+/**
+ * Look up a chain swap by id and call `refundArk`. Used by the Activity
+ * detail screen, which only knows the swap id (not the full swap object).
+ * Throws `swap_refund_failed` when the swap is missing or not a chain swap.
+ */
+export async function refundChainSwapById(swapId: string): Promise<void> {
+  const swaps = await getLightning();
+  const all = await swaps.swapRepository.getAllSwaps({ type: "chain" });
+  const target = all.find((s) => s.id === swapId);
+  if (!target || target.type !== "chain") {
+    throw new ArkadeError(
+      "swap_refund_failed",
+      "Chain swap not found in local repository",
+    );
+  }
+  try {
+    await swaps.refundArk(target);
+  } catch (e) {
+    throw toArkadeError("swap_refund_failed", "Chain swap refund failed", e);
+  }
 }
 
 export type LightningActivitySources = {

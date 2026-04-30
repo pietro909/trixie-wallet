@@ -5,9 +5,11 @@ import {
   FileQuestion,
   Repeat,
 } from "lucide-react-native";
-import type * as React from "react";
+import * as React from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
+import Button from "../components/Button";
 import CopyableField from "../components/CopyableField";
+import { useToast } from "../components/ToastProvider";
 import { useFormatSats } from "../hooks/useFormatSats";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../navigation/RootStack";
@@ -17,6 +19,7 @@ import {
   type Section,
   type SectionRow,
 } from "../services/activity-details/buildSections";
+import { refundChainSwapById } from "../services/arkade/lightning";
 import type { Activity } from "../store/types";
 import { useAppStore } from "../store/useAppStore";
 import { type AppTheme, radius, spacing, typography } from "../theme/theme";
@@ -127,7 +130,10 @@ export default function ActivityDetailsScreen() {
   const network = useAppStore(
     (s) => s.network.detectedNetwork ?? s.wallet?.network ?? null,
   );
+  const refreshWallet = useAppStore((s) => s.refreshWallet);
+  const { showToast } = useToast();
   const { format: formatSats, label: unitLabel } = useFormatSats();
+  const [refunding, setRefunding] = React.useState(false);
 
   if (!activity) {
     return (
@@ -164,6 +170,28 @@ export default function ActivityDetailsScreen() {
   const dirLabel = directionLabel(activity.direction);
   const rail = railLabel(activity.rail);
   const sections = buildActivityDetailSections(activity, { network });
+
+  const refundableChainSwap =
+    activity.source.type === "boltz_swap" &&
+    activity.source.swapType === "chain" &&
+    activity.metadata?.refundAvailable === true;
+  const chainSwapId =
+    activity.source.type === "boltz_swap" ? activity.source.swapId : null;
+
+  async function handleRefund() {
+    if (!chainSwapId) return;
+    setRefunding(true);
+    try {
+      await refundChainSwapById(chainSwapId);
+      showToast("Refund submitted", "success");
+      await refreshWallet().catch(() => {});
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Refund failed";
+      showToast(msg, "error");
+    } finally {
+      setRefunding(false);
+    }
+  }
 
   return (
     <ScrollView
@@ -233,6 +261,22 @@ export default function ActivityDetailsScreen() {
       </View>
 
       {sections.map((section) => renderSection(section, network, theme))}
+
+      {refundableChainSwap ? (
+        <View style={styles.refundCard}>
+          <Text style={[styles.refundBody, { color: theme.colors.textMuted }]}>
+            This chain swap can be refunded — Boltz did not claim before its
+            timeout. Tap below to recover the locked offchain amount.
+          </Text>
+          <Button
+            label={refunding ? "Refunding…" : "Refund offchain amount"}
+            theme={theme}
+            loading={refunding}
+            disabled={refunding}
+            onPress={handleRefund}
+          />
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -241,6 +285,14 @@ const styles = StyleSheet.create({
   content: {
     padding: spacing[5],
     paddingBottom: 120,
+  },
+  refundCard: {
+    marginTop: spacing[4],
+    gap: spacing[3],
+  },
+  refundBody: {
+    fontSize: typography.size.sm,
+    lineHeight: typography.size.sm * 1.4,
   },
   summary: {
     padding: spacing[6],

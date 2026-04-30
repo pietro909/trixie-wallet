@@ -113,6 +113,15 @@ export default function SendResultScreen() {
                 Network fee {formatSats(params.feeSats)} {unitLabel}
               </Text>
             ) : null}
+            {params.paymentType === "bitcoin" ? (
+              <Text
+                style={[styles.subtitle, { color: theme.colors.textSubtle }]}
+              >
+                {params.bitcoinRail === "chainswap"
+                  ? "Submitted. Boltz will broadcast a Bitcoin transaction once the offchain leg confirms (~10 min)."
+                  : "Submitted. The on-chain transaction will appear once Arkade closes the next batch round."}
+              </Text>
+            ) : null}
             {params.txId ? (
               <Pressable
                 onPress={copyTxId}

@@ -1,3 +1,5 @@
+import { useNavigation } from "@react-navigation/native";
+import { Globe, Shield, Zap } from "lucide-react-native";
 import * as React from "react";
 import {
   Dimensions,
@@ -8,10 +10,8 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation } from "@react-navigation/native";
-import { Shield, Zap, Globe } from "lucide-react-native";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
-import { spacing, typography, radius } from "../theme/theme";
+import { radius, spacing, typography } from "../theme/theme";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 

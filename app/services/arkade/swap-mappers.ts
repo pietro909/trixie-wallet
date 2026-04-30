@@ -1,8 +1,12 @@
 import {
+  type BoltzChainSwap,
   type BoltzReverseSwap,
   type BoltzSubmarineSwap,
   type BoltzSwap,
   type BoltzSwapStatus,
+  isChainFailedStatus,
+  isChainRefundableStatus,
+  isChainSuccessStatus,
   isReverseClaimableStatus,
   isReverseFailedStatus,
   isReverseSuccessStatus,
@@ -30,6 +34,23 @@ function reverseSwapStatus(status: BoltzSwapStatus): ActivityStatus {
   if (isReverseSuccessStatus(status)) return "confirmed";
   if (isReverseFailedStatus(status)) return "failed";
   return "pending";
+}
+
+function chainSwapStatus(status: BoltzSwapStatus): ActivityStatus {
+  if (isChainSuccessStatus(status)) return "confirmed";
+  if (isChainFailedStatus(status)) return "failed";
+  // Refundable counts as a (recoverable) failure for the user — they need to
+  // act on it. The Activity detail surfaces a Refund button.
+  if (isChainRefundableStatus(status)) return "failed";
+  return "pending";
+}
+
+function chainSwapTitle(swap: BoltzChainSwap): string {
+  if (isChainSuccessStatus(swap.status)) return "Sent to Bitcoin";
+  if (isChainFailedStatus(swap.status)) return "Bitcoin send failed";
+  if (isChainRefundableStatus(swap.status))
+    return "Bitcoin send — refund available";
+  return "Sending to Bitcoin";
 }
 
 function submarineSwapStatus(swap: BoltzSubmarineSwap): ActivityStatus {
@@ -268,22 +289,52 @@ function mapSwapToActivity(
       metadata: submarineLightningMetadata(swap, meta, ctx),
     };
   }
-  // Chain swap fallback — kept generic; Milestone 2 UI does not focus on them.
+  // Chain swap (ARK → BTC out): a Bitcoin-rail row with the destination
+  // amount, swapId, and refund-availability surfaced via metadata.
+  const chainSwap = swap as BoltzChainSwap;
   return {
     id: baseId,
     kind: "lightning_swap",
+    direction: "out",
+    amountSats:
+      meta?.invoiceAmountSats ?? meta?.arkadeAmountSats ?? chainSwap.amount,
     timestamp: timestampMs,
-    title: "Chain swap",
-    status: "info",
-    rail: "lightning",
+    title: chainSwapTitle(chainSwap),
+    status: chainSwapStatus(chainSwap.status),
+    rail: "bitcoin",
     source: {
       type: "boltz_swap",
       provider: "boltz",
       swapId: swap.id,
       swapType: "chain",
     },
-    metadata: baseLightningMetadata(swap, meta, ctx),
+    metadata: chainSwapMetadata(chainSwap, meta, ctx),
   };
+}
+
+function chainSwapMetadata(
+  swap: BoltzChainSwap,
+  meta: LocalSwapMetadata | undefined,
+  ctx: ProjectionContext,
+): NonNullable<Activity["metadata"]> {
+  const out = baseLightningMetadata(swap, meta, ctx);
+  if (out.invoiceAmountSats == null) {
+    out.invoiceAmountSats = swap.amount;
+  }
+  // Chain swap (Arkade → BTC): user pays `arkadeAmountSats` (lockup amount)
+  // on Arkade, of which `invoiceAmountSats` reaches the Bitcoin destination.
+  // Fee is the positive difference (Boltz spread + miner fees).
+  if (
+    typeof out.arkadeAmountSats === "number" &&
+    typeof out.invoiceAmountSats === "number"
+  ) {
+    const fee = out.arkadeAmountSats - out.invoiceAmountSats;
+    if (fee > 0) out.chainSwapFeeSats = fee;
+  }
+  if (isChainRefundableStatus(swap.status)) {
+    out.refundAvailable = true;
+  }
+  return out;
 }
 
 /**
