@@ -8,15 +8,15 @@ Last updated: 2026-04-30
 
 ## Milestones
 
-- [ ] Milestone 1: Direct Arkade SDK Wallet Prototype ([docs/MILESTONE_1.agents.md](./docs/MILESTONE_1.agents.md))
+- [x] Milestone 1: Direct Arkade SDK Wallet Prototype ([docs/MILESTONE_1.agents.md](./docs/MILESTONE_1.agents.md))
   - Wire `@arkade-os/sdk` into runtime wallet creation, persistence, and the core create/restore/lock/unlock/send/receive flows.
-- [ ] Milestone 2: Lightning Invoices With Boltz Swaps ([docs/MILESTONE_2.agents.md](./docs/MILESTONE_2.agents.md))
+- [x] Milestone 2: Lightning Invoices With Boltz Swaps ([docs/MILESTONE_2.agents.md](./docs/MILESTONE_2.agents.md))
   - Add Lightning receive/send via Boltz swaps (foreground-first; background/resume comes later).
-- [ ] Milestone 3: Activities ([docs/MILESTONE_3.agents.md](./docs/MILESTONE_3.agents.md))
+- [x] Milestone 3: Activities ([docs/MILESTONE_3.agents.md](./docs/MILESTONE_3.agents.md))
   - Make the app own its Activity model by deriving Activity rows via an app-level history builder (instead of SDK transaction history).
-- [ ] Milestone 4: Activity Details ([docs/MILESTONE_4.agents.md](./docs/MILESTONE_4.agents.md))
+- [x] Milestone 4: Activity Details ([docs/MILESTONE_4.agents.md](./docs/MILESTONE_4.agents.md))
   - Add an Activity details/inspection screen with copyable fields and network-aware explorer links.
-- [ ] Milestone 5: Bitcoin On-Chain Send (Collaborative Exit) ([docs/MILESTONE_5.agents.md](./docs/MILESTONE_5.agents.md))
+- [x] Milestone 5: Bitcoin On-Chain Send (Collaborative Exit) ([docs/MILESTONE_5.agents.md](./docs/MILESTONE_5.agents.md))
   - Implement on-chain send via collaborative exit (`Ramps.offboard`) with fee preview and a review/result flow.
 - [ ] Milestone 6: Backup and Reset Safety ([docs/MILESTONE_6.agents.md](./docs/MILESTONE_6.agents.md))
   - Define a versioned, encrypted local backup bundle format + restore path; gate reset behind backup/recovery safety.
