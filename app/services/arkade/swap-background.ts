@@ -1,0 +1,194 @@
+import {
+  defineExpoSwapBackgroundTask,
+  SWAP_POLL_TASK_TYPE,
+  unregisterExpoSwapBackgroundTask,
+} from "@arkade-os/boltz-swap/expo";
+import { SQLiteSwapRepository } from "@arkade-os/boltz-swap/repositories/sqlite";
+import {
+  AsyncStorageTaskQueue,
+  type TaskItem,
+  type TaskResult,
+} from "@arkade-os/sdk/worker/expo";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import type { ArkadeWalletMetadata } from "../../store/types";
+import { recordPersistedError } from "../diagnostics/persisted";
+import { buildIdentityFromSecret } from "./identity";
+import { isMainnetForNetworkName } from "./network";
+import { readSecret } from "./secret-store";
+import { getSharedSqlExecutor } from "./storage";
+
+export const SWAP_BACKGROUND_TASK_NAME = "trixie-boltz-swap-poll";
+
+const QUEUE_PREFIX = "trixie:boltz-swap-queue";
+const QUEUE_INBOX_KEY = `${QUEUE_PREFIX}:inbox`;
+const QUEUE_OUTBOX_KEY = `${QUEUE_PREFIX}:outbox`;
+const QUEUE_CONFIG_KEY = `${QUEUE_PREFIX}:config`;
+const ACTIVE_WALLET_KEY = `${QUEUE_PREFIX}:active-wallet`;
+// Shadow log of TaskResult entries — owned by us, independent of the
+// package's outbox (which the OS task body acknowledges and clears at the
+// end of its run, so foreground-side getResults() would always be empty).
+// Capped to keep AsyncStorage writes bounded across long backgrounded
+// sessions.
+const RECENT_RESULTS_KEY = `${QUEUE_PREFIX}:recent-results`;
+const RECENT_RESULTS_CAP = 50;
+
+type ActiveSwapWallet = {
+  walletId: string;
+  network: string;
+  updatedAt: number;
+};
+
+export type RecordedSwapTaskResult = TaskResult & {
+  recordedAt: number;
+};
+
+function parseRecentResults(raw: string): RecordedSwapTaskResult[] {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as RecordedSwapTaskResult[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
+  async pushResult(result: TaskResult): Promise<void> {
+    await super.pushResult(result);
+    const recorded: RecordedSwapTaskResult = {
+      ...result,
+      recordedAt: Date.now(),
+    };
+    const raw = await AsyncStorage.getItem(RECENT_RESULTS_KEY);
+    const list = raw ? parseRecentResults(raw) : [];
+    list.push(recorded);
+    while (list.length > RECENT_RESULTS_CAP) list.shift();
+    await AsyncStorage.setItem(RECENT_RESULTS_KEY, JSON.stringify(list));
+  }
+}
+
+export const swapTaskQueue = new RecordingSwapTaskQueue(
+  AsyncStorage,
+  QUEUE_PREFIX,
+);
+
+export function createSwapRepository(): SQLiteSwapRepository {
+  return new SQLiteSwapRepository(getSharedSqlExecutor());
+}
+
+function newTaskId(): string {
+  return `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+}
+
+async function readActiveSwapWallet(): Promise<ActiveSwapWallet> {
+  const raw = await AsyncStorage.getItem(ACTIVE_WALLET_KEY);
+  if (!raw) {
+    throw new Error("No active wallet is available for swap background work");
+  }
+  const parsed = JSON.parse(raw) as Partial<ActiveSwapWallet>;
+  if (
+    typeof parsed.walletId !== "string" ||
+    parsed.walletId.length === 0 ||
+    typeof parsed.network !== "string" ||
+    parsed.network.length === 0
+  ) {
+    throw new Error("Swap background wallet state is malformed");
+  }
+  return {
+    walletId: parsed.walletId,
+    network: parsed.network,
+    updatedAt:
+      typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
+  };
+}
+
+async function identityFactory() {
+  // Runs in the OS-scheduled headless JS context. Capture failures into the
+  // persisted error log so the foreground support bundle can see why the
+  // background task could not even reach the swap-poll processor.
+  try {
+    const active = await readActiveSwapWallet();
+    const secret = await readSecret(active.walletId);
+    return buildIdentityFromSecret(
+      secret,
+      isMainnetForNetworkName(active.network),
+    ).identity;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    await recordPersistedError(
+      "lightning",
+      `bg_identity_factory_failed: ${message}`,
+    );
+    throw e;
+  }
+}
+
+export async function rememberSwapBackgroundWallet(
+  metadata: ArkadeWalletMetadata,
+): Promise<void> {
+  const value: ActiveSwapWallet = {
+    walletId: metadata.id,
+    network: metadata.network,
+    updatedAt: Date.now(),
+  };
+  await AsyncStorage.setItem(ACTIVE_WALLET_KEY, JSON.stringify(value));
+}
+
+export async function clearSwapBackgroundState(): Promise<void> {
+  // Defensive unregister: `ExpoArkadeSwaps.dispose` already unregisters when an
+  // in-process Lightning instance exists, but a wallet that was set up in a
+  // previous session and reset before any foreground Lightning code ran would
+  // leave the OS scheduler with a stale registration firing every ~15 minutes.
+  // Pair the cleanup with state wipe regardless.
+  await unregisterExpoSwapBackgroundTask(SWAP_BACKGROUND_TASK_NAME).catch(
+    () => {},
+  );
+  await Promise.all([
+    AsyncStorage.removeItem(ACTIVE_WALLET_KEY),
+    AsyncStorage.removeItem(RECENT_RESULTS_KEY),
+    AsyncStorage.removeItem(QUEUE_INBOX_KEY),
+    AsyncStorage.removeItem(QUEUE_OUTBOX_KEY),
+    AsyncStorage.removeItem(QUEUE_CONFIG_KEY),
+  ]);
+}
+
+export async function seedSwapPollTask(): Promise<void> {
+  const existing = await swapTaskQueue.getTasks(SWAP_POLL_TASK_TYPE);
+  if (existing.length > 0) return;
+  const task: TaskItem = {
+    id: newTaskId(),
+    type: SWAP_POLL_TASK_TYPE,
+    data: {},
+    createdAt: Date.now(),
+  };
+  await swapTaskQueue.addTask(task);
+}
+
+/**
+ * Read and clear the shadow log of swap-poll results captured by
+ * `RecordingSwapTaskQueue.pushResult`, then re-seed a fresh poll task as a
+ * safety net (the package's OS task body re-seeds itself, but this covers
+ * cases where the OS task crashed before re-seeding).
+ *
+ * We do NOT touch the package's outbox here. The OS task body calls
+ * `getResults` + `acknowledgeResults` itself before returning, so the outbox
+ * is empty by the time foreground reads it — and double-acking would race
+ * with the package's own ack. The shadow log captures results at the moment
+ * of `pushResult`, before the package clears them.
+ */
+export async function drainSwapPollResults(): Promise<
+  RecordedSwapTaskResult[]
+> {
+  const raw = await AsyncStorage.getItem(RECENT_RESULTS_KEY);
+  const list = raw ? parseRecentResults(raw) : [];
+  if (list.length > 0) {
+    await AsyncStorage.removeItem(RECENT_RESULTS_KEY);
+  }
+  await seedSwapPollTask();
+  return list;
+}
+
+defineExpoSwapBackgroundTask(SWAP_BACKGROUND_TASK_NAME, {
+  taskQueue: swapTaskQueue,
+  swapRepository: createSwapRepository(),
+  identityFactory,
+});

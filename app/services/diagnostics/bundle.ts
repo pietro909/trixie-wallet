@@ -52,6 +52,23 @@ export type SupportBundle = {
       lastCount: number;
       lastError: string | null;
     } | null;
+    lightningResume: {
+      lastAt: number;
+      lastFinishedAt: number;
+      trigger: string;
+      status: string;
+      restoredCount: number;
+      reverseCount: number;
+      submarineCount: number;
+      chainCount: number;
+      polledCount: number;
+      updatedCount: number;
+      claimedCount: number;
+      refundedCount: number;
+      errorCount: number;
+      nonTerminalCount: number;
+      lastError: string | null;
+    } | null;
   };
   walletBehavior: {
     vtxoAutoRenewal: boolean;
@@ -211,6 +228,25 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
             lastAt: wallet.lightningRestore.lastAt,
             lastCount: wallet.lightningRestore.lastCount,
             lastError: redactNullable(wallet.lightningRestore.lastError),
+          }
+        : null,
+      lightningResume: wallet?.lightningResume
+        ? {
+            lastAt: wallet.lightningResume.lastAt,
+            lastFinishedAt: wallet.lightningResume.lastFinishedAt,
+            trigger: wallet.lightningResume.trigger,
+            status: wallet.lightningResume.status,
+            restoredCount: wallet.lightningResume.restoredCount,
+            reverseCount: wallet.lightningResume.reverseCount,
+            submarineCount: wallet.lightningResume.submarineCount,
+            chainCount: wallet.lightningResume.chainCount,
+            polledCount: wallet.lightningResume.polledCount,
+            updatedCount: wallet.lightningResume.updatedCount,
+            claimedCount: wallet.lightningResume.claimedCount,
+            refundedCount: wallet.lightningResume.refundedCount,
+            errorCount: wallet.lightningResume.errorCount,
+            nonTerminalCount: wallet.lightningResume.nonTerminalCount,
+            lastError: redactNullable(wallet.lightningResume.lastError),
           }
         : null,
     },

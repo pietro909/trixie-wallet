@@ -47,6 +47,29 @@ export type LightningRestoreState = {
   lastError?: string;
 };
 
+export type LightningResumeTrigger = "startup" | "unlock" | "foreground";
+
+export type LightningResumeState = {
+  /** ms-since-epoch when the last resume pass started. */
+  lastAt: number;
+  /** ms-since-epoch when the last resume pass finished. */
+  lastFinishedAt: number;
+  /** Lifecycle event that started the pass. */
+  trigger: LightningResumeTrigger;
+  status: "success" | "partial" | "failed";
+  restoredCount: number;
+  reverseCount: number;
+  submarineCount: number;
+  chainCount: number;
+  polledCount: number;
+  updatedCount: number;
+  claimedCount: number;
+  refundedCount: number;
+  errorCount: number;
+  nonTerminalCount: number;
+  lastError?: string;
+};
+
 export type ArkadeWalletMetadata = {
   id: string;
   type: "arkade";
@@ -67,6 +90,7 @@ export type ArkadeWalletMetadata = {
     hasPrivateKey: boolean;
   };
   lightningRestore?: LightningRestoreState;
+  lightningResume?: LightningResumeState;
 };
 
 export type ServerStatus = "idle" | "connecting" | "online" | "offline";

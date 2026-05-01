@@ -4,6 +4,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
 import * as LocalAuthentication from "expo-local-authentication";
+import {
+  AppState as NativeAppState,
+  type AppStateStatus as NativeAppStateStatus,
+} from "react-native";
 import { create } from "zustand";
 import { ArkadeError, toArkadeError } from "../services/arkade/errors";
 import {
@@ -30,9 +34,9 @@ import {
   getNonTerminalSwapCount,
   isLightningSupportedForNetwork,
   quoteArkToBtcChainSwap,
-  refreshSwapsStatus,
   restoreBoltzSwaps,
   restoreLightningActivity,
+  resumeLightningSwaps,
   sendLightningPayment,
   setSwapEventListener,
   snapshotBoltzSwaps,
@@ -59,6 +63,7 @@ import {
   readSecret,
   saveSecret,
 } from "../services/arkade/secret-store";
+import { clearSwapBackgroundState } from "../services/arkade/swap-background";
 import { mergeActivities } from "../services/arkade/swap-mappers";
 import {
   clearSwapMetadataForWallet,
@@ -83,6 +88,10 @@ import {
   deleteBackupTempFile,
   writeBackupToTemp,
 } from "../services/backup/storage";
+import {
+  clearPersistedErrors,
+  drainPersistedErrors,
+} from "../services/diagnostics/persisted";
 import { recordError } from "../services/diagnostics/recorder";
 import {
   isBitcoinAddressForNetwork,
@@ -94,6 +103,8 @@ import type {
   ArkadeWalletMetadata,
   BitcoinUnit,
   FiatCurrency,
+  LightningResumeState,
+  LightningResumeTrigger,
   ThemePref,
   WalletBehavior,
 } from "./types";
@@ -206,6 +217,7 @@ type StoreState = AppState & {
   createWallet: (kind: CreateWalletKind) => Promise<void>;
   restoreWallet: (input: RestoreInput) => Promise<void>;
   refreshWallet: () => Promise<void>;
+  resumeLightning: (trigger: LightningResumeTrigger) => Promise<void>;
   sendArkade: (address: string, amountSats: number) => Promise<string>;
   sendLightning: (
     invoice: string,
@@ -346,7 +358,7 @@ function scheduleLightningRestore(walletId: string): void {
       if (!current || current.id !== walletId) return;
       const startedAt = Date.now();
       try {
-        const summary = await restoreLightningActivity();
+        const summary = await restoreLightningActivity(walletId);
         const after = useAppStore.getState().wallet;
         if (!after || after.id !== walletId) return;
         const restoreState = {
@@ -388,11 +400,141 @@ function scheduleLightningRestore(walletId: string): void {
   }, 0);
 }
 
+let lightningResumeInFlight: Promise<void> | null = null;
+
+type LightningResumeSummary = Awaited<ReturnType<typeof resumeLightningSwaps>>;
+
+function lightningResumeStatus(
+  summary: LightningResumeSummary,
+): LightningResumeState["status"] {
+  if (summary.errorCount === 0) return "success";
+  const restoredCount =
+    summary.reverseCount + summary.submarineCount + summary.chainCount;
+  const didProgress =
+    restoredCount +
+      summary.polledCount +
+      summary.updatedCount +
+      summary.claimedCount +
+      summary.refundedCount >
+    0;
+  return didProgress ? "partial" : "failed";
+}
+
+function lightningResumeStateFromSummary(
+  summary: LightningResumeSummary,
+): LightningResumeState {
+  return {
+    lastAt: summary.startedAt,
+    lastFinishedAt: summary.finishedAt,
+    trigger: summary.trigger,
+    status: lightningResumeStatus(summary),
+    restoredCount:
+      summary.reverseCount + summary.submarineCount + summary.chainCount,
+    reverseCount: summary.reverseCount,
+    submarineCount: summary.submarineCount,
+    chainCount: summary.chainCount,
+    polledCount: summary.polledCount,
+    updatedCount: summary.updatedCount,
+    claimedCount: summary.claimedCount,
+    refundedCount: summary.refundedCount,
+    errorCount: summary.errorCount,
+    nonTerminalCount: summary.nonTerminalCount,
+    lastError: summary.lastError,
+  };
+}
+
+function failedLightningResumeState(
+  trigger: LightningResumeTrigger,
+  startedAt: number,
+  message: string,
+): LightningResumeState {
+  return {
+    lastAt: startedAt,
+    lastFinishedAt: Date.now(),
+    trigger,
+    status: "failed",
+    restoredCount: 0,
+    reverseCount: 0,
+    submarineCount: 0,
+    chainCount: 0,
+    polledCount: 0,
+    updatedCount: 0,
+    claimedCount: 0,
+    refundedCount: 0,
+    errorCount: 1,
+    nonTerminalCount: 0,
+    lastError: message,
+  };
+}
+
+function appendLightningResumeError(
+  state: LightningResumeState,
+  message: string,
+): LightningResumeState {
+  return {
+    ...state,
+    status: state.status === "failed" ? "failed" : "partial",
+    errorCount: state.errorCount + 1,
+    lastError: state.lastError ? `${state.lastError}; ${message}` : message,
+  };
+}
+
+/**
+ * Drain errors written by BG-context code (where the in-memory recorder is
+ * unreachable) into the foreground recorder so the support bundle picks
+ * them up. Original BG-side timestamp is prefixed onto the message because
+ * `recordError` stamps with `Date.now()` at insertion time.
+ */
+async function drainAndForwardPersistedErrors(): Promise<void> {
+  try {
+    const entries = await drainPersistedErrors();
+    for (const entry of entries) {
+      // toISOString throws RangeError for timestamps outside the Date range.
+      // safeParse already filters non-finite numbers, but a hand-edited
+      // storage blob with an absurdly large value would still hit this.
+      let stamp: string;
+      try {
+        stamp = new Date(entry.timestamp).toISOString();
+      } catch {
+        stamp = String(entry.timestamp);
+      }
+      recordError(
+        entry.category,
+        `[bg ${stamp}] ${entry.message}`,
+        entry.details,
+      );
+    }
+  } catch {
+    // best-effort
+  }
+}
+
+function scheduleLightningResume(trigger: LightningResumeTrigger): void {
+  setTimeout(() => {
+    void useAppStore
+      .getState()
+      .resumeLightning(trigger)
+      .catch((e) => {
+        recordError(
+          "lightning",
+          `scheduled_resume_failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+  }, 0);
+}
+
 export const useAppStore = create<StoreState>((set, get) => ({
   ...DEFAULT_STATE,
   _hydrated: false,
 
   hydrate: async () => {
+    // Drain BG-context errors first, regardless of which path the rest of
+    // hydrate takes. This guarantees errors captured before the wallet
+    // existed (e.g. the OS task ran while there was no active wallet) still
+    // surface, and ensures BG entries land in the recorder ahead of any
+    // foreground errors emitted by the resume scheduled below — preserving
+    // chronological order in the support bundle.
+    await drainAndForwardPersistedErrors();
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
       if (!raw) {
@@ -432,6 +574,14 @@ export const useAppStore = create<StoreState>((set, get) => ({
         wallet: parsed.wallet ?? null,
         _hydrated: true,
       });
+      const restored = get();
+      if (
+        restored.wallet &&
+        !restored.security.isLocked &&
+        isLightningSupportedForNetwork(restored.wallet.network)
+      ) {
+        scheduleLightningResume("startup");
+      }
     } catch {
       set({ _hydrated: true });
     }
@@ -659,10 +809,15 @@ export const useAppStore = create<StoreState>((set, get) => ({
       get().walletBehavior,
     );
     await maybeEnsureLightning(metadata, get().walletBehavior);
-    // Pull the latest Boltz status for non-final swaps before merging into
-    // Activity. Best-effort: a stale or unreachable Boltz API must not break
-    // wallet refresh, so the helper itself swallows errors.
-    await refreshSwapsStatus();
+    // Do NOT call `refreshSwapsStatus()` here. The foreground SwapManager
+    // (WS + 30s periodic poll + fallback polling on WS drop) already keeps
+    // every monitored swap's status fresh in the local repo. `refreshWallet`
+    // is the universal target for swap-event-driven refreshes (debounced via
+    // `setSwapEventListener`), every send op, and pull-to-refresh — adding a
+    // per-swap HTTP poll here storms Boltz on each event without adding
+    // information the SwapManager hasn't already saved. The resume path keeps
+    // an explicit `refreshSwapsStatus()` because at resume time the WS may
+    // not yet be connected.
     const activities = await buildActivities(
       metadata.id,
       snapshot.activities,
@@ -670,6 +825,68 @@ export const useAppStore = create<StoreState>((set, get) => ({
     );
     set({ wallet: applySnapshot(metadata, snapshot, activities) });
     await persist(get());
+  },
+
+  resumeLightning: async (trigger) => {
+    const metadata = get().wallet;
+    if (!metadata) return;
+    if (get().security.isLocked) return;
+    if (!isLightningSupportedForNetwork(metadata.network)) return;
+    if (lightningResumeInFlight) return lightningResumeInFlight;
+
+    const run = (async () => {
+      const startedAt = Date.now();
+      let resumeState: LightningResumeState;
+      let shouldMarkDirty = false;
+
+      try {
+        const summary = await resumeLightningSwaps({
+          metadata,
+          behavior: get().walletBehavior,
+          trigger,
+        });
+        resumeState = lightningResumeStateFromSummary(summary);
+        shouldMarkDirty =
+          resumeState.restoredCount +
+            resumeState.updatedCount +
+            resumeState.claimedCount +
+            resumeState.refundedCount >
+          0;
+      } catch (e) {
+        const message =
+          e instanceof Error ? e.message : "Lightning resume failed";
+        recordError("lightning", `resume_failed: ${message}`);
+        resumeState = failedLightningResumeState(trigger, startedAt, message);
+      }
+
+      try {
+        await get().refreshWallet();
+      } catch (e) {
+        const message =
+          e instanceof Error ? e.message : "Wallet refresh after resume failed";
+        recordError("lightning", `resume_refresh_failed: ${message}`);
+        resumeState = appendLightningResumeError(resumeState, message);
+      }
+
+      const after = get().wallet;
+      if (!after || after.id !== metadata.id) return;
+      if (shouldMarkDirty) markDirtyForBackup();
+      set({
+        wallet: {
+          ...after,
+          lightningResume: resumeState,
+        },
+      });
+      await persist(get());
+    })();
+
+    const inFlight = run.finally(() => {
+      if (lightningResumeInFlight === inFlight) {
+        lightningResumeInFlight = null;
+      }
+    });
+    lightningResumeInFlight = inFlight;
+    return inFlight;
   },
 
   sendArkade: async (address, amountSats) => {
@@ -1005,11 +1222,14 @@ export const useAppStore = create<StoreState>((set, get) => ({
   },
 
   lockWallet: async () => {
+    // Lock is purely UI gating. Do NOT dispose Lightning here:
+    // ExpoArkadeSwaps.dispose unregisters the OS swap-poll background task,
+    // which would silently kill background polling until the next unlock.
+    // The in-process wallet is kept too because the Lightning instance holds
+    // a reference to it and would crash on swap events otherwise.
     set((s) => ({
       security: { ...s.security, isLocked: true },
     }));
-    await disposeLightning();
-    await disposeWallet();
     await persist(get());
   },
 
@@ -1019,6 +1239,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
     if (simpleHash(password) !== security.passwordHash) return false;
     set({ security: { ...security, isLocked: false } });
     await persist(get());
+    scheduleLightningResume("unlock");
     return true;
   },
 
@@ -1032,6 +1253,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
         const { security } = get();
         set({ security: { ...security, isLocked: false } });
         await persist(get());
+        scheduleLightningResume("unlock");
         return true;
       }
       return false;
@@ -1063,6 +1285,12 @@ export const useAppStore = create<StoreState>((set, get) => ({
     } catch {
       // best-effort cleanup
     }
+    try {
+      await clearSwapBackgroundState();
+    } catch {
+      // best-effort cleanup
+    }
+    await clearPersistedErrors();
     set({ ...DEFAULT_STATE, _hydrated: true });
     await AsyncStorage.removeItem(STORAGE_KEY);
     await clearLegacyStorage();
@@ -1308,6 +1536,30 @@ export const useAppStore = create<StoreState>((set, get) => ({
     persist(get());
   },
 }));
+
+// HMR safety: the previous module evaluation's listener stays live until its
+// closure is GC'd, so without an explicit removal each Fast Refresh would
+// stack another listener and multiply foreground resume calls. Stash the
+// subscription on globalThis so re-evaluation can replace it.
+//
+// `inactive` is intentionally excluded from `wasBackgrounded` — iOS reports
+// `inactive` for Control Center swipes, screenshots, and biometric prompts,
+// none of which warrant a full resume pass.
+type AppStateSubSlot = { __trixieAppStateSub?: { remove: () => void } };
+const appStateSlot = globalThis as unknown as AppStateSubSlot;
+appStateSlot.__trixieAppStateSub?.remove();
+
+let nativeAppState: NativeAppStateStatus = NativeAppState.currentState;
+appStateSlot.__trixieAppStateSub = NativeAppState.addEventListener(
+  "change",
+  (nextState) => {
+    const wasBackgrounded = nativeAppState === "background";
+    nativeAppState = nextState;
+    if (wasBackgrounded && nextState === "active") {
+      scheduleLightningResume("foreground");
+    }
+  },
+);
 
 // Refresh wallet snapshot + Activity list whenever the SwapManager fires.
 // Coalesces bursts of events (e.g. update → action → completed in close

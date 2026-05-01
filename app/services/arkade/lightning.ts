@@ -1,7 +1,9 @@
 import {
-  ArkadeSwaps,
+  type ArkadeSwaps,
   type ArkToBtcResponse,
   type BoltzChainSwap,
+  type BoltzReverseSwap,
+  type BoltzSubmarineSwap,
   type BoltzSwap,
   BoltzSwapProvider,
   type ChainFeesResponse,
@@ -16,18 +18,31 @@ import {
   type SendLightningPaymentRequest,
   type SendLightningPaymentResponse,
 } from "@arkade-os/boltz-swap";
-import { SQLiteSwapRepository } from "@arkade-os/boltz-swap/repositories/sqlite";
+import { ExpoArkadeSwaps } from "@arkade-os/boltz-swap/expo";
 import { type ArkTransaction, type NetworkName, TxType } from "@arkade-os/sdk";
-import type { ArkadeWalletMetadata, WalletBehavior } from "../../store/types";
+import type {
+  ArkadeWalletMetadata,
+  LightningResumeTrigger,
+  WalletBehavior,
+} from "../../store/types";
 import { recordError } from "../diagnostics/recorder";
 import { ArkadeError, toArkadeError } from "./errors";
 import { ensureWallet, getWallet } from "./runtime";
 import { getSharedSqlExecutor } from "./storage";
 import {
+  createSwapRepository,
+  drainSwapPollResults,
+  rememberSwapBackgroundWallet,
+  SWAP_BACKGROUND_TASK_NAME,
+  seedSwapPollTask,
+  swapTaskQueue,
+} from "./swap-background";
+import {
   getAllSwapMetadata,
   getSwapMetadata,
   type LocalSwapMetadata,
   linkSwapToWalletTx,
+  recordSwapMetadata,
 } from "./swap-storage";
 
 const BOLTZ_API_URLS: Partial<Record<NetworkName, string>> = {
@@ -36,6 +51,8 @@ const BOLTZ_API_URLS: Partial<Record<NetworkName, string>> = {
   signet: "https://boltz.signet.arkade.sh",
   regtest: "http://localhost:9069",
 };
+
+type LightningInstance = ArkadeSwaps | ExpoArkadeSwaps;
 
 function asBoltzNetwork(network: string): NetworkName | null {
   const n = network.toLowerCase() as NetworkName;
@@ -56,8 +73,8 @@ export function isLightningSupportedForNetwork(
 
 let activeWalletId: string | null = null;
 let activeNetwork: string | null = null;
-let activePromise: Promise<ArkadeSwaps> | null = null;
-let activeInstance: ArkadeSwaps | null = null;
+let activePromise: Promise<LightningInstance> | null = null;
+let activeInstance: LightningInstance | null = null;
 let activeUnsubscribers: Array<() => void> = [];
 let limitsCache: { network: string; limits: LimitsResponse } | null = null;
 let feesCache: { network: string; fees: FeesResponse } | null = null;
@@ -156,7 +173,7 @@ function instanceKey(metadata: ArkadeWalletMetadata): string {
 async function buildInstance(
   metadata: ArkadeWalletMetadata,
   behavior: WalletBehavior,
-): Promise<ArkadeSwaps> {
+): Promise<LightningInstance> {
   const network = asBoltzNetwork(metadata.network);
   const apiUrl = network ? BOLTZ_API_URLS[network] : null;
   if (!network || !apiUrl) {
@@ -167,14 +184,21 @@ async function buildInstance(
   }
   const wallet = await ensureWallet({ metadata, behavior });
   const swapProvider = new BoltzSwapProvider({ apiUrl, network });
-  const swapRepository = new SQLiteSwapRepository(getSharedSqlExecutor());
-  let instance: ArkadeSwaps;
+  const swapRepository = createSwapRepository();
+  let instance: LightningInstance;
   try {
-    instance = await ArkadeSwaps.create({
+    await rememberSwapBackgroundWallet(metadata);
+    instance = await ExpoArkadeSwaps.setup({
       wallet,
+      arkServerUrl: metadata.arkServerUrl,
       swapProvider,
       swapRepository,
       swapManager: true,
+      background: {
+        taskName: SWAP_BACKGROUND_TASK_NAME,
+        taskQueue: swapTaskQueue,
+        minimumBackgroundInterval: 15,
+      },
     });
   } catch (e) {
     throw toArkadeError(
@@ -183,14 +207,15 @@ async function buildInstance(
       e,
     );
   }
+  await seedSwapPollTask().catch(() => {});
   await attachSwapManagerSubscriptions(instance);
   return instance;
 }
 
 async function attachSwapManagerSubscriptions(
-  instance: ArkadeSwaps,
+  instance: LightningInstance,
 ): Promise<void> {
-  const manager = instance.swapManager;
+  const manager = instance.getSwapManager();
   if (!manager) return;
   const unsubs: Array<() => void> = [];
   try {
@@ -256,7 +281,7 @@ export type EnsureLightningInput = {
 
 export async function ensureLightning(
   input: EnsureLightningInput,
-): Promise<ArkadeSwaps> {
+): Promise<LightningInstance> {
   const { metadata, behavior } = input;
   if (!isLightningSupportedForNetwork(metadata.network)) {
     throw new ArkadeError(
@@ -291,7 +316,7 @@ export async function ensureLightning(
   return activePromise;
 }
 
-export async function getLightning(): Promise<ArkadeSwaps> {
+export async function getLightning(): Promise<LightningInstance> {
   if (!activePromise) {
     throw new ArkadeError(
       "lightning_unavailable",
@@ -326,7 +351,7 @@ export async function disposeLightning(): Promise<void> {
  * Caller must `disposeLightning()` first.
  */
 export async function clearAllSwaps(): Promise<void> {
-  const repo = new SQLiteSwapRepository(getSharedSqlExecutor());
+  const repo = createSwapRepository();
   await repo.clear();
 }
 
@@ -335,7 +360,7 @@ export async function clearAllSwaps(): Promise<void> {
  * `BoltzSwap` objects. Used by the backup-export flow.
  */
 export async function snapshotBoltzSwaps(): Promise<BoltzSwap[]> {
-  const repo = new SQLiteSwapRepository(getSharedSqlExecutor());
+  const repo = createSwapRepository();
   return repo.getAllSwaps();
 }
 
@@ -346,7 +371,7 @@ export async function snapshotBoltzSwaps(): Promise<BoltzSwap[]> {
  */
 export async function restoreBoltzSwaps(swaps: BoltzSwap[]): Promise<void> {
   if (swaps.length === 0) return;
-  const repo = new SQLiteSwapRepository(getSharedSqlExecutor());
+  const repo = createSwapRepository();
   for (const swap of swaps) {
     await repo.saveSwap(swap);
   }
@@ -415,7 +440,7 @@ export async function getLightningLimits(
     return limitsCache.limits;
   }
   const swaps = await getLightning();
-  const limits = await swaps.swapProvider.getLimits();
+  const limits = await swaps.getLimits();
   limitsCache = { network, limits };
   return limits;
 }
@@ -425,7 +450,7 @@ export async function getLightningFees(network: string): Promise<FeesResponse> {
     return feesCache.fees;
   }
   const swaps = await getLightning();
-  const fees = await swaps.swapProvider.getFees();
+  const fees = await swaps.getFees();
   feesCache = { network, fees };
   return fees;
 }
@@ -683,10 +708,82 @@ export type LightningRestoreSummary = {
   chainCount: number;
 };
 
-export async function restoreLightningActivity(): Promise<LightningRestoreSummary> {
+async function recordRestoredLightningMetadata(args: {
+  walletId: string;
+  restoredAt: number;
+  reverseSwaps: BoltzReverseSwap[];
+  submarineSwaps: BoltzSubmarineSwap[];
+  chainSwaps: BoltzChainSwap[];
+}): Promise<void> {
+  const writes: Array<Promise<void>> = [];
+  for (const swap of args.reverseSwaps) {
+    writes.push(
+      recordSwapMetadata({
+        swapId: swap.id,
+        walletId: args.walletId,
+        direction: "in",
+        createdForFlow: "receive",
+        invoiceAmountSats: swap.request.invoiceAmount,
+        arkadeAmountSats: swap.response.onchainAmount ?? null,
+        paymentHash: swap.request.preimageHash,
+        restoredAt: args.restoredAt,
+      }),
+    );
+  }
+  for (const swap of args.submarineSwaps) {
+    writes.push(
+      recordSwapMetadata({
+        swapId: swap.id,
+        walletId: args.walletId,
+        direction: "out",
+        createdForFlow: "send",
+        invoiceAmountSats: null,
+        arkadeAmountSats: swap.response.expectedAmount,
+        paymentHash: swap.preimageHash ?? null,
+        restoredAt: args.restoredAt,
+      }),
+    );
+  }
+  // The send flow only ever creates ARK→BTC chain swaps. Filter explicitly so
+  // a hypothetical BTC→ARK row from a future code path isn't recorded with the
+  // wrong direction. The original `walletTxId` linkage to the offchain lockup
+  // tx is unrecoverable post-restore — without that link, Activity will show
+  // the lockup send and the chain swap as separate rows, but at least the
+  // direction/amount/hash are present for the merge logic.
+  for (const swap of args.chainSwaps) {
+    if (swap.request.from !== "ARK" || swap.request.to !== "BTC") continue;
+    writes.push(
+      recordSwapMetadata({
+        swapId: swap.id,
+        walletId: args.walletId,
+        direction: "out",
+        createdForFlow: "send",
+        invoiceAmountSats: swap.amount,
+        arkadeAmountSats: swap.request.userLockAmount ?? null,
+        paymentHash: swap.request.preimageHash,
+        restoredAt: args.restoredAt,
+      }),
+    );
+  }
+  await Promise.allSettled(writes);
+}
+
+export async function restoreLightningActivity(
+  walletId?: string,
+): Promise<LightningRestoreSummary> {
   const swaps = await getLightning();
   try {
+    const restoredAt = Date.now();
     const result = await swaps.restoreSwaps();
+    if (walletId) {
+      await recordRestoredLightningMetadata({
+        walletId,
+        restoredAt,
+        reverseSwaps: result.reverseSwaps,
+        submarineSwaps: result.submarineSwaps,
+        chainSwaps: result.chainSwaps,
+      });
+    }
     return {
       reverseCount: result.reverseSwaps.length,
       submarineCount: result.submarineSwaps.length,
@@ -699,6 +796,166 @@ export async function restoreLightningActivity(): Promise<LightningRestoreSummar
       e,
     );
   }
+}
+
+export type LightningResumeSummary = {
+  trigger: LightningResumeTrigger;
+  startedAt: number;
+  finishedAt: number;
+  reverseCount: number;
+  submarineCount: number;
+  chainCount: number;
+  polledCount: number;
+  updatedCount: number;
+  claimedCount: number;
+  refundedCount: number;
+  errorCount: number;
+  nonTerminalCount: number;
+  lastError?: string;
+};
+
+function readMetric(
+  data: Record<string, unknown> | undefined,
+  key: string,
+): number {
+  const value = data?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function appendError(current: string | undefined, message: string): string {
+  return current ? `${current}; ${message}` : message;
+}
+
+/**
+ * Foreground does not run the swap-poll processor — the SwapManager's
+ * WebSocket inside `ExpoArkadeSwaps` already drives real-time status while
+ * the app is open. Instead, drain whatever the OS background task pushed to
+ * the outbox while we were backgrounded, sum it into resume metrics, and
+ * re-seed the task for the next OS wake. No `runTasks` here means no race
+ * with a concurrently-firing background task on the shared queue.
+ */
+async function drainBackgroundSwapPollResults(): Promise<
+  Pick<
+    LightningResumeSummary,
+    | "polledCount"
+    | "updatedCount"
+    | "claimedCount"
+    | "refundedCount"
+    | "errorCount"
+  >
+> {
+  const results = await drainSwapPollResults();
+  let polledCount = 0;
+  let updatedCount = 0;
+  let claimedCount = 0;
+  let refundedCount = 0;
+  let errorCount = 0;
+  for (const result of results) {
+    polledCount += readMetric(result.data, "polled");
+    updatedCount += readMetric(result.data, "updated");
+    claimedCount += readMetric(result.data, "claimed");
+    refundedCount += readMetric(result.data, "refunded");
+    errorCount += readMetric(result.data, "errors");
+    if (result.status === "failed") errorCount += 1;
+  }
+  return {
+    polledCount,
+    updatedCount,
+    claimedCount,
+    refundedCount,
+    errorCount,
+  };
+}
+
+export async function resumeLightningSwaps(args: {
+  metadata: ArkadeWalletMetadata;
+  behavior: WalletBehavior;
+  trigger: LightningResumeTrigger;
+}): Promise<LightningResumeSummary> {
+  const startedAt = Date.now();
+  let reverseCount = 0;
+  let submarineCount = 0;
+  let chainCount = 0;
+  let polledCount = 0;
+  let updatedCount = 0;
+  let claimedCount = 0;
+  let refundedCount = 0;
+  let errorCount = 0;
+  let lastError: string | undefined;
+
+  try {
+    await ensureLightning({ metadata: args.metadata, behavior: args.behavior });
+  } catch (e) {
+    const message =
+      e instanceof Error
+        ? e.message
+        : "Lightning service initialization failed";
+    return {
+      trigger: args.trigger,
+      startedAt,
+      finishedAt: Date.now(),
+      reverseCount,
+      submarineCount,
+      chainCount,
+      polledCount,
+      updatedCount,
+      claimedCount,
+      refundedCount,
+      errorCount: errorCount + 1,
+      nonTerminalCount: 0,
+      lastError: message,
+    };
+  }
+
+  // `restoreSwaps()` is a chain scan — only run it on cold/locked entry,
+  // not on every foreground transition. The SwapManager's WebSocket and the
+  // OS background poll keep state in sync once the wallet is live.
+  if (args.trigger !== "foreground") {
+    try {
+      const restored = await restoreLightningActivity(args.metadata.id);
+      reverseCount = restored.reverseCount;
+      submarineCount = restored.submarineCount;
+      chainCount = restored.chainCount;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Restore failed";
+      lastError = appendError(lastError, message);
+      errorCount += 1;
+      recordError("lightning", `resume_restore_failed: ${message}`);
+    }
+  }
+
+  try {
+    const poll = await drainBackgroundSwapPollResults();
+    polledCount = poll.polledCount;
+    updatedCount = poll.updatedCount;
+    claimedCount = poll.claimedCount;
+    refundedCount = poll.refundedCount;
+    errorCount += poll.errorCount;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Swap poll failed";
+    lastError = appendError(lastError, message);
+    errorCount += 1;
+    recordError("lightning", `resume_swap_poll_failed: ${message}`);
+  }
+
+  await refreshSwapsStatus();
+
+  const nonTerminalCount = await getNonTerminalSwapCount().catch(() => 0);
+  return {
+    trigger: args.trigger,
+    startedAt,
+    finishedAt: Date.now(),
+    reverseCount,
+    submarineCount,
+    chainCount,
+    polledCount,
+    updatedCount,
+    claimedCount,
+    refundedCount,
+    errorCount,
+    nonTerminalCount,
+    lastError,
+  };
 }
 
 /**
