@@ -1,8 +1,9 @@
+import { SWAP_POLL_TASK_TYPE } from "@arkade-os/boltz-swap/expo";
 import {
   defineExpoSwapBackgroundTask,
-  SWAP_POLL_TASK_TYPE,
+  registerExpoSwapBackgroundTask,
   unregisterExpoSwapBackgroundTask,
-} from "@arkade-os/boltz-swap/expo";
+} from "@arkade-os/boltz-swap/expo/background";
 import { SQLiteSwapRepository } from "@arkade-os/boltz-swap/repositories/sqlite";
 import {
   AsyncStorageTaskQueue,
@@ -18,6 +19,7 @@ import { readSecret } from "./secret-store";
 import { getSharedSqlExecutor } from "./storage";
 
 export const SWAP_BACKGROUND_TASK_NAME = "trixie-boltz-swap-poll";
+const SWAP_BACKGROUND_INTERVAL_MINUTES = 15;
 
 const QUEUE_PREFIX = "trixie:boltz-swap-queue";
 const QUEUE_INBOX_KEY = `${QUEUE_PREFIX}:inbox`;
@@ -187,8 +189,25 @@ export async function drainSwapPollResults(): Promise<
   return list;
 }
 
+// Defining the task at module top level is an Expo TaskManager constraint:
+// the handler must be registered synchronously at JS startup so an
+// OS-scheduled wake can find it. Activation of the OS scheduler itself is
+// deferred to `ensureSwapBackgroundRegistered`, called from the lifecycle
+// once a wallet is available.
 defineExpoSwapBackgroundTask(SWAP_BACKGROUND_TASK_NAME, {
   taskQueue: swapTaskQueue,
   swapRepository: createSwapRepository(),
   identityFactory,
 });
+
+/**
+ * Activate OS-level scheduling for the swap-poll task. Idempotent —
+ * `expo-background-task` accepts repeated `registerTaskAsync` calls for
+ * the same task name. Pair with `clearSwapBackgroundState` (which
+ * unregisters) on wallet teardown.
+ */
+export async function ensureSwapBackgroundRegistered(): Promise<void> {
+  await registerExpoSwapBackgroundTask(SWAP_BACKGROUND_TASK_NAME, {
+    minimumInterval: SWAP_BACKGROUND_INTERVAL_MINUTES,
+  });
+}

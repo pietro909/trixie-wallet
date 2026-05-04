@@ -32,8 +32,8 @@ import { getSharedSqlExecutor } from "./storage";
 import {
   createSwapRepository,
   drainSwapPollResults,
+  ensureSwapBackgroundRegistered,
   rememberSwapBackgroundWallet,
-  SWAP_BACKGROUND_TASK_NAME,
   seedSwapPollTask,
   swapTaskQueue,
 } from "./swap-background";
@@ -195,9 +195,7 @@ async function buildInstance(
       swapRepository,
       swapManager: true,
       background: {
-        taskName: SWAP_BACKGROUND_TASK_NAME,
         taskQueue: swapTaskQueue,
-        minimumBackgroundInterval: 15,
       },
     });
   } catch (e) {
@@ -207,6 +205,7 @@ async function buildInstance(
       e,
     );
   }
+  await ensureSwapBackgroundRegistered().catch(() => {});
   await seedSwapPollTask().catch(() => {});
   await attachSwapManagerSubscriptions(instance);
   return instance;
