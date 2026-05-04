@@ -22,8 +22,9 @@ Last updated: 2026-04-30
   - Define a versioned, encrypted local backup bundle format + restore path; gate reset behind backup/recovery safety.
 - [x] Milestone 7: Logs Export ([docs/MILESTONE_7.agents.md](./docs/MILESTONE_7.agents.md))
   - Export a redacted support bundle (no secrets) suitable for debugging sends/restores/background work.
-- [ ] Milestone 8: Background Claim, Refund, and Resume ([docs/MILESTONE_8.agents.md](./docs/MILESTONE_8.agents.md))
+- [x] Milestone 8: Background Claim, Refund, and Resume ([docs/MILESTONE_8.agents.md](./docs/MILESTONE_8.agents.md))
   - Make pending Lightning/swap state resume idempotently across suspend/restart/unlock.
+  - Implementation complete. OS background scheduling is deactivated pending [arkade-os/boltz-swap#136](https://github.com/arkade-os/boltz-swap/issues/136); re-enable by restoring the `ensureSwapBackgroundRegistered()` call removed in b0c830a.
 - [ ] Milestone 9: Disaster Recovery Tooling ([docs/MILESTONE_9.agents.md](./docs/MILESTONE_9.agents.md))
   - Add explicit recovery tools for claimable/refundable swaps and other dangling recoverable state.
 - [ ] Milestone 10: Activity Caching ([docs/MILESTONE_10.agents.md](./docs/MILESTONE_10.agents.md))
