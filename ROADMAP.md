@@ -4,7 +4,7 @@ This repository is an Expo-only, iOS/Android self-custodial Arkade wallet app. T
 
 This is a living document: tick items off as they land.
 
-Last updated: 2026-04-30
+Last updated: 2026-05-04
 
 ## Milestones
 
@@ -25,8 +25,9 @@ Last updated: 2026-04-30
 - [x] Milestone 8: Background Claim, Refund, and Resume ([docs/MILESTONE_8.agents.md](./docs/MILESTONE_8.agents.md))
   - Make pending Lightning/swap state resume idempotently across suspend/restart/unlock.
   - Implementation complete. OS background scheduling is deactivated pending [arkade-os/boltz-swap#136](https://github.com/arkade-os/boltz-swap/issues/136); re-enable by restoring the `ensureSwapBackgroundRegistered()` call removed in b0c830a.
-- [ ] Milestone 9: Disaster Recovery Tooling ([docs/MILESTONE_9.agents.md](./docs/MILESTONE_9.agents.md))
+- [x] Milestone 9: Disaster Recovery Tooling ([docs/MILESTONE_9.agents.md](./docs/MILESTONE_9.agents.md))
   - Add explicit recovery tools for claimable/refundable swaps and other dangling recoverable state.
+  - Implementation complete, pending manual verification — see "Manual testing status" in [README.md](./README.md).
 - [ ] Milestone 10: Activity Caching ([docs/MILESTONE_10.agents.md](./docs/MILESTONE_10.agents.md))
   - Introduce an append-friendly cache for derived Activity rows with boring, explicit invalidation.
 - [ ] Milestone 11: LNURL ([docs/MILESTONE_11.agents.md](./docs/MILESTONE_11.agents.md))

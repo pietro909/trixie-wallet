@@ -1,5 +1,10 @@
 # Milestone 9: Disaster Recovery Tooling
 
+**Status (2026-05-04):** Implementation complete, pending manual verification —
+see the "Manual testing status" section in [README.md](../README.md). The
+scenarios under "Verification Plan" below have not been exercised on device
+yet; do not treat the recovery surface as battle-tested until they are.
+
 Goal: add operational recovery tools for dangling VHTLCs, claimable or
 refundable swaps, unfinalized Arkade transactions, and stranded wallet outputs.
 
