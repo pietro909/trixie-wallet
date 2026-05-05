@@ -11,6 +11,7 @@ import {
   type CreateLightningInvoiceResponse,
   type FeesResponse,
   isChainFinalStatus,
+  isChainSwapRefundable,
   isReverseFinalStatus,
   isReverseSuccessStatus,
   isSubmarineFinalStatus,
@@ -599,9 +600,9 @@ export async function refundChainSwap(
 }
 
 /**
- * Look up a chain swap by id and call `refundArk`. Used by the Activity
- * detail screen, which only knows the swap id (not the full swap object).
- * Throws `swap_refund_failed` when the swap is missing or not a chain swap.
+ * Look up a chain swap by id and call `refundArk`. Re-checks refundability
+ * and ARK→BTC direction so a stale Recovery row or Activity flag cannot
+ * drive a refund on a no-longer-actionable swap.
  */
 export async function refundChainSwapById(swapId: string): Promise<void> {
   const swaps = await getLightning();
@@ -611,6 +612,20 @@ export async function refundChainSwapById(swapId: string): Promise<void> {
     throw new ArkadeError(
       "swap_refund_failed",
       "Chain swap not found in local repository",
+    );
+  }
+  if (target.request.from !== "ARK" || target.request.to !== "BTC") {
+    throw new ArkadeError(
+      "swap_refund_failed",
+      "Chain swap is not an ARK→BTC refund target",
+    );
+  }
+  // SDK type guard narrows the false branch to `never`; capture status first.
+  const targetStatus = target.status;
+  if (!isChainSwapRefundable(target)) {
+    throw new ArkadeError(
+      "swap_refund_failed",
+      `Chain swap is no longer refundable (status ${targetStatus})`,
     );
   }
   try {
