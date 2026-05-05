@@ -229,8 +229,9 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
         recoveryCounts[key] = (recoveryCounts[key] ?? 0) + 1;
       }
     } catch (e) {
-      recoveryScanErrors.submarine =
-        e instanceof Error ? e.message : "submarine scan failed";
+      recoveryScanErrors.submarine = redactString(
+        e instanceof Error ? e.message : "submarine scan failed",
+      );
     }
     try {
       const lightning = await getLightning();
@@ -245,8 +246,9 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
         };
       }
     } catch (e) {
-      recoveryScanErrors.swapManager =
-        e instanceof Error ? e.message : "swap manager stats unavailable";
+      recoveryScanErrors.swapManager = redactString(
+        e instanceof Error ? e.message : "swap manager stats unavailable",
+      );
     }
   }
   try {
@@ -256,8 +258,9 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
       recoveryCounts.pending_finalize = pendingFinalizeCount;
     }
   } catch (e) {
-    recoveryScanErrors.pending_finalize =
-      e instanceof Error ? e.message : "pending tx discovery failed";
+    recoveryScanErrors.pending_finalize = redactString(
+      e instanceof Error ? e.message : "pending tx discovery failed",
+    );
   }
   if (wallet) {
     let settlementAnomalies = 0;
