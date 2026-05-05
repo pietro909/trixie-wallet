@@ -3,6 +3,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import {
   ChevronRight,
   CircleUserRound,
+  LifeBuoy,
   Lock,
   Settings,
   Shield,
@@ -21,6 +22,7 @@ type MenuRoute =
   | "ProfilePreferences"
   | "ProfileBackup"
   | "ProfileLock"
+  | "ProfileRecovery"
   | "ProfileReset";
 
 type MenuItem = {
@@ -33,6 +35,7 @@ type MenuItem = {
 const MENU_ITEMS: MenuItem[] = [
   { label: "Preferences", icon: Settings, route: "ProfilePreferences" },
   { label: "Backup", icon: Shield, route: "ProfileBackup" },
+  { label: "Recovery", icon: LifeBuoy, route: "ProfileRecovery" },
   { label: "Lock Wallet", icon: Lock, route: "ProfileLock" },
   { label: "Reset Wallet", icon: Trash2, route: "ProfileReset", danger: true },
 ];

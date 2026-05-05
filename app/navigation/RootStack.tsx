@@ -14,6 +14,7 @@ import LandingNoWallet from "../screens/LandingNoWallet";
 import ProfileBackup from "../screens/ProfileBackup";
 import ProfileLock from "../screens/ProfileLock";
 import ProfilePreferences from "../screens/ProfilePreferences";
+import ProfileRecovery from "../screens/ProfileRecovery";
 import ProfileReset from "../screens/ProfileReset";
 import RestoreBackupPasswordScreen from "../screens/RestoreBackupPasswordScreen";
 import RestoreWallet from "../screens/RestoreWallet";
@@ -48,6 +49,7 @@ export type RootStackParamList = {
   ProfilePreferences: undefined;
   ProfileBackup: undefined;
   ProfileLock: undefined;
+  ProfileRecovery: undefined;
   ProfileReset: undefined;
   ReceiveSelect: undefined;
   ReceiveLightningAmount: undefined;
@@ -232,6 +234,11 @@ export default function RootStack() {
             name="ProfileLock"
             component={ProfileLock}
             options={{ ...headerOptions, title: "Lock Wallet" }}
+          />
+          <Stack.Screen
+            name="ProfileRecovery"
+            component={ProfileRecovery}
+            options={{ ...headerOptions, title: "Recovery" }}
           />
           <Stack.Screen
             name="ProfileReset"

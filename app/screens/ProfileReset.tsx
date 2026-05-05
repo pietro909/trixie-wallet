@@ -137,19 +137,34 @@ export default function ProfileReset() {
                   ? "You have swap history that hasn't been backed up. Reset will discard it."
                   : "Your backup is out of date. New swap activity since the last export will be lost."}
               </Text>
-              <Pressable
-                onPress={() => nav.navigate("ProfileBackup")}
-                style={styles.bannerLink}
-              >
-                <Text
-                  style={[
-                    styles.bannerLinkText,
-                    { color: theme.colors.primary },
-                  ]}
+              <View style={styles.bannerLinks}>
+                <Pressable
+                  onPress={() => nav.navigate("ProfileBackup")}
+                  style={styles.bannerLink}
                 >
-                  Back up first
-                </Text>
-              </Pressable>
+                  <Text
+                    style={[
+                      styles.bannerLinkText,
+                      { color: theme.colors.primary },
+                    ]}
+                  >
+                    Back up first
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => nav.navigate("ProfileRecovery")}
+                  style={styles.bannerLink}
+                >
+                  <Text
+                    style={[
+                      styles.bannerLinkText,
+                      { color: theme.colors.primary },
+                    ]}
+                  >
+                    Open recovery
+                  </Text>
+                </Pressable>
+              </View>
             </View>
           </View>
         ) : null}
@@ -254,8 +269,13 @@ const styles = StyleSheet.create({
     fontSize: typography.size.xs,
     lineHeight: typography.lineHeight.xs,
   },
-  bannerLink: {
+  bannerLinks: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing[4],
     marginTop: spacing[2],
+  },
+  bannerLink: {
     alignSelf: "flex-start",
   },
   bannerLinkText: {

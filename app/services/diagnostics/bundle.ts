@@ -1,10 +1,13 @@
+import type { SubmarineRecoveryInfo } from "@arkade-os/boltz-swap";
 import Constants from "expo-constants";
 import { useAppStore } from "../../store/useAppStore";
 import {
+  getLightning,
   getNonTerminalSwapCount,
   isLightningSupportedForNetwork,
   snapshotBoltzSwaps,
 } from "../arkade/lightning";
+import { discoverPendingTxs } from "../arkade/pending-tx-recovery";
 import { fetchRawServerInfo } from "../arkade/runtime";
 import { getAllSwapMetadata } from "../arkade/swap-storage";
 import {
@@ -91,6 +94,24 @@ export type SupportBundle = {
     /** Boltz swap counts grouped as `<type>.<status>`. */
     boltzSwapCounts: Record<string, number>;
     nonTerminalSwapCount: number;
+    /**
+     * Counts produced by the M9 recovery scanner, including hidden
+     * `none` / `already_spent` submarine statuses. Keys mirror
+     * `RecoveryScan.counts` (e.g. `submarine.recoverable`,
+     * `submarine.pre_cltv`, `chain.refundable`, `pending_finalize`,
+     * `arkade_settlement`). No swap ids or arkTxids.
+     */
+    recoveryCounts: Record<string, number>;
+    /** Number of pending Arkade tx rows reported by the server. Just the count. */
+    pendingFinalizeCount: number;
+    /** Sticky-error counter when a category collection failed. */
+    recoveryScanErrors: Record<string, string>;
+    swapManager: {
+      isRunning: boolean;
+      monitoredSwaps: number;
+      websocketConnected: boolean;
+      usePollingFallback: boolean;
+    } | null;
   };
   errors: ErrorEntry[];
 };
@@ -194,6 +215,65 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
     }
   }
 
+  const recoveryCounts: Record<string, number> = {};
+  const recoveryScanErrors: Record<string, string> = {};
+  let swapManagerStats: SupportBundle["recovery"]["swapManager"] = null;
+  let pendingFinalizeCount = 0;
+  if (lightningSupported) {
+    let submarineRecovery: SubmarineRecoveryInfo[] = [];
+    try {
+      const lightning = await getLightning();
+      submarineRecovery = await lightning.scanRecoverableSubmarineSwaps();
+      for (const info of submarineRecovery) {
+        const key = `submarine.${info.status}`;
+        recoveryCounts[key] = (recoveryCounts[key] ?? 0) + 1;
+      }
+    } catch (e) {
+      recoveryScanErrors.submarine =
+        e instanceof Error ? e.message : "submarine scan failed";
+    }
+    try {
+      const lightning = await getLightning();
+      const manager = lightning.getSwapManager();
+      if (manager) {
+        const stats = await manager.getStats();
+        swapManagerStats = {
+          isRunning: stats.isRunning,
+          monitoredSwaps: stats.monitoredSwaps,
+          websocketConnected: stats.websocketConnected,
+          usePollingFallback: stats.usePollingFallback,
+        };
+      }
+    } catch (e) {
+      recoveryScanErrors.swapManager =
+        e instanceof Error ? e.message : "swap manager stats unavailable";
+    }
+  }
+  try {
+    const pending = await discoverPendingTxs();
+    pendingFinalizeCount = pending.length;
+    if (pendingFinalizeCount > 0) {
+      recoveryCounts.pending_finalize = pendingFinalizeCount;
+    }
+  } catch (e) {
+    recoveryScanErrors.pending_finalize =
+      e instanceof Error ? e.message : "pending tx discovery failed";
+  }
+  if (wallet) {
+    let settlementAnomalies = 0;
+    for (const a of wallet.activities) {
+      if (a.source.type !== "wallet_event") continue;
+      if (a.title !== "Arkade settlement") continue;
+      const unresolved = a.metadata?.unresolvedAmountSats;
+      if (typeof unresolved === "number" && unresolved !== 0) {
+        settlementAnomalies += 1;
+      }
+    }
+    if (settlementAnomalies > 0) {
+      recoveryCounts.arkade_settlement = settlementAnomalies;
+    }
+  }
+
   return {
     schemaVersion: BUNDLE_SCHEMA_VERSION,
     generatedAt: Date.now(),
@@ -266,6 +346,10 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
       swapMetadataCount,
       boltzSwapCounts,
       nonTerminalSwapCount,
+      recoveryCounts,
+      pendingFinalizeCount,
+      recoveryScanErrors,
+      swapManager: swapManagerStats,
     },
     errors: getRecentErrors(),
   };

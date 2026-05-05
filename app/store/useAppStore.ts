@@ -34,6 +34,8 @@ import {
   getNonTerminalSwapCount,
   isLightningSupportedForNetwork,
   quoteArkToBtcChainSwap,
+  refreshSwapsStatus,
+  refundChainSwapById,
   restoreBoltzSwaps,
   restoreLightningActivity,
   resumeLightningSwaps,
@@ -47,6 +49,16 @@ import {
   isMainnetForNetworkName,
   normalizeServerUrl,
 } from "../services/arkade/network";
+import { finalizePendingTx } from "../services/arkade/pending-tx-recovery";
+import {
+  isSwapBeingProcessed,
+  lookupSubmarineRecovery,
+  type RecoveryActionKind,
+  type RecoveryItem,
+  type RecoveryScan,
+  runSubmarineRecovery,
+  scanRecoveryState as scanRecoveryStateService,
+} from "../services/arkade/recovery";
 import {
   clearAllWalletData,
   createWalletInstance,
@@ -209,8 +221,16 @@ export type BackupHealth = {
   isStale: boolean;
 };
 
+export type RecoveryRowError =
+  | { type: "deferred_locktime" }
+  | { type: "message"; message: string };
+
 type StoreState = AppState & {
   _hydrated: boolean;
+  /** Per-row spinner gate, keyed by `RecoveryItem.id`. */
+  recoveringIds: Set<string>;
+  /** Per-row error display, keyed by `RecoveryItem.id`. */
+  rowErrors: Record<string, RecoveryRowError>;
   hydrate: () => Promise<void>;
   refreshServer: () => Promise<void>;
   setArkServerUrl: (url: string) => Promise<void>;
@@ -242,6 +262,13 @@ type StoreState = AppState & {
   unlockWithBiometrics: () => Promise<boolean>;
   resetWallet: () => Promise<void>;
   getPendingLightningSwapCount: () => Promise<number>;
+  scanRecoveryState: () => Promise<RecoveryScan>;
+  runRecoveryAction: (
+    action: RecoveryActionKind,
+    itemId: string,
+    item?: RecoveryItem,
+  ) => Promise<RecoveryScan>;
+  clearRecoveryRowError: (itemId: string) => void;
   exportBackup: (password: string) => Promise<{
     uri: string;
     filename: string;
@@ -523,9 +550,51 @@ function scheduleLightningResume(trigger: LightningResumeTrigger): void {
   }, 0);
 }
 
+function setRecoveringId(
+  current: Set<string>,
+  id: string,
+  flag: boolean,
+): Set<string> {
+  if (flag) {
+    if (current.has(id)) return current;
+    return new Set(current).add(id);
+  }
+  if (!current.has(id)) return current;
+  const next = new Set(current);
+  next.delete(id);
+  return next;
+}
+
+function setRowError(
+  current: Record<string, RecoveryRowError>,
+  id: string,
+  error: RecoveryRowError | null,
+): Record<string, RecoveryRowError> {
+  if (error == null) {
+    if (!(id in current)) return current;
+    const next = { ...current };
+    delete next[id];
+    return next;
+  }
+  return { ...current, [id]: error };
+}
+
+function rowErrorFromException(e: unknown): RecoveryRowError {
+  if (e instanceof Error) return { type: "message", message: e.message };
+  return { type: "message", message: "Recovery action failed" };
+}
+
+const EMPTY_RECOVERY_SCAN: RecoveryScan = {
+  scannedAt: 0,
+  items: [],
+  counts: {},
+};
+
 export const useAppStore = create<StoreState>((set, get) => ({
   ...DEFAULT_STATE,
   _hydrated: false,
+  recoveringIds: new Set<string>(),
+  rowErrors: {},
 
   hydrate: async () => {
     // Drain BG-context errors first, regardless of which path the rest of
@@ -1291,7 +1360,12 @@ export const useAppStore = create<StoreState>((set, get) => ({
       // best-effort cleanup
     }
     await clearPersistedErrors();
-    set({ ...DEFAULT_STATE, _hydrated: true });
+    set({
+      ...DEFAULT_STATE,
+      _hydrated: true,
+      recoveringIds: new Set<string>(),
+      rowErrors: {},
+    });
     await AsyncStorage.removeItem(STORAGE_KEY);
     await clearLegacyStorage();
   },
@@ -1306,6 +1380,217 @@ export const useAppStore = create<StoreState>((set, get) => ({
     } catch {
       return 0;
     }
+  },
+
+  scanRecoveryState: async () => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      return {
+        ...EMPTY_RECOVERY_SCAN,
+        scannedAt: Date.now(),
+        reason: "No active wallet",
+      };
+    }
+    if (get().security.isLocked) {
+      return {
+        ...EMPTY_RECOVERY_SCAN,
+        scannedAt: Date.now(),
+        reason: "Unlock the wallet to scan for recoverable state",
+      };
+    }
+    const behavior = get().walletBehavior;
+    return scanRecoveryStateService({
+      metadata,
+      activities: metadata.activities,
+      ensureWallet: async () => {
+        await ensureWallet({ metadata, behavior });
+        if (isLightningSupportedForNetwork(metadata.network)) {
+          await ensureLightning({ metadata, behavior });
+        }
+      },
+    });
+  },
+
+  runRecoveryAction: async (action, itemId, item) => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      return {
+        ...EMPTY_RECOVERY_SCAN,
+        scannedAt: Date.now(),
+        reason: "No active wallet",
+      };
+    }
+    if (get().security.isLocked) {
+      return {
+        ...EMPTY_RECOVERY_SCAN,
+        scannedAt: Date.now(),
+        reason: "Unlock the wallet to run recovery actions",
+      };
+    }
+    set((s) => ({
+      recoveringIds: setRecoveringId(s.recoveringIds, itemId, true),
+      rowErrors: setRowError(s.rowErrors, itemId, null),
+    }));
+
+    let rowError: RecoveryRowError | null = null;
+    let actedSuccessfully = false;
+    try {
+      switch (action) {
+        case "refresh_status":
+        case "support_bundle":
+        case "claim_reverse_vhtlc": {
+          // No mutation in v1 — refresh is the only side effect; the
+          // support-bundle button is purely a UI hand-off but we treat it
+          // here so the store stays the single source of per-row state.
+          await refreshSwapsStatus();
+          actedSuccessfully = true;
+          break;
+        }
+        case "recover_submarine_vhtlc": {
+          const swapId = item?.swapId;
+          if (!swapId) {
+            rowError = {
+              type: "message",
+              message: "Missing swap id for recovery",
+            };
+            break;
+          }
+          if (await isSwapBeingProcessed(swapId)) {
+            rowError = {
+              type: "message",
+              message:
+                "Background swap manager is already acting on this swap. Refresh and retry.",
+            };
+            break;
+          }
+          const lookup = await lookupSubmarineRecovery(swapId);
+          if (!lookup) {
+            rowError = {
+              type: "message",
+              message: "Swap is no longer in the local repository",
+            };
+            break;
+          }
+          if (lookup.info.status !== "recoverable") {
+            rowError = {
+              type: "message",
+              message: `Swap is not recoverable now (${lookup.info.status})`,
+            };
+            break;
+          }
+          try {
+            const outcome = await runSubmarineRecovery(lookup.swap);
+            if (outcome.swept > 0) {
+              actedSuccessfully = true;
+            } else if (outcome.skipped > 0) {
+              rowError = { type: "deferred_locktime" };
+            } else {
+              rowError = {
+                type: "message",
+                message: "Nothing was swept; try again later.",
+              };
+            }
+          } catch (e) {
+            recordError(
+              "swap",
+              `recovery_submarine_failed: ${e instanceof Error ? e.message : String(e)}`,
+            );
+            rowError = rowErrorFromException(e);
+          }
+          break;
+        }
+        case "refund_chain_ark": {
+          const swapId = item?.swapId;
+          if (!swapId) {
+            rowError = {
+              type: "message",
+              message: "Missing swap id for refund",
+            };
+            break;
+          }
+          if (await isSwapBeingProcessed(swapId)) {
+            rowError = {
+              type: "message",
+              message:
+                "Background swap manager is already acting on this swap. Refresh and retry.",
+            };
+            break;
+          }
+          try {
+            await refundChainSwapById(swapId);
+            actedSuccessfully = true;
+          } catch (e) {
+            recordError(
+              "swap",
+              `recovery_chain_refund_failed: ${e instanceof Error ? e.message : String(e)}`,
+            );
+            rowError = rowErrorFromException(e);
+          }
+          break;
+        }
+        case "finalize_pending_tx": {
+          const arkTxid = item?.arkTxid;
+          if (!arkTxid) {
+            rowError = {
+              type: "message",
+              message: "Missing arkTxid for finalization",
+            };
+            break;
+          }
+          try {
+            await finalizePendingTx(arkTxid);
+            actedSuccessfully = true;
+          } catch (e) {
+            recordError(
+              "swap",
+              `recovery_finalize_failed: ${e instanceof Error ? e.message : String(e)}`,
+            );
+            rowError = rowErrorFromException(e);
+          }
+          break;
+        }
+      }
+    } finally {
+      set((s) => ({
+        recoveringIds: setRecoveringId(s.recoveringIds, itemId, false),
+        rowErrors:
+          rowError != null
+            ? setRowError(s.rowErrors, itemId, rowError)
+            : s.rowErrors,
+      }));
+    }
+
+    if (actedSuccessfully) {
+      try {
+        await refreshSwapsStatus();
+      } catch {
+        // best-effort
+      }
+      try {
+        await get().refreshWallet();
+      } catch {
+        // best-effort
+      }
+      markDirtyForBackup();
+    }
+
+    try {
+      return await get().scanRecoveryState();
+    } catch (e) {
+      recordError(
+        "swap",
+        `recovery_rescan_failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return {
+        ...EMPTY_RECOVERY_SCAN,
+        scannedAt: Date.now(),
+        reason: "Could not refresh recovery state — try again",
+      };
+    }
+  },
+
+  clearRecoveryRowError: (itemId) => {
+    set((s) => ({ rowErrors: setRowError(s.rowErrors, itemId, null) }));
   },
 
   exportBackup: async (password) => {

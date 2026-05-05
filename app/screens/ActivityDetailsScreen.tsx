@@ -5,7 +5,7 @@ import {
   FileQuestion,
   Repeat,
 } from "lucide-react-native";
-import * as React from "react";
+import type * as React from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import Button from "../components/Button";
 import CopyableField from "../components/CopyableField";
@@ -19,7 +19,6 @@ import {
   type Section,
   type SectionRow,
 } from "../services/activity-details/buildSections";
-import { refundChainSwapById } from "../services/arkade/lightning";
 import type { Activity } from "../store/types";
 import { useAppStore } from "../store/useAppStore";
 import { type AppTheme, radius, spacing, typography } from "../theme/theme";
@@ -130,10 +129,11 @@ export default function ActivityDetailsScreen() {
   const network = useAppStore(
     (s) => s.network.detectedNetwork ?? s.wallet?.network ?? null,
   );
-  const refreshWallet = useAppStore((s) => s.refreshWallet);
+  const runRecoveryAction = useAppStore((s) => s.runRecoveryAction);
+  const recoveringIds = useAppStore((s) => s.recoveringIds);
+  const rowErrors = useAppStore((s) => s.rowErrors);
   const { showToast } = useToast();
   const { format: formatSats, label: unitLabel } = useFormatSats();
-  const [refunding, setRefunding] = React.useState(false);
 
   if (!activity) {
     return (
@@ -177,19 +177,34 @@ export default function ActivityDetailsScreen() {
     activity.metadata?.refundAvailable === true;
   const chainSwapId =
     activity.source.type === "boltz_swap" ? activity.source.swapId : null;
+  // Mirror the row id format used by `recovery.ts` so the refund button on
+  // this screen and the row in ProfileRecovery share spinner / error state.
+  const recoveryRowId = chainSwapId ? `chain:${chainSwapId}` : null;
+  const refunding = recoveryRowId != null && recoveringIds.has(recoveryRowId);
+  const refundError =
+    recoveryRowId != null ? rowErrors[recoveryRowId] : undefined;
 
+  const activityTitle = activity.title;
+  const activityTimestamp = activity.timestamp;
   async function handleRefund() {
-    if (!chainSwapId) return;
-    setRefunding(true);
-    try {
-      await refundChainSwapById(chainSwapId);
+    if (!chainSwapId || !recoveryRowId) return;
+    const result = await runRecoveryAction("refund_chain_ark", recoveryRowId, {
+      id: recoveryRowId,
+      swapId: chainSwapId,
+      type: "chain",
+      title: activityTitle,
+      status: "refundable",
+      severity: "actionable",
+      createdAt: activityTimestamp,
+      linkState: "linked",
+      actions: ["refund_chain_ark"],
+      detail: chainSwapId,
+    });
+    const stillActionable = result.items.some(
+      (i) => i.id === recoveryRowId && i.severity === "actionable",
+    );
+    if (!stillActionable && !rowErrors[recoveryRowId]) {
       showToast("Refund submitted", "success");
-      await refreshWallet().catch(() => {});
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Refund failed";
-      showToast(msg, "error");
-    } finally {
-      setRefunding(false);
     }
   }
 
@@ -275,6 +290,13 @@ export default function ActivityDetailsScreen() {
             disabled={refunding}
             onPress={handleRefund}
           />
+          {refundError ? (
+            <Text style={[styles.refundError, { color: theme.colors.danger }]}>
+              {refundError.type === "deferred_locktime"
+                ? "Refund locktime not reached yet — try again later."
+                : refundError.message}
+            </Text>
+          ) : null}
         </View>
       ) : null}
     </ScrollView>
@@ -293,6 +315,10 @@ const styles = StyleSheet.create({
   refundBody: {
     fontSize: typography.size.sm,
     lineHeight: typography.size.sm * 1.4,
+  },
+  refundError: {
+    fontSize: typography.size.xs,
+    lineHeight: typography.size.xs * 1.4,
   },
   summary: {
     padding: spacing[6],

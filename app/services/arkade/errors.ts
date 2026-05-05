@@ -23,7 +23,12 @@ export type ArkadeErrorKind =
   | "swap_settle_failed"
   | "swap_claim_failed"
   | "swap_refund_failed"
-  | "swap_restore_failed";
+  | "swap_restore_failed"
+  | "recovery_scan_failed"
+  | "recovery_action_failed"
+  | "recovery_item_missing"
+  | "recovery_pending_tx_not_found"
+  | "recovery_finalize_failed";
 
 const CATEGORY_BY_KIND: Record<ArkadeErrorKind, ErrorCategory> = {
   server_unreachable: "server",
@@ -49,6 +54,11 @@ const CATEGORY_BY_KIND: Record<ArkadeErrorKind, ErrorCategory> = {
   swap_claim_failed: "swap",
   swap_refund_failed: "swap",
   swap_restore_failed: "swap",
+  recovery_scan_failed: "swap",
+  recovery_action_failed: "swap",
+  recovery_item_missing: "swap",
+  recovery_pending_tx_not_found: "swap",
+  recovery_finalize_failed: "swap",
 };
 
 export class ArkadeError extends Error {
