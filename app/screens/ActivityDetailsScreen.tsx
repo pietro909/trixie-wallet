@@ -6,7 +6,7 @@ import {
   Repeat,
 } from "lucide-react-native";
 import type * as React from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import Button from "../components/Button";
 import CopyableField from "../components/CopyableField";
 import { useToast } from "../components/ToastProvider";
@@ -186,7 +186,7 @@ export default function ActivityDetailsScreen() {
 
   const activityTitle = activity.title;
   const activityTimestamp = activity.timestamp;
-  async function handleRefund() {
+  async function performRefund() {
     if (!chainSwapId || !recoveryRowId) return;
     const result = await runRecoveryAction("refund_chain_ark", recoveryRowId, {
       id: recoveryRowId,
@@ -206,6 +206,23 @@ export default function ActivityDetailsScreen() {
     if (!stillActionable && !rowErrors[recoveryRowId]) {
       showToast("Refund submitted", "success");
     }
+  }
+  function handleRefund() {
+    if (!chainSwapId) return;
+    Alert.alert(
+      "Refund Arkade lockup",
+      `Refund the Arkade lockup for swap ${chainSwapId}? The locked offchain amount will return to this wallet.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Refund Arkade lockup",
+          style: "default",
+          onPress: () => {
+            void performRefund();
+          },
+        },
+      ],
+    );
   }
 
   return (

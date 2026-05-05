@@ -1463,22 +1463,22 @@ export const useAppStore = create<StoreState>((set, get) => ({
             };
             break;
           }
-          const lookup = await lookupSubmarineRecovery(swapId);
-          if (!lookup) {
-            rowError = {
-              type: "message",
-              message: "Swap is no longer in the local repository",
-            };
-            break;
-          }
-          if (lookup.info.status !== "recoverable") {
-            rowError = {
-              type: "message",
-              message: `Swap is not recoverable now (${lookup.info.status})`,
-            };
-            break;
-          }
           try {
+            const lookup = await lookupSubmarineRecovery(swapId);
+            if (!lookup) {
+              rowError = {
+                type: "message",
+                message: "Swap is no longer in the local repository",
+              };
+              break;
+            }
+            if (lookup.info.status !== "recoverable") {
+              rowError = {
+                type: "message",
+                message: `Swap is not recoverable now (${lookup.info.status})`,
+              };
+              break;
+            }
             const outcome = await runSubmarineRecovery(lookup.swap);
             if (outcome.swept > 0) {
               actedSuccessfully = true;
@@ -1571,7 +1571,8 @@ export const useAppStore = create<StoreState>((set, get) => ({
       } catch {
         // best-effort
       }
-      markDirtyForBackup();
+      // Mutating swap actions fire SwapManager events whose listener already
+      // calls markDirtyForBackup; refresh-only actions must not flip the flag.
     }
 
     try {
