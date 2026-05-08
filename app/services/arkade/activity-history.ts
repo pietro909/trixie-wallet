@@ -19,23 +19,23 @@ export function activityId(kind: ActivityIdKind, idValue: string): string {
 
 // ===== Pure aggregation helpers =====
 
-export function sumValue(vtxos: VirtualCoin[]): number {
-  let total = 0;
-  for (const v of vtxos) total += v.value;
+export function sumValue(vtxos: VirtualCoin[]): bigint {
+  let total = 0n;
+  for (const v of vtxos) total += BigInt(v.value);
   return total;
 }
 
 export function collectAssets(vtxos: VirtualCoin[]): Asset[] {
-  const map = new Map<string, number>();
+  const map = new Map<string, bigint>();
   for (const v of vtxos) {
     if (!v.assets) continue;
     for (const a of v.assets) {
-      map.set(a.assetId, (map.get(a.assetId) ?? 0) + a.amount);
+      map.set(a.assetId, (map.get(a.assetId) ?? 0n) + a.amount);
     }
   }
   const out: Asset[] = [];
   for (const [assetId, amount] of map) {
-    if (amount !== 0) out.push({ assetId, amount });
+    if (amount !== 0n) out.push({ assetId, amount });
   }
   return out;
 }
@@ -49,22 +49,22 @@ export function subtractAssets(
   spent: VirtualCoin[],
   received: VirtualCoin[],
 ): Asset[] {
-  const map = new Map<string, number>();
+  const map = new Map<string, bigint>();
   for (const v of received) {
     if (!v.assets) continue;
     for (const a of v.assets) {
-      map.set(a.assetId, (map.get(a.assetId) ?? 0) + a.amount);
+      map.set(a.assetId, (map.get(a.assetId) ?? 0n) + a.amount);
     }
   }
   for (const v of spent) {
     if (!v.assets) continue;
     for (const a of v.assets) {
-      map.set(a.assetId, (map.get(a.assetId) ?? 0) - a.amount);
+      map.set(a.assetId, (map.get(a.assetId) ?? 0n) - a.amount);
     }
   }
   const out: Asset[] = [];
   for (const [assetId, amount] of map) {
-    if (amount !== 0) out.push({ assetId, amount });
+    if (amount !== 0n) out.push({ assetId, amount });
   }
   return out;
 }
@@ -79,19 +79,19 @@ export function assetDeltas(
 // ===== Commitment-group decomposition =====
 
 export type CommitmentDecomposition =
-  | { kind: "renewal"; spentAmount: number; createdAmount: number }
-  | { kind: "batch_receive"; createdAmount: number }
-  | { kind: "exit"; spentAmount: number }
+  | { kind: "renewal"; spentAmount: bigint; createdAmount: bigint }
+  | { kind: "batch_receive"; createdAmount: bigint }
+  | { kind: "exit"; spentAmount: bigint }
   | {
       kind: "renewal_plus_receive";
-      renewalAmount: number;
-      receiveAmount: number;
+      renewalAmount: bigint;
+      receiveAmount: bigint;
     }
-  | { kind: "renewal_plus_exit"; renewalAmount: number; exitAmount: number }
+  | { kind: "renewal_plus_exit"; renewalAmount: bigint; exitAmount: bigint }
   | {
       kind: "settlement";
-      spentAmount: number;
-      createdAmount: number;
+      spentAmount: bigint;
+      createdAmount: bigint;
       reason:
         | "boarding_mixed_unresolved"
         | "asset_bearing_settlement"
@@ -146,18 +146,18 @@ export function decomposeCommitmentGroup(args: {
     };
   }
 
-  if (spentAmount === 0 && createdAmount > 0) {
+  if (spentAmount === 0n && createdAmount > 0n) {
     return { kind: "batch_receive", createdAmount };
   }
-  if (spentAmount > 0 && createdAmount === 0) {
+  if (spentAmount > 0n && createdAmount === 0n) {
     return { kind: "exit", spentAmount };
   }
 
   const delta = createdAmount - spentAmount;
-  if (delta === 0) {
+  if (delta === 0n) {
     return { kind: "renewal", spentAmount, createdAmount };
   }
-  if (delta > 0) {
+  if (delta > 0n) {
     return {
       kind: "renewal_plus_receive",
       renewalAmount: spentAmount,
@@ -190,16 +190,16 @@ export type AssetClassification =
 
 export function classifyAssetActivity(args: {
   direction: "send" | "receive";
-  anchorSats: number;
+  anchorSats: bigint;
   assetDelta: Asset[];
 }): AssetClassification {
   if (args.assetDelta.length === 0) return "asset_activity";
-  const allPositive = args.assetDelta.every((a) => a.amount > 0);
-  const allNegative = args.assetDelta.every((a) => a.amount < 0);
+  const allPositive = args.assetDelta.every((a) => a.amount > 0n);
+  const allNegative = args.assetDelta.every((a) => a.amount < 0n);
 
   if (args.direction === "send") {
-    if (args.anchorSats === 0 && allPositive) return "asset_issued";
-    if (args.anchorSats === 0 && allNegative) return "asset_burned";
+    if (args.anchorSats === 0n && allPositive) return "asset_issued";
+    if (args.anchorSats === 0n && allNegative) return "asset_burned";
     if (allNegative) return "asset_sent";
     return "asset_activity";
   }
@@ -232,7 +232,7 @@ function buildAssetActivity(args: {
   arkTxid: string;
   timestamp: number;
   direction: "send" | "receive";
-  anchorSats: number;
+  anchorSats: bigint;
   assetDelta: Asset[];
   settled: boolean;
   network: string | null;
@@ -247,8 +247,8 @@ function buildAssetActivity(args: {
   const metadata: NonNullable<Activity["metadata"]> = {
     arkTxid: args.arkTxid,
     assetId: primary?.assetId ?? null,
-    assetAmount: primary?.amount ?? 0,
-    anchorAmountSats: args.anchorSats,
+    assetAmount: primary?.amount ? Number(primary.amount) : 0,
+    anchorAmountSats: Number(args.anchorSats),
     classification: cls,
   };
   if (args.network) metadata.network = args.network;
@@ -370,7 +370,7 @@ export async function getActivityHistory(
           id: activityId("batch", commitmentTxid),
           kind: "payment",
           direction: "in",
-          amountSats: decomp.createdAmount,
+          amountSats: Number(decomp.createdAmount),
           timestamp: tsCreated,
           title: "Arkade received",
           status: "confirmed",
@@ -385,7 +385,7 @@ export async function getActivityHistory(
           id: activityId("exit", commitmentTxid),
           kind: "payment",
           direction: "out",
-          amountSats: decomp.spentAmount,
+          amountSats: Number(decomp.spentAmount),
           timestamp: tsAnchor,
           title: "Collaborative exit",
           status: "confirmed",
@@ -412,7 +412,7 @@ export async function getActivityHistory(
               commitmentTxid,
               inputCount: spent.length,
               outputCount: created.length,
-              renewedAmountSats: decomp.spentAmount,
+              renewedAmountSats: Number(decomp.spentAmount),
             },
             network,
           ),
@@ -436,8 +436,8 @@ export async function getActivityHistory(
               commitmentTxid,
               inputCount: spent.length,
               outputCount: created.length,
-              renewedAmountSats: decomp.renewalAmount,
-              netDeltaSats: decomp.receiveAmount,
+              renewedAmountSats: Number(decomp.renewalAmount),
+              netDeltaSats: Number(decomp.receiveAmount),
             },
             network,
           ),
@@ -445,14 +445,14 @@ export async function getActivityHistory(
         const receiveMeta: NonNullable<Activity["metadata"]> = {
           commitmentTxid,
           mixedWithRenewal: true,
-          netDeltaSats: decomp.receiveAmount,
+          netDeltaSats: Number(decomp.receiveAmount),
         };
         if (arkadeAddress) receiveMeta.arkadeAddress = arkadeAddress;
         activities.push({
           id: activityId("batch", commitmentTxid),
           kind: "payment",
           direction: "in",
-          amountSats: decomp.receiveAmount,
+          amountSats: Number(decomp.receiveAmount),
           timestamp: tsCreated,
           title: "Arkade received",
           status: "confirmed",
@@ -480,8 +480,8 @@ export async function getActivityHistory(
               commitmentTxid,
               inputCount: spent.length,
               outputCount: created.length,
-              renewedAmountSats: decomp.renewalAmount,
-              netDeltaSats: -decomp.exitAmount,
+              renewedAmountSats: Number(decomp.renewalAmount),
+              netDeltaSats: -Number(decomp.exitAmount),
             },
             network,
           ),
@@ -490,7 +490,7 @@ export async function getActivityHistory(
           id: activityId("exit", commitmentTxid),
           kind: "payment",
           direction: "out",
-          amountSats: decomp.exitAmount,
+          amountSats: Number(decomp.exitAmount),
           timestamp: tsAnchor,
           title: "Collaborative exit",
           status: "confirmed",
@@ -500,7 +500,7 @@ export async function getActivityHistory(
             {
               commitmentTxid,
               mixedWithRenewal: true,
-              netDeltaSats: -decomp.exitAmount,
+              netDeltaSats: -Number(decomp.exitAmount),
             },
             network,
           ),
@@ -508,7 +508,10 @@ export async function getActivityHistory(
         break;
       case "settlement": {
         if (decomp.reason === "empty_group") break;
-        const unresolved = Math.abs(decomp.createdAmount - decomp.spentAmount);
+        const unresolved =
+          decomp.createdAmount > decomp.spentAmount
+            ? decomp.createdAmount - decomp.spentAmount
+            : decomp.spentAmount - decomp.createdAmount;
         activities.push({
           id: activityId("settlement", commitmentTxid),
           kind: "wallet_event",
@@ -524,9 +527,9 @@ export async function getActivityHistory(
           metadata: withNetwork(
             {
               commitmentTxid,
-              spentAmount: decomp.spentAmount,
-              createdAmount: decomp.createdAmount,
-              unresolvedAmountSats: unresolved,
+              spentAmount: Number(decomp.spentAmount),
+              createdAmount: Number(decomp.createdAmount),
+              unresolvedAmountSats: Number(unresolved),
               settlementReason: decomp.reason,
               inputCount: spent.length,
               outputCount: created.length,
@@ -556,7 +559,7 @@ export async function getActivityHistory(
               arkTxid: v.txid,
               timestamp: ts,
               direction: "receive",
-              anchorSats: v.value,
+              anchorSats: BigInt(v.value),
               assetDelta: assets,
               settled,
               network,
@@ -614,7 +617,7 @@ export async function getActivityHistory(
           id: activityId("offchain", arkTxId),
           kind: "payment",
           direction: "out",
-          amountSats: txAmount,
+          amountSats: Number(txAmount),
           timestamp: tsTx,
           title: "Arkade sent",
           status: "confirmed",
