@@ -16,8 +16,8 @@
     "check": "biome check"
   },
   "dependencies": {
-    "@arkade-os/boltz-swap": "file:../boltz-swap",
-    "@arkade-os/sdk": "^0.4.22",
+    "@arkade-os/boltz-swap": "0.3.30",
+    "@arkade-os/sdk": "0.4.26",
     "@expo-google-fonts/inter": "^0.4.2",
     "@expo/vector-icons": "^15.0.3",
     "@noble/ciphers": "^2.2.0",
