@@ -9,11 +9,11 @@ importers:
   .:
     dependencies:
       '@arkade-os/boltz-swap':
-        specifier: file:../boltz-swap
-        version: file:../boltz-swap(@react-native-async-storage/async-storage@2.2.0(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-background-task@55.0.17(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-sqlite@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5))(react@19.2.5))(expo-task-manager@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo@55.0.17)
+        specifier: 0.3.30
+        version: 0.3.30(@react-native-async-storage/async-storage@2.2.0(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-background-task@55.0.17(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-sqlite@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5))(react@19.2.5))(expo-task-manager@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo@55.0.17)
       '@arkade-os/sdk':
-        specifier: ^0.4.22
-        version: 0.4.22(@react-native-async-storage/async-storage@2.2.0(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-background-task@55.0.17(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-sqlite@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5))(react@19.2.5))(expo-task-manager@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo@55.0.17)
+        specifier: 0.4.26
+        version: 0.4.26(@react-native-async-storage/async-storage@2.2.0(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-background-task@55.0.17(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-sqlite@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5))(react@19.2.5))(expo-task-manager@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo@55.0.17)
       '@expo-google-fonts/inter':
         specifier: ^0.4.2
         version: 0.4.2
@@ -156,20 +156,12 @@ importers:
 
 packages:
 
-  '@arkade-os/boltz-swap@file:../boltz-swap':
-    resolution: {directory: ../boltz-swap, type: directory}
+  '@arkade-os/boltz-swap@0.3.30':
+    resolution: {integrity: sha512-U3kmcYER4W8PHYtbCNQoWD8ymiaQ0iFdfokmgxMV+UuEXTLvhooNjv25PADOzXZgXIB4GF7bvYegGmBHHXUB1Q==}
     engines: {node: '>=22.12.0 <23', pnpm: '>=10.25.0 <11'}
-    peerDependencies:
-      expo-background-task: '*'
-      expo-task-manager: '*'
-    peerDependenciesMeta:
-      expo-background-task:
-        optional: true
-      expo-task-manager:
-        optional: true
 
-  '@arkade-os/sdk@0.4.22':
-    resolution: {integrity: sha512-MARRLuDN359DYa5Y4BXtC/zakqDmWU3ipalbCEpubSH1i3xp1o7EUjzsAYETLHXTenxyft+NZ0IloQthULMRRg==}
+  '@arkade-os/sdk@0.4.26':
+    resolution: {integrity: sha512-seyc+BdgWPpsFp/PdgcHAyCmK3FYlNP6+DdG/BMbYmARNxqDHFN/y3/IZcwcXMLJjQkcLVBR/iUL1FKFwBgpdQ==}
     engines: {node: '>=22.12.0 <23', pnpm: '>=10.25.0 <11'}
     peerDependencies:
       '@react-native-async-storage/async-storage': '>=1.0.0'
@@ -3570,18 +3562,15 @@ packages:
 
 snapshots:
 
-  '@arkade-os/boltz-swap@file:../boltz-swap(@react-native-async-storage/async-storage@2.2.0(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-background-task@55.0.17(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-sqlite@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5))(react@19.2.5))(expo-task-manager@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo@55.0.17)':
+  '@arkade-os/boltz-swap@0.3.30(@react-native-async-storage/async-storage@2.2.0(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-background-task@55.0.17(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-sqlite@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5))(react@19.2.5))(expo-task-manager@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo@55.0.17)':
     dependencies:
-      '@arkade-os/sdk': 0.4.22(@react-native-async-storage/async-storage@2.2.0(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-background-task@55.0.17(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-sqlite@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5))(react@19.2.5))(expo-task-manager@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo@55.0.17)
+      '@arkade-os/sdk': 0.4.26(@react-native-async-storage/async-storage@2.2.0(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-background-task@55.0.17(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-sqlite@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5))(react@19.2.5))(expo-task-manager@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo@55.0.17)
       '@noble/curves': 2.2.0
       '@noble/hashes': 2.0.1
       '@scure/base': 2.0.0
       '@scure/btc-signer': 2.0.1
       bip68: 1.0.4
       light-bolt11-decoder: 3.2.0
-    optionalDependencies:
-      expo-background-task: 55.0.17(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5))
-      expo-task-manager: 55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5))
     transitivePeerDependencies:
       - '@ledgerhq/ledger-bitcoin'
       - '@react-native-async-storage/async-storage'
@@ -3590,10 +3579,12 @@ snapshots:
       - bufferutil
       - ecpair
       - expo
+      - expo-background-task
       - expo-sqlite
+      - expo-task-manager
       - utf-8-validate
 
-  '@arkade-os/sdk@0.4.22(@react-native-async-storage/async-storage@2.2.0(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-background-task@55.0.17(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-sqlite@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5))(react@19.2.5))(expo-task-manager@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo@55.0.17)':
+  '@arkade-os/sdk@0.4.26(@react-native-async-storage/async-storage@2.2.0(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-background-task@55.0.17(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo-sqlite@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5))(react@19.2.5))(expo-task-manager@55.0.15(expo@55.0.17)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.5)))(expo@55.0.17)':
     dependencies:
       '@bitcoinerlab/descriptors-scure': 3.1.7
       '@marcbachmann/cel-js': 7.3.1
