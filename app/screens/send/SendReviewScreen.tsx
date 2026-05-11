@@ -746,7 +746,20 @@ export default function SendReviewScreen() {
       <View style={styles.footer}>
         <Button
           label={
-            sending ? "Sending…" : `Send ${formatSats(amountSats)} ${unitLabel}`
+            sending
+              ? "Sending…"
+              : isAssetSend && assetAmountBaseParsed != null
+                ? `Send ${prettyAssetAmount(
+                    assetAmountBaseParsed,
+                    typeof assetDetails?.metadata?.decimals === "number"
+                      ? assetDetails.metadata.decimals
+                      : 0,
+                  )}${
+                    assetDetails?.metadata?.ticker
+                      ? ` ${assetDetails.metadata.ticker}`
+                      : ""
+                  }`
+                : `Send ${formatSats(amountSats)} ${unitLabel}`
           }
           theme={theme}
           loading={sending}

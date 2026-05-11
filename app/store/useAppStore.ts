@@ -1950,9 +1950,14 @@ export const useAppStore = create<StoreState>((set, get) => ({
     const hasBackupMaterial = hasSwapMaterial || importedAssetIds.length > 0;
     const dirty = get().security.dirtyForBackup === true;
     const latest = Math.max(metaTs ?? 0, boltzTs ?? 0);
+    // An existing backup goes stale whenever something dirtied the state
+    // since the last export — even if the current material set is empty
+    // (e.g. user forgot the last imported asset, or swept all swaps). The
+    // backup file still references state that the wallet no longer
+    // matches, so the warning has to fire regardless of `hasBackupMaterial`.
     const isStale =
-      hasBackupMaterial &&
-      (lastBackupAt == null || dirty || lastBackupAt < latest);
+      (lastBackupAt != null && dirty) ||
+      (hasBackupMaterial && (lastBackupAt == null || lastBackupAt < latest));
     return { hasBackupMaterial, lastBackupAt, isStale };
   },
 

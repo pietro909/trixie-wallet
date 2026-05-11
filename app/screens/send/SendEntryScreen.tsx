@@ -100,6 +100,20 @@ export default function SendEntryScreen() {
         scanLockRef.current = false;
         return;
       }
+      // If the only parsed option is non-payable (e.g. invalid asset id on an
+      // Arkade URI), surface its warning instead of navigating into a screen
+      // that would either silently fall back to a BTC send or only complain
+      // at confirm time. Multi-option results still go to the picker so the
+      // user can choose a different rail.
+      if (
+        result.options.length === 1 &&
+        result.options[0].isPayable === false
+      ) {
+        setError(result.options[0].warning ?? "Payment option is not payable");
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        scanLockRef.current = false;
+        return;
+      }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       if (result.options.length === 1) {
         nav.navigate("SendAmount", {

@@ -262,20 +262,35 @@ function parseArkadeBody(rawInput: string, body: string): ParseResult {
   let assetId: string | undefined;
   let assetAmountBase: string | undefined;
   let warning: string | undefined;
+  // Asset params: payable if (assetid valid AND amount, if present, parses).
+  // Otherwise the URI is non-payable — silently downgrading an asset URI to a
+  // BTC send would be a footgun (user expects to send the asset, not sats).
+  let isPayable = true;
   if (assetIdRaw) {
-    if (isValidAssetId(assetIdRaw)) {
+    if (!isValidAssetId(assetIdRaw)) {
+      warning = "Invalid asset id in payment URI";
+      isPayable = false;
+    } else {
       assetId = assetIdRaw;
       if (assetAmountRaw) {
+        let parsed: bigint | null = null;
         try {
-          const parsed = BigInt(assetAmountRaw);
-          if (parsed > 0n) assetAmountBase = parsed.toString();
+          parsed = BigInt(assetAmountRaw);
         } catch {
+          parsed = null;
+        }
+        if (parsed != null && parsed > 0n) {
+          assetAmountBase = parsed.toString();
+        } else {
           warning = "Asset amount must be a positive integer (base units)";
+          isPayable = false;
         }
       }
-    } else {
-      warning = "Invalid asset id in payment URI";
     }
+  } else if (assetAmountRaw) {
+    // `assetamount` without `assetid` is nonsense; reject.
+    warning = "Asset amount specified without an asset id";
+    isPayable = false;
   }
   for (const [k, v] of query.entries()) {
     if (!KNOWN_BIP21_KEYS.has(k)) metadata[k] = v;
@@ -289,7 +304,7 @@ function parseArkadeBody(rawInput: string, body: string): ParseResult {
         destination: shorten(address),
         amountSats,
         memo,
-        isPayable: true,
+        isPayable,
         assetId,
         assetAmountBase,
         warning,
@@ -311,6 +326,17 @@ function parseBitcoinBody(
   const amountStr = query.get("amount") ?? "";
   const amountSats = amountStr ? btcAmountToSats(amountStr) : undefined;
   const memo = query.get("message") ?? query.get("label") ?? undefined;
+  // Asset params on a `bitcoin:` URI are nonsense — assets are Arkade-only.
+  // Reject the URI rather than silently dropping the asset hint and treating
+  // it as a normal BTC send.
+  const hasAssetParams = query.has("assetid") || query.has("assetamount");
+  if (hasAssetParams) {
+    return {
+      options: [],
+      metadata,
+      error: "Asset transfers are not supported on Bitcoin on-chain URIs",
+    };
+  }
 
   if (BTC_ADDRESS_RE.test(address)) {
     const networkName = options.network ?? null;

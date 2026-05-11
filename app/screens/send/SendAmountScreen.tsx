@@ -150,24 +150,27 @@ export default function SendAmountScreen() {
     selectedAssetBalanceBase = 0n;
   }
 
-  const initialValue = (() => {
-    if (selection.kind === "asset" && option.assetAmountBase) {
-      try {
-        return prettyAssetAmount(
-          BigInt(option.assetAmountBase),
-          selectedAssetDecimals,
-          false,
-        );
-      } catch {
-        return "";
-      }
+  // Source of truth for the BIP21-carried asset amount: parse the URI's
+  // base-unit value once. The user-visible string is *derived* from this
+  // (re-rendered when decimals load) until the user edits, at which point
+  // we switch to the typed string. This avoids the "100 displayed as
+  // decimals-0, then re-parsed as decimals-2 → 10000 base units" bug.
+  const bip21AssetAmountBase = React.useMemo<bigint | null>(() => {
+    if (option.type !== "arkade" || !option.assetAmountBase) return null;
+    try {
+      const n = BigInt(option.assetAmountBase);
+      return n > 0n ? n : null;
+    } catch {
+      return null;
     }
-    if (selection.kind === "btc" && option.amountSats) {
-      return String(option.amountSats);
-    }
-    return "";
-  })();
-  const [value, setValue] = React.useState<string>(initialValue);
+  }, [option]);
+
+  const [userValue, setUserValue] = React.useState<string>(
+    selection.kind === "btc" && option.amountSats
+      ? String(option.amountSats)
+      : "",
+  );
+  const [userTouched, setUserTouched] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   // Reset the value when the user switches asset selection so we don't carry
@@ -187,7 +190,8 @@ export default function SendAmountScreen() {
     ) {
       return;
     }
-    setValue("");
+    setUserValue("");
+    setUserTouched(false);
     setError(null);
   }, [selection, initialSelection]);
 
@@ -196,22 +200,43 @@ export default function SendAmountScreen() {
   const arkadeOnlyViolation =
     isAssetSend && (option.type === "lightning" || option.type === "bitcoin");
 
+  // Display value: prefer the BIP21 base amount (rendered with current
+  // decimals) until the user types; once they do, the typed string wins.
+  const useBip21Display =
+    isAssetSend && !userTouched && bip21AssetAmountBase != null;
+  const value = useBip21Display
+    ? prettyAssetAmount(
+        bip21AssetAmountBase as bigint,
+        selectedAssetDecimals,
+        false,
+      )
+    : userValue;
+
   let sats = 0;
   let assetAmountBase: bigint | null = null;
   let valid = false;
   let insufficient = false;
 
   if (isAssetSend) {
-    const trimmed = value.trim();
-    if (trimmed.length > 0) {
-      assetAmountBase = parseAssetAmount(trimmed, selectedAssetDecimals);
+    if (useBip21Display) {
+      // BIP21-carried amount is canonical — no re-parse round-trip.
+      assetAmountBase = bip21AssetAmountBase;
       if (assetAmountBase != null && assetAmountBase > 0n) {
         valid = true;
         insufficient = assetAmountBase > selectedAssetBalanceBase;
       }
+    } else {
+      const trimmed = userValue.trim();
+      if (trimmed.length > 0) {
+        assetAmountBase = parseAssetAmount(trimmed, selectedAssetDecimals);
+        if (assetAmountBase != null && assetAmountBase > 0n) {
+          valid = true;
+          insufficient = assetAmountBase > selectedAssetBalanceBase;
+        }
+      }
     }
   } else {
-    sats = Number.parseInt(value.replace(/[^0-9]/g, ""), 10);
+    sats = Number.parseInt(userValue.replace(/[^0-9]/g, ""), 10);
     const balance = wallet?.balanceSats ?? 0;
     valid = Number.isFinite(sats) && sats > 0;
     insufficient = valid && sats > balance;
@@ -250,11 +275,12 @@ export default function SendAmountScreen() {
 
   function handleChange(text: string) {
     if (isLightningLocked) return;
+    setUserTouched(true);
     if (isAssetSend) {
       // Allow digits + a single decimal separator.
-      setValue(text.replace(/[^0-9.]/g, ""));
+      setUserValue(text.replace(/[^0-9.]/g, ""));
     } else {
-      setValue(text.replace(/[^0-9]/g, ""));
+      setUserValue(text.replace(/[^0-9]/g, ""));
     }
     setError(null);
   }
@@ -468,7 +494,8 @@ export default function SendAmountScreen() {
                   <Pressable
                     key={p}
                     onPress={() => {
-                      setValue(String(p));
+                      setUserTouched(true);
+                      setUserValue(String(p));
                       setError(null);
                     }}
                     style={({ pressed }) => [
@@ -489,7 +516,8 @@ export default function SendAmountScreen() {
                 ))}
                 <Pressable
                   onPress={() => {
-                    setValue(String(wallet?.balanceSats ?? 0));
+                    setUserTouched(true);
+                    setUserValue(String(wallet?.balanceSats ?? 0));
                     setError(null);
                   }}
                   style={({ pressed }) => [
@@ -519,7 +547,8 @@ export default function SendAmountScreen() {
               <View style={styles.presets}>
                 <Pressable
                   onPress={() => {
-                    setValue(
+                    setUserTouched(true);
+                    setUserValue(
                       prettyAssetAmount(
                         selectedAssetBalanceBase,
                         selectedAssetDecimals,

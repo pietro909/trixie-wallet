@@ -16,6 +16,14 @@ import { useToast } from "../../components/ToastProvider";
 import { useFormatSats } from "../../hooks/useFormatSats";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
+import {
+  prettyAssetAmount,
+  truncatedAssetId,
+} from "../../services/arkade/asset-format";
+import {
+  type CachedAssetDetails,
+  fetchAssetDetailsCached,
+} from "../../services/arkade/asset-metadata";
 import { paymentTypeLabel } from "../../services/paymentParser";
 import { satsToFiat } from "../../store/mock";
 import { useAppStore } from "../../store/useAppStore";
@@ -29,10 +37,49 @@ export default function SendResultScreen() {
   const nav = useNavigation<Nav>();
   const params = useRoute<Route>().params;
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
+  const network = useAppStore(
+    (s) => s.network.detectedNetwork ?? s.wallet?.network ?? null,
+  );
   const { format: formatSats, label: unitLabel } = useFormatSats();
   const { showToast } = useToast();
 
   const ok = params.status === "success";
+  const isAssetSend =
+    typeof params.assetId === "string" && !!params.assetAmountBase;
+  let assetAmountBaseParsed: bigint | null = null;
+  if (isAssetSend && params.assetAmountBase) {
+    try {
+      assetAmountBaseParsed = BigInt(params.assetAmountBase);
+    } catch {
+      assetAmountBaseParsed = null;
+    }
+  }
+  const [assetDetails, setAssetDetails] =
+    React.useState<CachedAssetDetails | null>(null);
+  React.useEffect(() => {
+    const assetId = params.assetId;
+    if (!isAssetSend || !assetId || !network) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const d = await fetchAssetDetailsCached(network, assetId, "cache");
+        if (!cancelled) setAssetDetails(d);
+      } catch {
+        // bare id fallback is fine
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAssetSend, params.assetId, network]);
+  const assetDecimals =
+    typeof assetDetails?.metadata?.decimals === "number"
+      ? assetDetails.metadata.decimals
+      : 0;
+  const assetTicker =
+    assetDetails?.metadata?.ticker ??
+    (params.assetId ? truncatedAssetId(params.assetId) : "");
+
   const scale = React.useRef(new Animated.Value(0.7)).current;
 
   React.useEffect(() => {
@@ -97,16 +144,35 @@ export default function SendResultScreen() {
 
         {ok ? (
           <>
-            <Text style={[styles.amount, { color: theme.colors.text }]}>
-              {formatSats(params.amountSats ?? 0)} {unitLabel}
-            </Text>
-            <Text style={[styles.fiat, { color: theme.colors.textMuted }]}>
-              ≈ {satsToFiat(params.amountSats ?? 0, fiatCurrency)}
-            </Text>
+            {isAssetSend && assetAmountBaseParsed != null ? (
+              <>
+                <Text style={[styles.amount, { color: theme.colors.text }]}>
+                  {prettyAssetAmount(assetAmountBaseParsed, assetDecimals)}{" "}
+                  {assetTicker}
+                </Text>
+                {params.amountSats && params.amountSats > 0 ? (
+                  <Text
+                    style={[styles.fiat, { color: theme.colors.textMuted }]}
+                  >
+                    + {formatSats(params.amountSats)} {unitLabel} network anchor
+                  </Text>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <Text style={[styles.amount, { color: theme.colors.text }]}>
+                  {formatSats(params.amountSats ?? 0)} {unitLabel}
+                </Text>
+                <Text style={[styles.fiat, { color: theme.colors.textMuted }]}>
+                  ≈ {satsToFiat(params.amountSats ?? 0, fiatCurrency)}
+                </Text>
+              </>
+            )}
             <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
-              {paymentTypeLabel(params.paymentType)} · {params.destination}
+              {paymentTypeLabel(params.paymentType)}
+              {isAssetSend ? " · Asset" : ""} · {params.destination}
             </Text>
-            {params.feeSats && params.feeSats > 0 ? (
+            {!isAssetSend && params.feeSats && params.feeSats > 0 ? (
               <Text
                 style={[styles.subtitle, { color: theme.colors.textSubtle }]}
               >

@@ -46,9 +46,13 @@ type HealthStatus = "never" | "stale" | "fresh" | "no-material";
 
 function statusForHealth(health: BackupHealth | null): HealthStatus {
   if (!health) return "never";
+  // `isStale` already encodes the "current material was modified since
+  // last export" case; check it before `!hasBackupMaterial` so that
+  // forgetting the last imported asset (which empties material but leaves
+  // a stale prior backup) still surfaces the warning.
+  if (health.isStale) return health.lastBackupAt == null ? "never" : "stale";
   if (!health.hasBackupMaterial && health.lastBackupAt == null) return "never";
   if (!health.hasBackupMaterial) return "no-material";
-  if (health.isStale) return health.lastBackupAt == null ? "never" : "stale";
   return "fresh";
 }
 
