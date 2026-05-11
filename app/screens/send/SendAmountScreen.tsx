@@ -271,13 +271,12 @@ export default function SendAmountScreen() {
       return;
     }
     if (isAssetSend && assetAmountBase != null && selectedAssetId) {
-      const decimalsResolved =
-        typeof selectedAssetDetails?.metadata?.decimals === "number";
-      if (!decimalsResolved) {
-        // Refuse to proceed until metadata has loaded — otherwise Review
-        // would render base units as a decimals=0 number. The earlier
-        // arkadeOnlyViolation check has already cleared, so we just need
-        // a clear surface for this transient case.
+      // Gate on whether metadata has loaded at all — not on whether the
+      // `decimals` field exists, since `decimals` is optional and a valid
+      // zero-decimal asset can legitimately omit it. `selectedAssetDecimals`
+      // already collapses the missing-field case to 0 and is what Review /
+      // Result render with.
+      if (selectedAssetDetails == null) {
         setError(
           `Loading ${selectedAssetTicker || "asset"} metadata — please retry in a moment.`,
         );
@@ -288,8 +287,8 @@ export default function SendAmountScreen() {
         amountSats: 330,
         assetId: selectedAssetId,
         assetAmountBase: assetAmountBase.toString(),
-        assetDecimals: selectedAssetDetails?.metadata?.decimals as number,
-        assetTicker: selectedAssetDetails?.metadata?.ticker,
+        assetDecimals: selectedAssetDecimals,
+        assetTicker: selectedAssetDetails.metadata?.ticker,
       });
       return;
     }
