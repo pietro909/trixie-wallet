@@ -1,6 +1,7 @@
 # Issues
 
 Items 1–5 came from a spec-compliance pass over the Zustand store and entry-point setup. Items 6–8 surfaced during the SDK 55 / pnpm / Biome / native-stack migrations. Nothing here is fixed yet.
+Items from 9 onwards were raised during manual testing.
 
 ## 1. `simpleHash` is not a cryptographic hash
 
@@ -59,3 +60,9 @@ With `edgeToEdgeEnabled: true` (Android 15+ requirement), `@react-navigation/nat
 **Where:** `pnpm install` warnings
 
 `@arkade-os/sdk@0.4.20` declares peerDeps `expo-background-task@~1.0.10` and `expo-task-manager@~14.0.9`. These got renumbered to 55.x in Expo SDK 55, so pnpm warns on every install. Functionally fine; the SDK author needs to widen its peerDeps. Suppress via `pnpm.peerDependencyRules.allowedVersions` if it becomes annoying.
+
+## 10. Background tasks visibility and configuration
+
+**Where:** on the UI, possibly in "Wallet behavior"
+
+As a user, I want to see the background tasks configured in the app with some metrics (ie: last successful run, last failed run, last run duration, etc.) and be able to turn off the background tasks.
