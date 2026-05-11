@@ -1,11 +1,9 @@
 import { SWAP_POLL_TASK_TYPE } from "@arkade-os/boltz-swap/expo";
-// TODO: background descoped
-//
-// import {
-//   defineExpoSwapBackgroundTask,
-//   registerExpoSwapBackgroundTask,
-//   unregisterExpoSwapBackgroundTask,
-// } from "@arkade-os/boltz-swap/expo/background";
+import {
+  defineExpoSwapBackgroundTask,
+  registerExpoSwapBackgroundTask,
+  unregisterExpoSwapBackgroundTask,
+} from "@arkade-os/boltz-swap/expo/background";
 import { SQLiteSwapRepository } from "@arkade-os/boltz-swap/repositories/sqlite";
 import {
   AsyncStorageTaskQueue,
@@ -143,10 +141,9 @@ export async function clearSwapBackgroundState(): Promise<void> {
   // previous session and reset before any foreground Lightning code ran would
   // leave the OS scheduler with a stale registration firing every ~15 minutes.
   // Pair the cleanup with state wipe regardless.
-  // TODO: frozen for now
-  // await unregisterExpoSwapBackgroundTask(SWAP_BACKGROUND_TASK_NAME).catch(
-  //   () => {},
-  // );
+  await unregisterExpoSwapBackgroundTask(SWAP_BACKGROUND_TASK_NAME).catch(
+    () => {},
+  );
   await Promise.all([
     AsyncStorage.removeItem(ACTIVE_WALLET_KEY),
     AsyncStorage.removeItem(RECENT_RESULTS_KEY),
@@ -192,9 +189,6 @@ export async function drainSwapPollResults(): Promise<
   return list;
 }
 
-/*
-  // TODO: frozen for now
-
 // Defining the task at module top level is an Expo TaskManager constraint:
 // the handler must be registered synchronously at JS startup so an
 // OS-scheduled wake can find it. Activation of the OS scheduler itself is
@@ -206,16 +200,14 @@ defineExpoSwapBackgroundTask(SWAP_BACKGROUND_TASK_NAME, {
   identityFactory,
 });
 
-// /**
-//  * Activate OS-level scheduling for the swap-poll task. Idempotent —
-//  * `expo-background-task` accepts repeated `registerTaskAsync` calls for
-//  * the same task name. Pair with `clearSwapBackgroundState` (which
-//  * unregisters) on wallet teardown.
-//
+/**
+ * Activate OS-level scheduling for the swap-poll task. Idempotent —
+ * `expo-background-task` accepts repeated `registerTaskAsync` calls for
+ * the same task name. Pair with `clearSwapBackgroundState` (which
+ * unregisters) on wallet teardown.
+ */
 export async function ensureSwapBackgroundRegistered(): Promise<void> {
   await registerExpoSwapBackgroundTask(SWAP_BACKGROUND_TASK_NAME, {
     minimumInterval: SWAP_BACKGROUND_INTERVAL_MINUTES,
   });
 }
-
-*/

@@ -33,6 +33,7 @@ import { getSharedSqlExecutor } from "./storage";
 import {
   createSwapRepository,
   drainSwapPollResults,
+  ensureSwapBackgroundRegistered,
   rememberSwapBackgroundWallet,
   seedSwapPollTask,
   swapTaskQueue,
@@ -205,7 +206,7 @@ async function buildInstance(
       e,
     );
   }
-  // ensureSwapBackgroundRegistered() omitted — parked pending arkade-os/boltz-swap#136
+  await ensureSwapBackgroundRegistered().catch(() => {});
   await seedSwapPollTask().catch(() => {});
   await attachSwapManagerSubscriptions(instance);
   return instance;

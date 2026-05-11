@@ -1,0 +1,2 @@
+patchedDependencies:
+  '@arkade-os/boltz-swap@0.3.30': patches/@arkade-os__boltz-swap@0.3.30.patch
