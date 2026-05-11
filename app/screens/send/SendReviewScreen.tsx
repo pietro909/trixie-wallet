@@ -126,8 +126,14 @@ function bitcoinAddressFromOption(raw: string): string | null {
 export default function SendReviewScreen() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
-  const { option, amountSats, assetId, assetAmountBase } =
-    useRoute<Route>().params;
+  const {
+    option,
+    amountSats,
+    assetId,
+    assetAmountBase,
+    assetDecimals: routeAssetDecimals,
+    assetTicker: routeAssetTicker,
+  } = useRoute<Route>().params;
   const isAssetSend = typeof assetId === "string" && !!assetAmountBase;
   let assetAmountBaseParsed: bigint | null = null;
   if (isAssetSend && assetAmountBase) {
@@ -139,6 +145,17 @@ export default function SendReviewScreen() {
   }
   const [assetDetails, setAssetDetails] =
     React.useState<CachedAssetDetails | null>(null);
+  // Route-provided values are the source of truth for the on-screen
+  // amount/ticker: SendAmount only navigates after metadata is resolved
+  // (see decimalsResolved gate there). Async metadata fetch below only
+  // hydrates secondary fields (name, supply, icon, controlAssetId).
+  const assetDecimals =
+    typeof routeAssetDecimals === "number"
+      ? routeAssetDecimals
+      : typeof assetDetails?.metadata?.decimals === "number"
+        ? assetDetails.metadata.decimals
+        : 0;
+  const assetTicker = routeAssetTicker ?? assetDetails?.metadata?.ticker ?? "";
   const [iconApprovals, setIconApprovals] = React.useState<
     Record<string, boolean>
   >({});
@@ -365,6 +382,8 @@ export default function SendReviewScreen() {
           bitcoinRail: railForResult,
           assetId,
           assetAmountBase,
+          assetDecimals: routeAssetDecimals,
+          assetTicker: routeAssetTicker,
         });
       } else {
         showToast(result.error, "error");
@@ -377,6 +396,8 @@ export default function SendReviewScreen() {
           bitcoinRail: railForResult,
           assetId,
           assetAmountBase,
+          assetDecimals: routeAssetDecimals,
+          assetTicker: routeAssetTicker,
         });
       }
     } catch (e) {
@@ -391,6 +412,8 @@ export default function SendReviewScreen() {
         bitcoinRail: railForResult,
         assetId,
         assetAmountBase,
+        assetDecimals: routeAssetDecimals,
+        assetTicker: routeAssetTicker,
       });
     } finally {
       setSending(false);
@@ -418,7 +441,7 @@ export default function SendReviewScreen() {
               size={56}
               icon={assetDetails?.metadata?.icon ?? null}
               approved={assetId ? iconApprovals[assetId] === true : false}
-              ticker={assetDetails?.metadata?.ticker ?? null}
+              ticker={assetTicker || null}
               name={assetDetails?.metadata?.name ?? null}
             />
           ) : (
@@ -435,10 +458,8 @@ export default function SendReviewScreen() {
             {isAssetSend && assetAmountBaseParsed != null
               ? `${prettyAssetAmount(
                   assetAmountBaseParsed,
-                  typeof assetDetails?.metadata?.decimals === "number"
-                    ? assetDetails.metadata.decimals
-                    : 0,
-                )} ${assetDetails?.metadata?.ticker ?? ""}`.trim()
+                  assetDecimals,
+                )} ${assetTicker}`.trim()
               : `${formatSats(amountSats)} ${unitLabel}`}
           </Text>
           {!isAssetSend ? (
@@ -473,9 +494,7 @@ export default function SendReviewScreen() {
                 <Row
                   label="Asset"
                   value={`${assetDetails.metadata.name}${
-                    assetDetails.metadata.ticker
-                      ? ` (${assetDetails.metadata.ticker})`
-                      : ""
+                    assetTicker ? ` (${assetTicker})` : ""
                   }`}
                 />
               ) : null}
@@ -483,14 +502,8 @@ export default function SendReviewScreen() {
                 label="Asset amount"
                 value={`${prettyAssetAmount(
                   assetAmountBaseParsed,
-                  typeof assetDetails?.metadata?.decimals === "number"
-                    ? assetDetails.metadata.decimals
-                    : 0,
-                )}${
-                  assetDetails?.metadata?.ticker
-                    ? ` ${assetDetails.metadata.ticker}`
-                    : ""
-                }`}
+                  assetDecimals,
+                )}${assetTicker ? ` ${assetTicker}` : ""}`}
                 emphasis
               />
               <Row
@@ -751,14 +764,8 @@ export default function SendReviewScreen() {
               : isAssetSend && assetAmountBaseParsed != null
                 ? `Send ${prettyAssetAmount(
                     assetAmountBaseParsed,
-                    typeof assetDetails?.metadata?.decimals === "number"
-                      ? assetDetails.metadata.decimals
-                      : 0,
-                  )}${
-                    assetDetails?.metadata?.ticker
-                      ? ` ${assetDetails.metadata.ticker}`
-                      : ""
-                  }`
+                    assetDecimals,
+                  )}${assetTicker ? ` ${assetTicker}` : ""}`
                 : `Send ${formatSats(amountSats)} ${unitLabel}`
           }
           theme={theme}

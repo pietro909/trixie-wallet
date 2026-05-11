@@ -202,8 +202,17 @@ export default function SendAmountScreen() {
 
   // Display value: prefer the BIP21 base amount (rendered with current
   // decimals) until the user types; once they do, the typed string wins.
+  // Bound to the URI's asset id: switching to a different asset must drop
+  // the canonical amount, otherwise a `?assetid=A&assetamount=100` URI
+  // would send `100` base units of asset B if the user picked B from the
+  // selector without typing anything.
   const useBip21Display =
-    isAssetSend && !userTouched && bip21AssetAmountBase != null;
+    isAssetSend &&
+    !userTouched &&
+    bip21AssetAmountBase != null &&
+    selection.kind === "asset" &&
+    option.type === "arkade" &&
+    selection.assetId === option.assetId;
   const value = useBip21Display
     ? prettyAssetAmount(
         bip21AssetAmountBase as bigint,
@@ -262,11 +271,25 @@ export default function SendAmountScreen() {
       return;
     }
     if (isAssetSend && assetAmountBase != null && selectedAssetId) {
+      const decimalsResolved =
+        typeof selectedAssetDetails?.metadata?.decimals === "number";
+      if (!decimalsResolved) {
+        // Refuse to proceed until metadata has loaded — otherwise Review
+        // would render base units as a decimals=0 number. The earlier
+        // arkadeOnlyViolation check has already cleared, so we just need
+        // a clear surface for this transient case.
+        setError(
+          `Loading ${selectedAssetTicker || "asset"} metadata — please retry in a moment.`,
+        );
+        return;
+      }
       nav.navigate("SendReview", {
         option,
         amountSats: 330,
         assetId: selectedAssetId,
         assetAmountBase: assetAmountBase.toString(),
+        assetDecimals: selectedAssetDetails?.metadata?.decimals as number,
+        assetTicker: selectedAssetDetails?.metadata?.ticker,
       });
       return;
     }

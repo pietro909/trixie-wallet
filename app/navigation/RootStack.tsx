@@ -79,6 +79,13 @@ export type RootStackParamList = {
     amountSats: number;
     assetId?: string;
     assetAmountBase?: string;
+    /**
+     * Canonical decimals/ticker as resolved on SendAmount. Threaded forward
+     * so Review and Result never display base units as if they were
+     * decimal-0 amounts during the metadata-fetch gap.
+     */
+    assetDecimals?: number;
+    assetTicker?: string;
   };
   SendResult: {
     status: "success" | "error";
@@ -90,6 +97,8 @@ export type RootStackParamList = {
     message?: string;
     assetId?: string;
     assetAmountBase?: string;
+    assetDecimals?: number;
+    assetTicker?: string;
     /** For Bitcoin rails: which path was taken so the success copy can match. */
     bitcoinRail?: "collab" | "chainswap";
   };

@@ -72,11 +72,16 @@ export default function SendResultScreen() {
       cancelled = true;
     };
   }, [isAssetSend, params.assetId, network]);
+  // Route-provided values are canonical (SendAmount only navigates after
+  // metadata resolved). Async fetch above only hydrates name/icon/supply.
   const assetDecimals =
-    typeof assetDetails?.metadata?.decimals === "number"
-      ? assetDetails.metadata.decimals
-      : 0;
+    typeof params.assetDecimals === "number"
+      ? params.assetDecimals
+      : typeof assetDetails?.metadata?.decimals === "number"
+        ? assetDetails.metadata.decimals
+        : 0;
   const assetTicker =
+    params.assetTicker ??
     assetDetails?.metadata?.ticker ??
     (params.assetId ? truncatedAssetId(params.assetId) : "");
 
