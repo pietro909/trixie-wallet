@@ -192,7 +192,6 @@ export async function drainSwapPollResults(): Promise<
   return list;
 }
 
-
 /*
   // TODO: frozen for now
 
