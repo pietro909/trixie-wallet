@@ -4,7 +4,7 @@ This repository is an Expo-only, iOS/Android self-custodial Arkade wallet app. T
 
 This is a living document: tick items off as they land.
 
-Last updated: 2026-05-11 (Milestone 10 delivered)
+Last updated: 2026-05-11 (Milestones 16–18 added; 11–18 reordered)
 
 ## Milestones
 
@@ -31,15 +31,21 @@ Last updated: 2026-05-11 (Milestone 10 delivered)
 - [x] Milestone 10: Assets support ([docs/MILESTONE_10.agents.md](./docs/MILESTONE_10.agents.md))
   - Add support for custom assets within the Arkade ecosystem.
   - Implementation complete: activity rendering carries asset deltas, wallet screen lists asset balances, send/receive flows handle assets via BIP21 `assetid`, mint/reissue/burn screens implemented, asset metadata caching with TTL, icon approval gate, backup payload bumped to v2 to carry imported asset ids, recovery filter skips expected asset-bearing settlement rows.
-- [ ] Milestone 11: In-app push notifications ([docs/MILESTONE_11.agents.md](./docs/MILESTONE_11.agents.md))
+- [ ] Milestone 11: Transaction Visibility ([docs/MILESTONE_11.agents.md](./docs/MILESTONE_11.agents.md))
+  - Surface pending swap state accurately in all views and add a paginated VTXO detail screen sourced from the SDK.
+- [ ] Milestone 12: In-app push notifications ([docs/MILESTONE_12.agents.md](./docs/MILESTONE_12.agents.md))
   - Implement in-app and push notifications for wallet activities and swap status updates.
-- [ ] Milestone 12: Activity Caching ([docs/MILESTONE_12.agents.md](./docs/MILESTONE_12.agents.md))
+- [ ] Milestone 13: Activity Caching ([docs/MILESTONE_13.agents.md](./docs/MILESTONE_13.agents.md))
   - Introduce an append-friendly cache for derived Activity rows with boring, explicit invalidation.
-- [ ] Milestone 13: LNURL ([docs/MILESTONE_13.agents.md](./docs/MILESTONE_13.agents.md))
+- [ ] Milestone 14: LNURL ([docs/MILESTONE_14.agents.md](./docs/MILESTONE_14.agents.md))
   - Add LNURL and Lightning Address parsing + invoice fetching, distinct from BOLT11 handling.
-- [ ] Milestone 14: Multiple Wallets and Labels ([docs/MILESTONE_14.agents.md](./docs/MILESTONE_14.agents.md))
+- [ ] Milestone 15: Multiple Wallets and Labels ([docs/MILESTONE_15.agents.md](./docs/MILESTONE_15.agents.md))
   - Move from a single-wallet store model to multiple wallets with labels and isolated state.
-- [ ] Milestone 15: Cloud Backup ([docs/MILESTONE_15.agents.md](./docs/MILESTONE_15.agents.md))
+- [ ] Milestone 16: Security & Reliability ([docs/MILESTONE_16.agents.md](./docs/MILESTONE_16.agents.md))
+  - Harden the password gate (SHA-256 + salt), make all state mutations await persist, add a schema-version guard in hydrate(), and audit screen-level lock guards.
+- [ ] Milestone 17: Mainnet Support ([docs/MILESTONE_17.agents.md](./docs/MILESTONE_17.agents.md))
+  - Add a network selector (mutinynet / mainnet) to create and restore flows; encode the chosen network in the backup format.
+- [ ] Milestone 18: Cloud Backup ([docs/MILESTONE_18.agents.md](./docs/MILESTONE_18.agents.md))
   - Add optional cloud transport for the encrypted backup bundle (transport only; format remains local-first).
 
 ## Relevant Documentation

@@ -1272,7 +1272,23 @@ function BackgroundTaskMetricsBlock({
   theme: AppTheme;
   metrics: BgTaskMetrics | null;
 }) {
-  if (!metrics || metrics.totalRuns === 0) return null;
+  if (!metrics) return null;
+  if (metrics.totalRuns === 0) {
+    return (
+      <View
+        style={[
+          styles.bgMetricsBlock,
+          { borderTopColor: theme.colors.divider },
+        ]}
+      >
+        <BackgroundTaskMetricsLine
+          theme={theme}
+          label="Last run"
+          value="Never run"
+        />
+      </View>
+    );
+  }
   const summary = formatSummary(metrics.lastSuccessSummary);
   const successPart =
     metrics.lastSuccessAt != null

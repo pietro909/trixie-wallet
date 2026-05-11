@@ -1,36 +1,35 @@
-# Milestone 14: Multiple Wallets and Labels
+# Milestone 14: LNURL
 
-Goal: move from a single-wallet app model to a real wallet list with labels and
-account naming.
+Goal: add LNURL and Lightning Address support after the immutable activity
+model is stable.
 
 This milestone should prove:
 
-- A user can create and switch between multiple wallets.
-- Each wallet has its own secrets, backup state, and Activity history.
-- The active wallet can be renamed with a user-visible label.
-- Reset and restore only affect the selected wallet.
+- A user can paste or scan LNURL inputs in supported send flows.
+- Lightning Address inputs are recognized and resolved.
+- The wallet can fetch a Lightning invoice from an LNURL-pay endpoint.
+- Unsupported or malformed LNURLs are rejected with a clear error.
 
 ## Current State
 
-- `app/store/types.ts` still models one `wallet` at a time.
-- `app/store/useAppStore.ts` persists a single wallet record and its metadata.
-- The current backup and recovery work is scoped to that single record.
+- Lightning invoice support already exists.
+- `../wallet/src/lib/lnurl.ts` shows the sibling app's LNURL helper shape.
+- Trixie does not yet have a local LNURL helper or parsing path.
 
 ## Product Rules
 
-- Wallet data must be isolated by wallet id.
-- Labels are user-owned metadata, not part of the secret material.
-- Switching wallets must not leak Activity, backup state, or pending work
-  across accounts.
-- The unlock flow should remain predictable even when more than one wallet is
-  stored.
+- Keep BOLT11 and LNURL paths distinct.
+- Validate the input early with the active wallet network in mind.
+- Do not leak swap internals into the user-facing LNURL flow.
+- Prefer a shared helper for parsing and callback resolution over one-off logic
+  in screens.
 
 ## Selected Direction
 
-Introduce a wallet collection in the store, then layer on:
+Add a small LNURL module that handles:
 
-- wallet picker / switcher UI;
-- per-wallet secret storage namespaces;
-- per-wallet Activity and backup state;
-- rename / label actions for account naming.
+- bech32 LNURL parsing;
+- Lightning Address resolution;
+- invoice fetch and validation;
+- optional Arkade-specific method handling if the product needs it later.
 

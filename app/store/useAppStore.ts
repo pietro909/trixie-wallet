@@ -379,11 +379,11 @@ type StoreState = AppState & {
   }) => Promise<{ arkTxId: string; assetId: string }>;
   reissueAsset: (assetId: string, amount: bigint) => Promise<string>;
   burnAsset: (assetId: string, amount: bigint) => Promise<string>;
-  setTheme: (theme: ThemePref) => void;
-  setFiatCurrency: (currency: FiatCurrency) => void;
-  setBitcoinUnit: (unit: BitcoinUnit) => void;
-  setPassword: (password: string) => void;
-  toggleBiometrics: (enabled: boolean) => void;
+  setTheme: (theme: ThemePref) => Promise<void>;
+  setFiatCurrency: (currency: FiatCurrency) => Promise<void>;
+  setBitcoinUnit: (unit: BitcoinUnit) => Promise<void>;
+  setPassword: (password: string) => Promise<void>;
+  toggleBiometrics: (enabled: boolean) => Promise<void>;
 };
 
 async function persist(state: AppState) {
@@ -2156,39 +2156,39 @@ export const useAppStore = create<StoreState>((set, get) => ({
     return arkTxId;
   },
 
-  setTheme: (theme) => {
+  setTheme: async (theme) => {
     set((s) => ({
       preferences: { ...s.preferences, theme },
     }));
-    persist(get());
+    await persist(get());
   },
 
-  setFiatCurrency: (currency) => {
+  setFiatCurrency: async (currency) => {
     set((s) => ({
       preferences: { ...s.preferences, fiatCurrency: currency },
     }));
-    persist(get());
+    await persist(get());
   },
 
-  setBitcoinUnit: (unit) => {
+  setBitcoinUnit: async (unit) => {
     set((s) => ({
       preferences: { ...s.preferences, bitcoinUnit: unit },
     }));
-    persist(get());
+    await persist(get());
   },
 
-  setPassword: (password) => {
+  setPassword: async (password) => {
     set((s) => ({
       security: { ...s.security, passwordHash: simpleHash(password) },
     }));
-    persist(get());
+    await persist(get());
   },
 
-  toggleBiometrics: (enabled) => {
+  toggleBiometrics: async (enabled) => {
     set((s) => ({
       security: { ...s.security, biometricsEnabled: enabled },
     }));
-    persist(get());
+    await persist(get());
   },
 }));
 

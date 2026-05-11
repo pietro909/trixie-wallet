@@ -1,31 +1,36 @@
-# Milestone 15: Cloud Backup
+# Milestone 15: Multiple Wallets and Labels
 
-Goal: add optional encrypted cloud backup on top of the local backup format.
+Goal: move from a single-wallet app model to a real wallet list with labels and
+account naming.
 
 This milestone should prove:
 
-- A user can sync an encrypted backup blob to a cloud service.
-- A user can restore that blob on a new device.
-- The cloud provider never sees plaintext wallet secrets.
-- Local backup remains the canonical recovery format.
+- A user can create and switch between multiple wallets.
+- Each wallet has its own secrets, backup state, and Activity history.
+- The active wallet can be renamed with a user-visible label.
+- Reset and restore only affect the selected wallet.
 
 ## Current State
 
-- Milestone 6 defines the local backup format and restore path.
-- There is no cloud sync transport yet.
-- The app already has the wallet metadata and recovery primitives needed to
-  produce a portable encrypted bundle.
+- `app/store/types.ts` still models one `wallet` at a time.
+- `app/store/useAppStore.ts` persists a single wallet record and its metadata.
+- The current backup and recovery work is scoped to that single record.
 
 ## Product Rules
 
-- Cloud sync is transport only. It must not become the secret store.
-- Never send mnemonics, private keys, or preimages unencrypted.
-- Validate bundle version and wallet ownership before import.
-- Keep provider-specific auth separate from the wallet model.
+- Wallet data must be isolated by wallet id.
+- Labels are user-owned metadata, not part of the secret material.
+- Switching wallets must not leak Activity, backup state, or pending work
+  across accounts.
+- The unlock flow should remain predictable even when more than one wallet is
+  stored.
 
 ## Selected Direction
 
-Add a cloud transport layer that uploads and downloads the encrypted backup
-bundle produced by Milestone 6. Support can be provider-specific, but the
-wallet-facing format should stay stable.
+Introduce a wallet collection in the store, then layer on:
+
+- wallet picker / switcher UI;
+- per-wallet secret storage namespaces;
+- per-wallet Activity and backup state;
+- rename / label actions for account naming.
 
