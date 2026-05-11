@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Clock,
   Inbox,
+  Plus,
   Repeat,
 } from "lucide-react-native";
 import * as React from "react";
@@ -17,10 +18,17 @@ import {
   Text,
   View,
 } from "react-native";
+import AssetCard from "../components/AssetCard";
 import Button from "../components/Button";
 import { useFormatSats } from "../hooks/useFormatSats";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../navigation/RootStack";
+import { readIconApprovals } from "../services/arkade/asset-icon-approval";
+import {
+  type CachedAssetDetails,
+  fetchAssetDetailsCached,
+  readAssetMetadataMap,
+} from "../services/arkade/asset-metadata";
 import { satsToFiat } from "../store/mock";
 import { useAppStore } from "../store/useAppStore";
 import { radius, spacing, typography } from "../theme/theme";
@@ -45,8 +53,15 @@ export default function WalletScreen() {
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
   const refreshWallet = useAppStore((s) => s.refreshWallet);
   const detectedNetwork = useAppStore((s) => s.network.detectedNetwork);
+  const importedAssetIds = useAppStore((s) => s.assets.importedAssetIds);
   const { format: formatSats, label: unitLabel } = useFormatSats();
   const [refreshing, setRefreshing] = React.useState(false);
+  const [assetMetadata, setAssetMetadata] = React.useState<
+    Map<string, CachedAssetDetails>
+  >(() => new Map());
+  const [iconApprovals, setIconApprovals] = React.useState<
+    Record<string, boolean>
+  >({});
 
   const walletId = wallet?.id;
   React.useEffect(() => {
@@ -55,6 +70,49 @@ export default function WalletScreen() {
       // surface refresh errors only on user-triggered pulls
     });
   }, [refreshWallet, walletId]);
+
+  const network = detectedNetwork ?? wallet?.network ?? null;
+  const assetBalances = wallet?.assetBalances ?? [];
+
+  const assetIds = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const e of assetBalances) set.add(e.assetId);
+    for (const id of importedAssetIds) set.add(id);
+    return Array.from(set);
+  }, [assetBalances, importedAssetIds]);
+
+  React.useEffect(() => {
+    if (!network || assetIds.length === 0) {
+      setAssetMetadata(new Map());
+      setIconApprovals({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const [initial, approvals] = await Promise.all([
+        readAssetMetadataMap(network, assetIds),
+        readIconApprovals(),
+      ]);
+      if (cancelled) return;
+      setAssetMetadata(new Map(initial));
+      setIconApprovals(approvals);
+      const next = new Map(initial);
+      for (const id of assetIds) {
+        if (next.has(id)) continue;
+        try {
+          const fetched = await fetchAssetDetailsCached(network, id, "cache");
+          if (cancelled) return;
+          next.set(id, fetched);
+        } catch {
+          // best-effort; render bare ids on miss
+        }
+      }
+      if (!cancelled) setAssetMetadata(new Map(next));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [network, assetIds]);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -134,6 +192,103 @@ export default function WalletScreen() {
           style={styles.actionBtn}
         />
       </View>
+
+      {/* Assets */}
+      {assetIds.length > 0 ? (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+              Assets
+            </Text>
+            <View style={{ flexDirection: "row", gap: spacing[3] }}>
+              <Pressable
+                onPress={() => nav.navigate("AssetMint")}
+                style={styles.seeAll}
+                accessibilityLabel="Mint new asset"
+              >
+                <Plus color={theme.colors.primary} size={16} />
+                <Text
+                  style={[styles.seeAllText, { color: theme.colors.primary }]}
+                >
+                  Mint
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => nav.navigate("AssetImport")}
+                style={styles.seeAll}
+                accessibilityLabel="Import asset"
+              >
+                <Plus color={theme.colors.primary} size={16} />
+                <Text
+                  style={[styles.seeAllText, { color: theme.colors.primary }]}
+                >
+                  Import
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+          <View style={styles.assetList}>
+            {assetIds.map((id) => {
+              const entry = assetBalances.find((b) => b.assetId === id);
+              let amount = 0n;
+              try {
+                amount = entry ? BigInt(entry.amount) : 0n;
+              } catch {
+                amount = 0n;
+              }
+              return (
+                <AssetCard
+                  key={id}
+                  assetId={id}
+                  amount={amount}
+                  details={assetMetadata.get(id)}
+                  approvedIcon={iconApprovals[id] === true}
+                  onPress={() => nav.navigate("AssetDetail", { assetId: id })}
+                />
+              );
+            })}
+          </View>
+        </View>
+      ) : (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+              Assets
+            </Text>
+            <View style={{ flexDirection: "row", gap: spacing[3] }}>
+              <Pressable
+                onPress={() => nav.navigate("AssetMint")}
+                style={styles.seeAll}
+                accessibilityLabel="Mint new asset"
+              >
+                <Plus color={theme.colors.primary} size={16} />
+                <Text
+                  style={[styles.seeAllText, { color: theme.colors.primary }]}
+                >
+                  Mint
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => nav.navigate("AssetImport")}
+                style={styles.seeAll}
+                accessibilityLabel="Import asset"
+              >
+                <Plus color={theme.colors.primary} size={16} />
+                <Text
+                  style={[styles.seeAllText, { color: theme.colors.primary }]}
+                >
+                  Import
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+          <Text
+            style={[styles.assetsEmpty, { color: theme.colors.textSubtle }]}
+          >
+            No assets yet. Mint or import to track Arkade-native assets here.
+          </Text>
+        </View>
+      )}
 
       {/* Recent Activity */}
       <View style={styles.section}>
@@ -322,6 +477,12 @@ const styles = StyleSheet.create({
   emptyTxnsText: {
     fontSize: typography.size.sm,
     marginTop: spacing[2],
+  },
+  assetList: {
+    gap: spacing[2],
+  },
+  assetsEmpty: {
+    fontSize: typography.size.sm,
   },
   txRow: {
     flexDirection: "row",

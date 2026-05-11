@@ -1,4 +1,9 @@
-import { useIsFocused, useNavigation } from "@react-navigation/native";
+import {
+  type RouteProp,
+  useIsFocused,
+  useNavigation,
+  useRoute,
+} from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Clipboard from "expo-clipboard";
@@ -34,10 +39,13 @@ import { useAppStore } from "../../store/useAppStore";
 import { radius, spacing, typography } from "../../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "SendEntry">;
+type Route = RouteProp<RootStackParamList, "SendEntry">;
 
 export default function SendEntryScreen() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
+  const route = useRoute<Route>();
+  const preselectAssetId = route.params?.preselectAssetId;
   const isFocused = useIsFocused();
   const { showToast } = useToast();
 
@@ -94,7 +102,10 @@ export default function SendEntryScreen() {
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       if (result.options.length === 1) {
-        nav.navigate("SendAmount", { option: result.options[0] });
+        nav.navigate("SendAmount", {
+          option: result.options[0],
+          preselectAssetId,
+        });
       } else {
         nav.navigate("SendOptions", { rawInput: input });
       }

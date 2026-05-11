@@ -244,6 +244,8 @@ function buildAssetActivity(args: {
   });
   const primary = args.assetDelta[0];
   const id = activityId("asset", args.arkTxid);
+  // Legacy single-asset pointers — kept so older consumers still work.
+  // New consumers read `activity.assets` instead.
   const metadata: NonNullable<Activity["metadata"]> = {
     arkTxid: args.arkTxid,
     assetId: primary?.assetId ?? null,
@@ -262,6 +264,10 @@ function buildAssetActivity(args: {
     rail: "arkade",
     source: { type: "wallet_event", eventId: id },
     metadata,
+    assets: args.assetDelta.map((d) => ({
+      assetId: d.assetId,
+      amount: d.amount.toString(),
+    })),
   };
 }
 

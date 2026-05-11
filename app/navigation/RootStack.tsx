@@ -9,6 +9,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import ActivityDetailsScreen from "../screens/ActivityDetailsScreen";
 import ActivityScreen from "../screens/ActivityScreen";
+import AssetBurnScreen from "../screens/assets/AssetBurnScreen";
+import AssetDetailScreen from "../screens/assets/AssetDetailScreen";
+import AssetImportScreen from "../screens/assets/AssetImportScreen";
+import AssetMintScreen from "../screens/assets/AssetMintScreen";
+import AssetReissueScreen from "../screens/assets/AssetReissueScreen";
 import IntroCarousel from "../screens/IntroCarousel";
 import LandingNoWallet from "../screens/LandingNoWallet";
 import ProfileBackup from "../screens/ProfileBackup";
@@ -60,11 +65,21 @@ export type RootStackParamList = {
     lightningCreditedSats?: number;
     lightningExpiresAt?: number;
     lightningSwapId?: string;
+    assetId?: string;
+    assetAmountBase?: string;
   };
-  SendEntry: undefined;
+  SendEntry: { preselectAssetId?: string } | undefined;
   SendOptions: { rawInput: string };
-  SendAmount: { option: ParsedPaymentOption };
-  SendReview: { option: ParsedPaymentOption; amountSats: number };
+  SendAmount: {
+    option: ParsedPaymentOption;
+    preselectAssetId?: string;
+  };
+  SendReview: {
+    option: ParsedPaymentOption;
+    amountSats: number;
+    assetId?: string;
+    assetAmountBase?: string;
+  };
   SendResult: {
     status: "success" | "error";
     paymentType: PaymentType;
@@ -73,9 +88,16 @@ export type RootStackParamList = {
     feeSats?: number;
     txId?: string;
     message?: string;
+    assetId?: string;
+    assetAmountBase?: string;
     /** For Bitcoin rails: which path was taken so the success copy can match. */
     bitcoinRail?: "collab" | "chainswap";
   };
+  AssetDetail: { assetId: string };
+  AssetMint: undefined;
+  AssetReissue: { assetId: string };
+  AssetBurn: { assetId: string };
+  AssetImport: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -289,6 +311,31 @@ export default function RootStack() {
               headerBackVisible: false,
               gestureEnabled: false,
             }}
+          />
+          <Stack.Screen
+            name="AssetDetail"
+            component={AssetDetailScreen}
+            options={{ ...headerOptions, title: "Asset" }}
+          />
+          <Stack.Screen
+            name="AssetImport"
+            component={AssetImportScreen}
+            options={{ ...headerOptions, title: "Import asset" }}
+          />
+          <Stack.Screen
+            name="AssetMint"
+            component={AssetMintScreen}
+            options={{ ...headerOptions, title: "Mint asset" }}
+          />
+          <Stack.Screen
+            name="AssetReissue"
+            component={AssetReissueScreen}
+            options={{ ...headerOptions, title: "Reissue" }}
+          />
+          <Stack.Screen
+            name="AssetBurn"
+            component={AssetBurnScreen}
+            options={{ ...headerOptions, title: "Burn" }}
           />
         </>
       )}

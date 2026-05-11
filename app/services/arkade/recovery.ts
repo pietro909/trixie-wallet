@@ -337,6 +337,14 @@ export function classifyRecovery(input: ClassifyInput): RecoveryScan {
     const md = activity.metadata ?? {};
     const unresolved = md.unresolvedAmountSats;
     if (typeof unresolved !== "number" || unresolved === 0) continue;
+    // Asset-bearing commitments produce unresolved BTC deltas by design (BTC
+    // dust + per-asset values do not net to zero). They're expected, not
+    // anomalies — skip them silently. The diagnostics bundle counts the
+    // skipped rows separately so we can prove the filter is firing.
+    if (md.settlementReason === "asset_bearing_settlement") {
+      bumpCount(counts, "arkade_settlement_skipped_asset");
+      continue;
+    }
     bumpCount(counts, "arkade_settlement");
     const reason =
       typeof md.settlementReason === "string" ? md.settlementReason : "anomaly";

@@ -22,6 +22,17 @@ export type ActivitySource =
     }
   | { type: "wallet_event"; eventId: string };
 
+/**
+ * Per-asset delta carried on asset-bearing Activity rows. Amounts are
+ * serialized as strings to keep the row JSON-safe (BigInt does not survive
+ * `JSON.stringify` round-trips). Reconstruct with `BigInt(amount)` in the
+ * renderer.
+ */
+export type ActivityAsset = {
+  assetId: string;
+  amount: string;
+};
+
 export type Activity = {
   id: string;
   kind: ActivityKind;
@@ -34,6 +45,12 @@ export type Activity = {
   rail?: ActivityRail;
   source: ActivitySource;
   metadata?: Record<string, string | number | boolean | null>;
+  /**
+   * Net per-asset deltas observed in this transaction (positive=received,
+   * negative=sent). Populated for asset-bearing rows; missing on BTC-only
+   * rows.
+   */
+  assets?: ActivityAsset[];
 };
 
 export type WalletIdentityKind = "mnemonic" | "singleKey";
@@ -70,6 +87,15 @@ export type LightningResumeState = {
   lastError?: string;
 };
 
+/**
+ * Asset balance entry persisted alongside wallet metadata. `amount` is a
+ * stringified bigint for JSON safety (mirrors {@link ActivityAsset.amount}).
+ */
+export type AssetBalanceEntry = {
+  assetId: string;
+  amount: string;
+};
+
 export type ArkadeWalletMetadata = {
   id: string;
   type: "arkade";
@@ -84,6 +110,12 @@ export type ArkadeWalletMetadata = {
   balanceSats: number;
   balanceTotalSats: number;
   balanceBoardingSats: number;
+  /**
+   * Latest per-asset balances observed in `wallet.getBalance()`. Sorted by
+   * amount desc, then by assetId for stable ordering. Empty array when the
+   * wallet holds no assets.
+   */
+  assetBalances: AssetBalanceEntry[];
   activities: Activity[];
   backup: {
     hasMnemonic: boolean;
@@ -132,6 +164,18 @@ export type ArkadeServerInfo = {
   intentFee: IntentFeeProgramConfig;
 };
 
+/**
+ * Asset-tracking slice persisted in `AppState`. Kept separate from
+ * {@link ArkadeWalletMetadata} so the wallet envelope stays focused on
+ * identity / balance state and so a future multi-wallet rework can scope
+ * the slice without entangling backup serialization. `importedAssetIds`
+ * carries user-curated asset ids (mint targets, pasted ids) that should
+ * survive a sweep to zero balance and ride the v2 backup payload.
+ */
+export type AssetsSlice = {
+  importedAssetIds: string[];
+};
+
 export type AppState = {
   schemaVersion: 4;
   wallet: ArkadeWalletMetadata | null;
@@ -144,6 +188,7 @@ export type AppState = {
   };
   walletBehavior: WalletBehavior;
   backgroundTasks: BackgroundTasks;
+  assets: AssetsSlice;
   preferences: {
     theme: ThemePref;
     fiatCurrency: FiatCurrency;

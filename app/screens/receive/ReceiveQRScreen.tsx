@@ -30,6 +30,14 @@ import { useToast } from "../../components/ToastProvider";
 import { useFormatSats } from "../../hooks/useFormatSats";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
+import {
+  prettyAssetAmount,
+  truncatedAssetId,
+} from "../../services/arkade/asset-format";
+import {
+  type CachedAssetDetails,
+  fetchAssetDetailsCached,
+} from "../../services/arkade/asset-metadata";
 import { paymentTypeLabel } from "../../services/paymentParser";
 import {
   makeAllPayloads,
@@ -118,16 +126,44 @@ export default function ReceiveQRScreen() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
   const route = useRoute<Route>();
-  const { type, amountSats } = route.params;
+  const { type, amountSats, assetId, assetAmountBase } = route.params;
   const { showToast } = useToast();
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
   const wallet = useAppStore((s) => s.wallet);
+  const network = useAppStore(
+    (s) => s.network.detectedNetwork ?? s.wallet?.network ?? null,
+  );
   const { format: formatSats, label: unitLabel } = useFormatSats();
+
+  const [assetDetails, setAssetDetails] =
+    React.useState<CachedAssetDetails | null>(null);
+
+  React.useEffect(() => {
+    if (!assetId || !network) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const d = await fetchAssetDetailsCached(network, assetId, "cache");
+        if (!cancelled) setAssetDetails(d);
+      } catch {
+        // best-effort; bare id still works
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [assetId, network]);
 
   const setTitle = nav.setOptions;
   React.useEffect(() => {
-    setTitle({ title: paymentTypeLabel(type) });
-  }, [setTitle, type]);
+    if (assetId) {
+      const ticker =
+        assetDetails?.metadata?.ticker ?? truncatedAssetId(assetId);
+      setTitle({ title: `Receive ${ticker}` });
+    } else {
+      setTitle({ title: paymentTypeLabel(type) });
+    }
+  }, [setTitle, type, assetId, assetDetails]);
 
   const lightningInvoice = route.params.lightningInvoice;
   const lightningCreditedSats = route.params.lightningCreditedSats;
@@ -195,14 +231,28 @@ export default function ReceiveQRScreen() {
       return [main, [main], null];
     }
     try {
-      const main = makeReceivePayload(wallet, type, { amountSats });
-      const list = makeAllPayloads(wallet, type, { amountSats });
+      const opts = {
+        amountSats,
+        assetId,
+        assetAmountBase,
+        assetTicker: assetDetails?.metadata?.ticker,
+      };
+      const main = makeReceivePayload(wallet, type, opts);
+      const list = makeAllPayloads(wallet, type, opts);
       return [main, list, null];
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Could not generate payload";
       return [null, [], msg];
     }
-  }, [wallet, type, amountSats, lightningInvoice]);
+  }, [
+    wallet,
+    type,
+    amountSats,
+    lightningInvoice,
+    assetId,
+    assetAmountBase,
+    assetDetails,
+  ]);
 
   const [now, setNow] = React.useState<number>(() => Date.now());
   React.useEffect(() => {
@@ -388,6 +438,17 @@ export default function ReceiveQRScreen() {
                 </Text>
               ) : null}
             </View>
+          ) : assetId ? (
+            <Text style={[styles.amount, { color: theme.colors.textSubtle }]}>
+              {assetAmountBase
+                ? `${prettyAssetAmount(
+                    BigInt(assetAmountBase),
+                    typeof assetDetails?.metadata?.decimals === "number"
+                      ? assetDetails.metadata.decimals
+                      : 0,
+                  )} ${assetDetails?.metadata?.ticker ?? truncatedAssetId(assetId)}`
+                : `Receive ${assetDetails?.metadata?.ticker ?? truncatedAssetId(assetId)} — sender enters amount`}
+            </Text>
           ) : primary.amountSats ? (
             <Text style={[styles.amount, { color: theme.colors.textSubtle }]}>
               {formatSats(primary.amountSats)} {unitLabel} ·{" "}

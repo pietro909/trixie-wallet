@@ -8,10 +8,15 @@ import type { StoredSecret } from "../arkade/secret-store";
 import type { LocalSwapMetadata } from "../arkade/swap-storage";
 import { recordError } from "../diagnostics/recorder";
 
-export const PAYLOAD_VERSION = 1 as const;
+export const PAYLOAD_VERSION = 2 as const;
+
+const SUPPORTED_VERSIONS = new Set<number>([1, 2]);
+
+/** Hard cap on imported asset ids carried in the backup envelope. */
+const MAX_IMPORTED_ASSET_IDS = 200;
 
 export type BackupPayloadV1 = {
-  version: typeof PAYLOAD_VERSION;
+  version: 1;
   createdAt: number;
   wallet: {
     id: string;
@@ -28,7 +33,12 @@ export type BackupPayloadV1 = {
   boltzSwaps: BoltzSwap[];
 };
 
-export type BackupPayload = BackupPayloadV1;
+export type BackupPayloadV2 = Omit<BackupPayloadV1, "version"> & {
+  version: 2;
+  importedAssetIds: string[];
+};
+
+export type BackupPayload = BackupPayloadV2;
 
 export type BuildPayloadInput = {
   wallet: ArkadeWalletMetadata;
@@ -37,6 +47,7 @@ export type BuildPayloadInput = {
   secret: StoredSecret;
   swapMetadata: LocalSwapMetadata[];
   boltzSwaps: BoltzSwap[];
+  importedAssetIds: string[];
 };
 
 export function buildBackupPayload(input: BuildPayloadInput): BackupPayload {
@@ -56,6 +67,7 @@ export function buildBackupPayload(input: BuildPayloadInput): BackupPayload {
     secret: input.secret,
     swapMetadata: input.swapMetadata,
     boltzSwaps: input.boltzSwaps,
+    importedAssetIds: input.importedAssetIds,
   };
 }
 
@@ -85,7 +97,7 @@ export function parseBackupPayload(raw: unknown): BackupPayload {
       "Backup payload is missing version",
     );
   }
-  if (r.version !== PAYLOAD_VERSION) {
+  if (!SUPPORTED_VERSIONS.has(r.version)) {
     throw new PayloadParseError(
       "unsupported_version",
       `Unsupported backup payload version ${r.version}`,
@@ -103,6 +115,8 @@ export function parseBackupPayload(raw: unknown): BackupPayload {
   const secret = parseSecret(r.secret);
   const swapMetadata = parseSwapMetadata(r.swapMetadata);
   const boltzSwaps = parseBoltzSwaps(r.boltzSwaps);
+  const importedAssetIds =
+    r.version === 1 ? [] : parseImportedAssetIds(r.importedAssetIds);
   return {
     version: PAYLOAD_VERSION,
     createdAt: r.createdAt,
@@ -112,7 +126,33 @@ export function parseBackupPayload(raw: unknown): BackupPayload {
     secret,
     swapMetadata,
     boltzSwaps,
+    importedAssetIds,
   };
+}
+
+function parseImportedAssetIds(raw: unknown): string[] {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) {
+    throw new PayloadParseError(
+      "malformed_payload",
+      "Backup importedAssetIds is not an array",
+    );
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (typeof entry !== "string") {
+      throw new PayloadParseError(
+        "malformed_payload",
+        "Backup importedAssetIds contains a non-string entry",
+      );
+    }
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    out.push(entry);
+    if (out.length >= MAX_IMPORTED_ASSET_IDS) break;
+  }
+  return out;
 }
 
 function parseWallet(raw: unknown): BackupPayload["wallet"] {

@@ -46,8 +46,8 @@ type HealthStatus = "never" | "stale" | "fresh" | "no-material";
 
 function statusForHealth(health: BackupHealth | null): HealthStatus {
   if (!health) return "never";
-  if (!health.hasSwapMaterial && health.lastBackupAt == null) return "never";
-  if (!health.hasSwapMaterial) return "no-material";
+  if (!health.hasBackupMaterial && health.lastBackupAt == null) return "never";
+  if (!health.hasBackupMaterial) return "no-material";
   if (health.isStale) return health.lastBackupAt == null ? "never" : "stale";
   return "fresh";
 }

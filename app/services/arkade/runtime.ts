@@ -38,6 +38,12 @@ export type WalletSnapshot = {
     settled: number;
     preconfirmed: number;
     boardingTotal: number;
+    /**
+     * Per-asset balances reported by `wallet.getBalance()`. Stringified
+     * bigint amounts (BigInt does not survive `JSON.stringify`). Sorted
+     * by amount desc, then by assetId for stable ordering.
+     */
+    assets: Array<{ assetId: string; amount: string }>;
   };
   activities: Activity[];
 };
@@ -243,6 +249,15 @@ export async function snapshotWallet(
       arkadeAddress: arkAddress,
       boardingAddress,
     });
+    const assetEntries = (balance.assets ?? [])
+      .filter((a) => a.amount !== 0n)
+      .map((a) => ({ assetId: a.assetId, amount: a.amount.toString() }))
+      .sort((a, b) => {
+        const av = BigInt(a.amount);
+        const bv = BigInt(b.amount);
+        if (av === bv) return a.assetId.localeCompare(b.assetId);
+        return bv > av ? 1 : -1;
+      });
     return {
       publicKeyHex: bytesToHex(publicKeyBytes),
       arkAddress,
@@ -253,6 +268,7 @@ export async function snapshotWallet(
         settled: balance.settled,
         preconfirmed: balance.preconfirmed,
         boardingTotal: balance.boarding.total,
+        assets: assetEntries,
       },
       activities,
     };

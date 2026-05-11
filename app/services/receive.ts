@@ -31,21 +31,38 @@ function buildBip21(
 
 type Options = {
   amountSats?: number;
+  /** Optional asset id to bind into a BIP21 `assetid` query field. */
+  assetId?: string;
+  /** Optional asset amount in base units (stringified bigint). */
+  assetAmountBase?: string;
+  /** Optional asset ticker, used to build the human label. */
+  assetTicker?: string;
 };
 
 export function makeArkadePayload(
   wallet: ArkadeWalletMetadata,
   options: Options = {},
 ): ReceivePayload {
-  const { amountSats } = options;
+  const { amountSats, assetId, assetAmountBase, assetTicker } = options;
   const address = wallet.arkAddress;
-  const payload =
-    amountSats && amountSats > 0
-      ? `${address}?amount=${(amountSats / 100_000_000).toFixed(8)}`
-      : address;
+  const params = new URLSearchParams();
+  if (amountSats && amountSats > 0) {
+    params.set("amount", (amountSats / 100_000_000).toFixed(8));
+  }
+  if (assetId) {
+    params.set("assetid", assetId);
+    if (assetAmountBase) params.set("assetamount", assetAmountBase);
+  }
+  const query = params.toString();
+  const payload = query ? `${address}?${query}` : address;
+  const label = assetId
+    ? assetTicker
+      ? `Arkade · ${assetTicker}`
+      : "Arkade asset"
+    : "Arkade";
   return {
     type: "arkade",
-    label: "Arkade",
+    label,
     payload,
     destination: shorten(address),
     amountSats: amountSats && amountSats > 0 ? amountSats : undefined,
@@ -89,10 +106,12 @@ export function makeAllPayloads(
   primary: ReceiveType,
   options: Options = {},
 ): ReceivePayload[] {
-  const list: ReceivePayload[] = [
-    makeArkadePayload(wallet, options),
-    makeBitcoinPayload(wallet, options),
-  ];
+  // When the user is receiving a specific asset, hide the BTC boarding
+  // alternate since pasting it into a sender produces a Bitcoin send, not an
+  // asset send.
+  const list: ReceivePayload[] = options.assetId
+    ? [makeArkadePayload(wallet, options)]
+    : [makeArkadePayload(wallet, options), makeBitcoinPayload(wallet, options)];
   const primaryIndex = list.findIndex((p) => p.type === primary);
   if (primaryIndex > 0) {
     const [item] = list.splice(primaryIndex, 1);

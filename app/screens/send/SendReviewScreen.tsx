@@ -8,11 +8,21 @@ import { AlertTriangle, ArrowUpRight, Info } from "lucide-react-native";
 import * as React from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import AssetAvatar from "../../components/AssetAvatar";
 import Button from "../../components/Button";
 import { useToast } from "../../components/ToastProvider";
 import { useFormatSats } from "../../hooks/useFormatSats";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
+import {
+  prettyAssetAmount,
+  truncatedAssetId,
+} from "../../services/arkade/asset-format";
+import { readIconApprovals } from "../../services/arkade/asset-icon-approval";
+import {
+  type CachedAssetDetails,
+  fetchAssetDetailsCached,
+} from "../../services/arkade/asset-metadata";
 import {
   estimateOffboardFee,
   OffboardFeeEstimateError,
@@ -116,7 +126,22 @@ function bitcoinAddressFromOption(raw: string): string | null {
 export default function SendReviewScreen() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
-  const { option, amountSats } = useRoute<Route>().params;
+  const { option, amountSats, assetId, assetAmountBase } =
+    useRoute<Route>().params;
+  const isAssetSend = typeof assetId === "string" && !!assetAmountBase;
+  let assetAmountBaseParsed: bigint | null = null;
+  if (isAssetSend && assetAmountBase) {
+    try {
+      assetAmountBaseParsed = BigInt(assetAmountBase);
+    } catch {
+      assetAmountBaseParsed = null;
+    }
+  }
+  const [assetDetails, setAssetDetails] =
+    React.useState<CachedAssetDetails | null>(null);
+  const [iconApprovals, setIconApprovals] = React.useState<
+    Record<string, boolean>
+  >({});
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
   const network = useAppStore(
     (s) => s.network.detectedNetwork ?? s.wallet?.network ?? null,
@@ -128,6 +153,22 @@ export default function SendReviewScreen() {
   const { showToast } = useToast();
 
   const [sending, setSending] = React.useState(false);
+  React.useEffect(() => {
+    if (!isAssetSend || !assetId || !network) return;
+    let cancelled = false;
+    void (async () => {
+      const [details, approvals] = await Promise.all([
+        fetchAssetDetailsCached(network, assetId, "cache").catch(() => null),
+        readIconApprovals(),
+      ]);
+      if (cancelled) return;
+      if (details) setAssetDetails(details);
+      setIconApprovals(approvals);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [assetId, network, isAssetSend]);
   const [lightningFee, setLightningFee] =
     React.useState<SubmarineFeeQuote | null>(null);
   const [lightningFeeLoading, setLightningFeeLoading] = React.useState(false);
@@ -308,6 +349,10 @@ export default function SendReviewScreen() {
     try {
       const result = await executeSend(option, amountSats, {
         bitcoinRail: railForResult,
+        asset:
+          isAssetSend && assetId && assetAmountBaseParsed != null
+            ? { assetId, amountBase: assetAmountBaseParsed }
+            : undefined,
       });
       if (result.ok) {
         nav.replace("SendResult", {
@@ -318,6 +363,8 @@ export default function SendReviewScreen() {
           paymentType: option.type,
           destination: option.destination,
           bitcoinRail: railForResult,
+          assetId,
+          assetAmountBase,
         });
       } else {
         showToast(result.error, "error");
@@ -328,6 +375,8 @@ export default function SendReviewScreen() {
           paymentType: option.type,
           destination: option.destination,
           bitcoinRail: railForResult,
+          assetId,
+          assetAmountBase,
         });
       }
     } catch (e) {
@@ -340,6 +389,8 @@ export default function SendReviewScreen() {
         paymentType: option.type,
         destination: option.destination,
         bitcoinRail: railForResult,
+        assetId,
+        assetAmountBase,
       });
     } finally {
       setSending(false);
@@ -362,31 +413,98 @@ export default function SendReviewScreen() {
             },
           ]}
         >
-          <View
-            style={[
-              styles.iconWrap,
-              { backgroundColor: theme.colors.primarySoft },
-            ]}
-          >
-            <ArrowUpRight color={theme.colors.primary} size={24} />
-          </View>
+          {isAssetSend ? (
+            <AssetAvatar
+              size={56}
+              icon={assetDetails?.metadata?.icon ?? null}
+              approved={assetId ? iconApprovals[assetId] === true : false}
+              ticker={assetDetails?.metadata?.ticker ?? null}
+              name={assetDetails?.metadata?.name ?? null}
+            />
+          ) : (
+            <View
+              style={[
+                styles.iconWrap,
+                { backgroundColor: theme.colors.primarySoft },
+              ]}
+            >
+              <ArrowUpRight color={theme.colors.primary} size={24} />
+            </View>
+          )}
           <Text style={[styles.headerAmount, { color: theme.colors.text }]}>
-            {formatSats(amountSats)} {unitLabel}
+            {isAssetSend && assetAmountBaseParsed != null
+              ? `${prettyAssetAmount(
+                  assetAmountBaseParsed,
+                  typeof assetDetails?.metadata?.decimals === "number"
+                    ? assetDetails.metadata.decimals
+                    : 0,
+                )} ${assetDetails?.metadata?.ticker ?? ""}`.trim()
+              : `${formatSats(amountSats)} ${unitLabel}`}
           </Text>
-          <Text style={[styles.headerFiat, { color: theme.colors.textMuted }]}>
-            ≈ {satsToFiat(amountSats, fiatCurrency)}
-          </Text>
+          {!isAssetSend ? (
+            <Text
+              style={[styles.headerFiat, { color: theme.colors.textMuted }]}
+            >
+              ≈ {satsToFiat(amountSats, fiatCurrency)}
+            </Text>
+          ) : assetId ? (
+            <Text
+              style={[styles.headerFiat, { color: theme.colors.textMuted }]}
+            >
+              {truncatedAssetId(assetId)}
+            </Text>
+          ) : null}
         </View>
 
         <View style={styles.card}>
-          <Row label="Payment type" value={paymentTypeLabel(option.type)} />
+          <Row
+            label="Payment type"
+            value={
+              isAssetSend
+                ? `${paymentTypeLabel(option.type)} · Asset`
+                : paymentTypeLabel(option.type)
+            }
+          />
           <Row label="Destination" value={option.destination} mono />
           {option.memo ? <Row label="Memo" value={option.memo} /> : null}
-          <Row
-            label="Amount"
-            value={`${formatSats(amountSats)} ${unitLabel}`}
-            emphasis
-          />
+          {isAssetSend && assetAmountBaseParsed != null ? (
+            <>
+              {assetDetails?.metadata?.name ? (
+                <Row
+                  label="Asset"
+                  value={`${assetDetails.metadata.name}${
+                    assetDetails.metadata.ticker
+                      ? ` (${assetDetails.metadata.ticker})`
+                      : ""
+                  }`}
+                />
+              ) : null}
+              <Row
+                label="Asset amount"
+                value={`${prettyAssetAmount(
+                  assetAmountBaseParsed,
+                  typeof assetDetails?.metadata?.decimals === "number"
+                    ? assetDetails.metadata.decimals
+                    : 0,
+                )}${
+                  assetDetails?.metadata?.ticker
+                    ? ` ${assetDetails.metadata.ticker}`
+                    : ""
+                }`}
+                emphasis
+              />
+              <Row
+                label="Network anchor"
+                value={`${formatSats(amountSats)} ${unitLabel}`}
+              />
+            </>
+          ) : (
+            <Row
+              label="Amount"
+              value={`${formatSats(amountSats)} ${unitLabel}`}
+              emphasis
+            />
+          )}
           {option.type === "lightning" ? (
             <>
               <Row

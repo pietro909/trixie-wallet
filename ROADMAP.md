@@ -4,7 +4,7 @@ This repository is an Expo-only, iOS/Android self-custodial Arkade wallet app. T
 
 This is a living document: tick items off as they land.
 
-Last updated: 2026-05-11
+Last updated: 2026-05-11 (Milestone 10 delivered)
 
 ## Milestones
 
@@ -28,8 +28,9 @@ Last updated: 2026-05-11
 - [x] Milestone 9: Disaster Recovery Tooling ([docs/MILESTONE_9.agents.md](./docs/MILESTONE_9.agents.md))
   - Add explicit recovery tools for claimable/refundable swaps and other dangling recoverable state.
   - Implementation complete, pending manual verification — see "Manual testing status" in [README.md](./README.md).
-- [ ] Milestone 10: Assets support ([docs/MILESTONE_10.agents.md](./docs/MILESTONE_10.agents.md))
+- [x] Milestone 10: Assets support ([docs/MILESTONE_10.agents.md](./docs/MILESTONE_10.agents.md))
   - Add support for custom assets within the Arkade ecosystem.
+  - Implementation complete: activity rendering carries asset deltas, wallet screen lists asset balances, send/receive flows handle assets via BIP21 `assetid`, mint/reissue/burn screens implemented, asset metadata caching with TTL, icon approval gate, backup payload bumped to v2 to carry imported asset ids, recovery filter skips expected asset-bearing settlement rows.
 - [ ] Milestone 11: In-app push notifications ([docs/MILESTONE_11.agents.md](./docs/MILESTONE_11.agents.md))
   - Implement in-app and push notifications for wallet activities and swap status updates.
 - [ ] Milestone 12: Activity Caching ([docs/MILESTONE_12.agents.md](./docs/MILESTONE_12.agents.md))

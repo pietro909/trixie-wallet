@@ -15,9 +15,19 @@ import {
   Text,
   View,
 } from "react-native";
+import AssetAvatar from "../components/AssetAvatar";
 import { useFormatSats } from "../hooks/useFormatSats";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../navigation/RootStack";
+import {
+  prettyAssetAmount,
+  truncatedAssetId,
+} from "../services/arkade/asset-format";
+import { readIconApprovals } from "../services/arkade/asset-icon-approval";
+import {
+  type CachedAssetDetails,
+  readAssetMetadataMap,
+} from "../services/arkade/asset-metadata";
 import type { Activity } from "../store/types";
 import { useAppStore } from "../store/useAppStore";
 import { spacing, typography } from "../theme/theme";
@@ -51,11 +61,47 @@ export default function ActivityScreen() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
   const wallet = useAppStore((s) => s.wallet);
+  const network = useAppStore(
+    (s) => s.network.detectedNetwork ?? s.wallet?.network ?? null,
+  );
   const refreshWallet = useAppStore((s) => s.refreshWallet);
   const { format: formatSats, label: unitLabel } = useFormatSats();
   const [refreshing, setRefreshing] = React.useState(false);
+  const [assetMetadata, setAssetMetadata] = React.useState<
+    Map<string, CachedAssetDetails>
+  >(() => new Map());
+  const [iconApprovals, setIconApprovals] = React.useState<
+    Record<string, boolean>
+  >({});
 
   const activities = wallet?.activities ?? [];
+
+  const assetIdsInActivities = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const a of activities) {
+      if (a.assets) for (const e of a.assets) set.add(e.assetId);
+      const legacyId = a.metadata?.assetId;
+      if (typeof legacyId === "string") set.add(legacyId);
+    }
+    return Array.from(set);
+  }, [activities]);
+
+  React.useEffect(() => {
+    if (!network || assetIdsInActivities.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const [map, approvals] = await Promise.all([
+        readAssetMetadataMap(network, assetIdsInActivities),
+        readIconApprovals(),
+      ]);
+      if (cancelled) return;
+      setAssetMetadata(map);
+      setIconApprovals(approvals);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [network, assetIdsInActivities]);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -87,6 +133,83 @@ export default function ActivityScreen() {
       : isIn
         ? theme.colors.success
         : theme.colors.text;
+
+    const hasAssets = item.assets && item.assets.length > 0;
+    const primaryAsset = hasAssets
+      ? item.assets?.[0]
+      : typeof item.metadata?.assetId === "string"
+        ? {
+            assetId: item.metadata.assetId as string,
+            amount:
+              typeof item.metadata.assetAmount === "number"
+                ? String(item.metadata.assetAmount)
+                : "0",
+          }
+        : null;
+
+    if (primaryAsset) {
+      const details = assetMetadata.get(primaryAsset.assetId);
+      const decimals =
+        typeof details?.metadata?.decimals === "number"
+          ? details.metadata.decimals
+          : 0;
+      let parsedAmount = 0n;
+      try {
+        parsedAmount = BigInt(primaryAsset.amount);
+      } catch {
+        parsedAmount = 0n;
+      }
+      const absAmount = parsedAmount < 0n ? -parsedAmount : parsedAmount;
+      const formatted = prettyAssetAmount(absAmount, decimals);
+      const ticker =
+        details?.metadata?.ticker ?? truncatedAssetId(primaryAsset.assetId);
+      const assetSign = isSelf
+        ? ""
+        : parsedAmount < 0n
+          ? "-"
+          : parsedAmount > 0n
+            ? "+"
+            : "";
+      const totalAssets = item.assets?.length ?? 1;
+      const extraCopy = totalAssets > 1 ? ` · +${totalAssets - 1} more` : "";
+      return (
+        <Pressable
+          onPress={() =>
+            nav.navigate("ActivityDetails", { activityId: item.id })
+          }
+          style={({ pressed }) => [
+            styles.row,
+            {
+              borderBottomColor: theme.colors.divider,
+              opacity: pressed ? 0.6 : 1,
+            },
+          ]}
+        >
+          <AssetAvatar
+            size={36}
+            icon={details?.metadata?.icon ?? null}
+            approved={iconApprovals[primaryAsset.assetId] === true}
+            ticker={details?.metadata?.ticker ?? null}
+            name={details?.metadata?.name ?? null}
+          />
+          <View style={styles.info}>
+            <Text style={[styles.label, { color: theme.colors.text }]}>
+              {item.title}
+            </Text>
+            <Text style={[styles.date, { color: theme.colors.textSubtle }]}>
+              {formatDate(item.timestamp)}
+              {statusSuffix(item.status)}
+              {extraCopy}
+            </Text>
+          </View>
+          <Text style={[styles.amount, { color: amountColor }]}>
+            {assetSign}
+            {formatted} {ticker}
+          </Text>
+        </Pressable>
+      );
+    }
+
     const sign = isSelf || item.amountSats == null ? "" : isIn ? "+" : "-";
     return (
       <Pressable

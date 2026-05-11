@@ -1,4 +1,5 @@
 import type { SubmarineRecoveryInfo } from "@arkade-os/boltz-swap";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { useAppStore } from "../../store/useAppStore";
 import {
@@ -82,6 +83,16 @@ export type SupportBundle = {
     fiatCurrency: string;
     bitcoinUnit: string;
   };
+  /**
+   * Redacted asset overview. No raw asset ids (privacy parity with swap ids).
+   * Counts only, so support can see whether the wallet is asset-aware without
+   * inspecting per-asset balances.
+   */
+  assets: {
+    importedAssetIdCount: number;
+    nonZeroBalanceCount: number;
+    cachedMetadataCount: number;
+  };
   recovery: {
     lastBackupAt: number | null;
     dirtyForBackup: boolean;
@@ -147,6 +158,37 @@ function readExtra(): {
 function appVersionString(): string {
   const cfg = Constants.expoConfig as { version?: string } | null;
   return cfg?.version ?? "unknown";
+}
+
+/**
+ * Sum of cache entries across every network-scoped asset metadata key. Errors
+ * (parse failures, missing keys) are swallowed; the support bundle should not
+ * fail because of a malformed cache.
+ */
+async function countCachedAssetMetadata(): Promise<number> {
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const cacheKeys = keys.filter((k) =>
+      k.startsWith("trixie:asset-metadata:"),
+    );
+    if (cacheKeys.length === 0) return 0;
+    const entries = await AsyncStorage.multiGet(cacheKeys);
+    let total = 0;
+    for (const [, raw] of entries) {
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          total += Object.keys(parsed).length;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return total;
+  } catch {
+    return 0;
+  }
 }
 
 export async function buildSupportBundle(): Promise<SupportBundle> {
@@ -264,16 +306,32 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
   }
   if (wallet) {
     let settlementAnomalies = 0;
+    let settlementAssetSkips = 0;
+    const assetActivityCounts: Record<string, number> = {};
     for (const a of wallet.activities) {
-      if (a.source.type !== "wallet_event") continue;
-      if (a.title !== "Arkade settlement") continue;
-      const unresolved = a.metadata?.unresolvedAmountSats;
-      if (typeof unresolved === "number" && unresolved !== 0) {
-        settlementAnomalies += 1;
+      if (a.source.type === "wallet_event" && a.title === "Arkade settlement") {
+        const unresolved = a.metadata?.unresolvedAmountSats;
+        if (typeof unresolved === "number" && unresolved !== 0) {
+          if (a.metadata?.settlementReason === "asset_bearing_settlement") {
+            settlementAssetSkips += 1;
+          } else {
+            settlementAnomalies += 1;
+          }
+        }
+      }
+      const cls = a.metadata?.classification;
+      if (typeof cls === "string" && cls.startsWith("asset_")) {
+        assetActivityCounts[cls] = (assetActivityCounts[cls] ?? 0) + 1;
       }
     }
     if (settlementAnomalies > 0) {
       recoveryCounts.arkade_settlement = settlementAnomalies;
+    }
+    if (settlementAssetSkips > 0) {
+      recoveryCounts.arkade_settlement_skipped_asset = settlementAssetSkips;
+    }
+    for (const [k, v] of Object.entries(assetActivityCounts)) {
+      recoveryCounts[`activity_${k}`] = v;
     }
   }
 
@@ -341,6 +399,17 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
       theme: state.preferences.theme,
       fiatCurrency: state.preferences.fiatCurrency,
       bitcoinUnit: state.preferences.bitcoinUnit,
+    },
+    assets: {
+      importedAssetIdCount: state.assets.importedAssetIds.length,
+      nonZeroBalanceCount: (wallet?.assetBalances ?? []).filter((b) => {
+        try {
+          return BigInt(b.amount) !== 0n;
+        } catch {
+          return false;
+        }
+      }).length,
+      cachedMetadataCount: await countCachedAssetMetadata(),
     },
     recovery: {
       lastBackupAt: state.security.lastBackupAt ?? null,

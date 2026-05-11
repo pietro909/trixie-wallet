@@ -1,4 +1,6 @@
 import type { Activity, ActivitySource } from "../../store/types";
+import { prettyAssetAmount, truncatedAssetId } from "../arkade/asset-format";
+import type { CachedAssetDetails } from "../arkade/asset-metadata";
 import { type ExplorerIdKind, explorerUrl } from "./explorer";
 
 export type SectionRow =
@@ -21,6 +23,13 @@ export type Section = {
 export type BuildSectionsContext = {
   /** Active network, used by callers to resolve explorer links. */
   network: string | null | undefined;
+  /**
+   * Optional cached asset metadata keyed by assetId. Callers preload this from
+   * the asset-metadata cache after first paint and re-run `buildSections`.
+   * Builder treats missing entries as "no metadata yet" — name/ticker fall
+   * back to truncated asset ids, decimals default to 0.
+   */
+  assetMetadata?: Map<string, CachedAssetDetails>;
 };
 
 function readString(
@@ -469,41 +478,120 @@ export function buildActivityDetailSections(
     });
   }
 
-  // ---- Asset (M4: render only what's already emitted) ----
-  const assetId = readString(md, "assetId");
-  if (assetId) {
-    const assetRows: SectionRow[] = [];
-    assetRows.push({
-      kind: "copy",
-      label: "Asset id",
-      value: assetId,
-      mono: true,
-    });
-    const assetAmount = readNumber(md, "assetAmount");
-    if (assetAmount != null) {
-      assetRows.push({
-        kind: "text",
-        label: "Asset amount",
-        value: assetAmount.toLocaleString(),
+  // ---- Asset blocks (one section per per-tx asset delta) ----
+  // Source of truth is `activity.assets[]`. For legacy rows missing that
+  // field, fall back to `metadata.assetId` so older persisted activities
+  // still render.
+  const assetEntries: Array<{ assetId: string; amount: bigint | null }> = [];
+  if (activity.assets && activity.assets.length > 0) {
+    for (const a of activity.assets) {
+      let parsed: bigint | null = null;
+      try {
+        parsed = BigInt(a.amount);
+      } catch {
+        parsed = null;
+      }
+      assetEntries.push({ assetId: a.assetId, amount: parsed });
+    }
+  } else {
+    const legacyId = readString(md, "assetId");
+    if (legacyId) {
+      const legacyAmount = readNumber(md, "assetAmount");
+      assetEntries.push({
+        assetId: legacyId,
+        amount: legacyAmount != null ? BigInt(legacyAmount) : null,
       });
     }
+  }
+  if (assetEntries.length > 0) {
     const anchorAmountSats = readNumber(md, "anchorAmountSats");
-    if (anchorAmountSats != null) {
-      assetRows.push({
-        kind: "text",
-        label: "Anchor amount",
-        value: `${anchorAmountSats.toLocaleString()} sats`,
-      });
-    }
     const classification = readString(md, "classification");
-    if (classification) {
-      assetRows.push({
-        kind: "text",
-        label: "Classification",
-        value: classification.replace(/_/g, " "),
+    for (let i = 0; i < assetEntries.length; i++) {
+      const entry = assetEntries[i];
+      const meta = ctx.assetMetadata?.get(entry.assetId);
+      const decimals =
+        typeof meta?.metadata?.decimals === "number"
+          ? meta.metadata.decimals
+          : 0;
+      const name = meta?.metadata?.name;
+      const ticker = meta?.metadata?.ticker;
+      const rows: SectionRow[] = [];
+      if (name) {
+        rows.push({ kind: "text", label: "Name", value: name });
+      }
+      if (ticker) {
+        rows.push({ kind: "text", label: "Ticker", value: ticker });
+      }
+      if (typeof meta?.metadata?.decimals === "number") {
+        rows.push({
+          kind: "text",
+          label: "Decimals",
+          value: String(meta.metadata.decimals),
+        });
+      }
+      if (entry.amount != null) {
+        const absAmount = entry.amount < 0n ? -entry.amount : entry.amount;
+        rows.push({
+          kind: "text",
+          label: "Amount",
+          value: `${entry.amount < 0n ? "-" : ""}${prettyAssetAmount(
+            absAmount,
+            decimals,
+          )}${ticker ? ` ${ticker}` : ""}`,
+        });
+      }
+      rows.push({
+        kind: "copy",
+        label: "Asset id",
+        value: entry.assetId,
+        mono: true,
       });
+      if (entry.amount != null) {
+        rows.push({
+          kind: "text",
+          label: "Amount (base units)",
+          value: entry.amount.toString(),
+        });
+      }
+      if (meta) {
+        rows.push({
+          kind: "text",
+          label: "Supply",
+          value: meta.supply,
+        });
+        if (meta.controlAssetId) {
+          rows.push({
+            kind: "copy",
+            label: "Control asset id",
+            value: meta.controlAssetId,
+            mono: true,
+          });
+        }
+      }
+      if (i === 0 && anchorAmountSats != null) {
+        rows.push({
+          kind: "text",
+          label: "Network anchor",
+          value: `${anchorAmountSats.toLocaleString()} sats`,
+        });
+      }
+      if (i === 0 && classification) {
+        rows.push({
+          kind: "text",
+          label: "Classification",
+          value: classification.replace(/_/g, " "),
+        });
+      }
+      const title =
+        assetEntries.length > 1
+          ? `Asset ${i + 1} of ${assetEntries.length} — ${
+              ticker ?? truncatedAssetId(entry.assetId)
+            }`
+          : ticker
+            ? `Asset — ${ticker}`
+            : "Asset";
+      sections.push({ id: `asset:${entry.assetId}`, title, rows });
     }
-    sections.push({ id: "asset", title: "Asset", rows: assetRows });
   }
 
   // ---- Technical ----

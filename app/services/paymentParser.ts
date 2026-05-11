@@ -1,6 +1,7 @@
 import { type NetworkName, networks } from "@arkade-os/sdk";
 import { Address } from "@scure/btc-signer";
 import { decode as decodeBolt11 } from "light-bolt11-decoder";
+import { isValidAssetId } from "./arkade/asset-format";
 
 export type PaymentType = "arkade" | "bitcoin" | "lightning" | "lnurl";
 
@@ -54,6 +55,13 @@ export type ParsedPaymentOption = {
   expiresAt?: number;
   /** Lightning-only: hex-encoded BOLT11 payment hash. */
   paymentHash?: string;
+  /**
+   * BIP21 `assetid` — valid only for Arkade options. When present, the send
+   * flow narrows to an asset transfer using `assetAmountBase` (base units,
+   * stringified bigint to survive React Navigation route serialization).
+   */
+  assetId?: string;
+  assetAmountBase?: string;
 };
 
 export type ParseResult = {
@@ -83,6 +91,8 @@ const KNOWN_BIP21_KEYS = new Set([
   "lnurl",
   "ark",
   "arkade",
+  "assetid",
+  "assetamount",
 ]);
 
 function shorten(value: string, head = 10, tail = 6): string {
@@ -247,6 +257,26 @@ function parseArkadeBody(rawInput: string, body: string): ParseResult {
     ? btcAmountToSats(query.get("amount") ?? "")
     : undefined;
   const memo = query.get("message") ?? query.get("label") ?? undefined;
+  const assetIdRaw = query.get("assetid");
+  const assetAmountRaw = query.get("assetamount");
+  let assetId: string | undefined;
+  let assetAmountBase: string | undefined;
+  let warning: string | undefined;
+  if (assetIdRaw) {
+    if (isValidAssetId(assetIdRaw)) {
+      assetId = assetIdRaw;
+      if (assetAmountRaw) {
+        try {
+          const parsed = BigInt(assetAmountRaw);
+          if (parsed > 0n) assetAmountBase = parsed.toString();
+        } catch {
+          warning = "Asset amount must be a positive integer (base units)";
+        }
+      }
+    } else {
+      warning = "Invalid asset id in payment URI";
+    }
+  }
   for (const [k, v] of query.entries()) {
     if (!KNOWN_BIP21_KEYS.has(k)) metadata[k] = v;
   }
@@ -260,6 +290,9 @@ function parseArkadeBody(rawInput: string, body: string): ParseResult {
         amountSats,
         memo,
         isPayable: true,
+        assetId,
+        assetAmountBase,
+        warning,
       },
     ],
     metadata,

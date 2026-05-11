@@ -9,6 +9,12 @@ import {
   type AppStateStatus as NativeAppStateStatus,
 } from "react-native";
 import { create } from "zustand";
+import { isValidAssetId } from "../services/arkade/asset-format";
+import {
+  clearIconApprovals,
+  markSelfIssued,
+} from "../services/arkade/asset-icon-approval";
+import { clearAssetMetadata } from "../services/arkade/asset-metadata";
 import { ArkadeError, toArkadeError } from "../services/arkade/errors";
 import {
   estimateOffboardFee,
@@ -115,6 +121,7 @@ import type {
   Activity,
   AppState,
   ArkadeWalletMetadata,
+  AssetsSlice,
   BackgroundTaskKey,
   BackgroundTasks,
   BitcoinUnit,
@@ -202,6 +209,31 @@ function normalizeBackgroundTasks(
   };
 }
 
+const DEFAULT_ASSETS_SLICE: AssetsSlice = {
+  importedAssetIds: [],
+};
+
+/**
+ * Coerce a persisted `assets` slice into a fully-populated value, tolerating
+ * missing fields and bad entries. No schemaVersion bump — same hydrate-time
+ * normalization pattern as `backgroundTasks`.
+ */
+function normalizeAssetsSlice(
+  raw: Partial<AssetsSlice> | null | undefined,
+): AssetsSlice {
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_ASSETS_SLICE };
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const id of raw.importedAssetIds ?? []) {
+    if (typeof id !== "string") continue;
+    if (!isValidAssetId(id)) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return { importedAssetIds: ids };
+}
+
 type BackgroundTaskDescriptor = {
   register: () => Promise<void>;
   unregister: () => Promise<void>;
@@ -229,6 +261,7 @@ const DEFAULT_STATE: AppState = {
   },
   walletBehavior: DEFAULT_WALLET_BEHAVIOR,
   backgroundTasks: DEFAULT_BACKGROUND_TASKS,
+  assets: DEFAULT_ASSETS_SLICE,
   preferences: {
     theme: "system",
     fiatCurrency: "EUR",
@@ -248,8 +281,12 @@ export type RestoreInput =
   | { kind: "hex"; privateKeyHex: string };
 
 export type BackupHealth = {
-  /** True when the wallet has any persisted swap-recovery material. */
-  hasSwapMaterial: boolean;
+  /**
+   * True when the wallet has any backup-worthy material — persisted swap
+   * recovery rows, imported asset ids, or anything else the backup envelope
+   * carries that is not derivable from the seed alone.
+   */
+  hasBackupMaterial: boolean;
   /** Timestamp of the last successful backup export, or null. */
   lastBackupAt: number | null;
   /**
@@ -278,6 +315,11 @@ type StoreState = AppState & {
   refreshWallet: () => Promise<void>;
   resumeLightning: (trigger: LightningResumeTrigger) => Promise<void>;
   sendArkade: (address: string, amountSats: number) => Promise<string>;
+  sendAsset: (
+    address: string,
+    assetId: string,
+    amount: bigint,
+  ) => Promise<string>;
   sendLightning: (
     invoice: string,
     amountSats: number,
@@ -324,6 +366,19 @@ type StoreState = AppState & {
     password: string,
   ) => Promise<void>;
   getBackupHealth: () => Promise<BackupHealth>;
+  importAsset: (assetId: string) => Promise<void>;
+  forgetAsset: (assetId: string) => Promise<void>;
+  issueAsset: (input: {
+    name?: string;
+    ticker?: string;
+    decimals?: number;
+    icon?: string;
+    amount: bigint;
+    controlAssetId?: string;
+    controlMode?: "none" | "existing" | "new";
+  }) => Promise<{ arkTxId: string; assetId: string }>;
+  reissueAsset: (assetId: string, amount: bigint) => Promise<string>;
+  burnAsset: (assetId: string, amount: bigint) => Promise<string>;
   setTheme: (theme: ThemePref) => void;
   setFiatCurrency: (currency: FiatCurrency) => void;
   setBitcoinUnit: (unit: BitcoinUnit) => void;
@@ -338,6 +393,7 @@ async function persist(state: AppState) {
     network: state.network,
     walletBehavior: state.walletBehavior,
     backgroundTasks: state.backgroundTasks,
+    assets: state.assets,
     preferences: state.preferences,
     security: state.security,
   };
@@ -381,6 +437,7 @@ function buildMetadata(
     balanceSats: snapshot.balance.available,
     balanceTotalSats: snapshot.balance.total,
     balanceBoardingSats: snapshot.balance.boardingTotal,
+    assetBalances: snapshot.balance.assets,
     activities,
     backup: {
       hasMnemonic: artifacts.identityKind === "mnemonic",
@@ -401,6 +458,7 @@ function applySnapshot(
     balanceSats: snapshot.balance.available,
     balanceTotalSats: snapshot.balance.total,
     balanceBoardingSats: snapshot.balance.boardingTotal,
+    assetBalances: snapshot.balance.assets,
     activities,
   };
 }
@@ -688,7 +746,15 @@ export const useAppStore = create<StoreState>((set, get) => ({
         },
         walletBehavior: normalizeWalletBehavior(parsed.walletBehavior),
         backgroundTasks: normalizeBackgroundTasks(parsed.backgroundTasks),
-        wallet: parsed.wallet ?? null,
+        assets: normalizeAssetsSlice(parsed.assets),
+        wallet: parsed.wallet
+          ? {
+              ...parsed.wallet,
+              assetBalances: Array.isArray(parsed.wallet.assetBalances)
+                ? parsed.wallet.assetBalances
+                : [],
+            }
+          : null,
         _hydrated: true,
       });
       const restored = get();
@@ -1436,6 +1502,16 @@ export const useAppStore = create<StoreState>((set, get) => ({
     } catch {
       // best-effort cleanup
     }
+    try {
+      await clearAssetMetadata();
+    } catch {
+      // best-effort cleanup
+    }
+    try {
+      await clearIconApprovals();
+    } catch {
+      // best-effort cleanup
+    }
     await clearPersistedErrors();
     set({
       ...DEFAULT_STATE,
@@ -1691,6 +1767,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
       secret,
       swapMetadata,
       boltzSwaps,
+      importedAssetIds: get().assets.importedAssetIds,
     });
     const plaintext = utf8ToBytes(JSON.stringify(payload));
     const envelope = await encryptBundle({
@@ -1821,8 +1898,12 @@ export const useAppStore = create<StoreState>((set, get) => ({
         serverNetwork,
       );
       const metadata: ArkadeWalletMetadata = { ...restored, activities };
+      const restoredAssetsSlice: AssetsSlice = normalizeAssetsSlice({
+        importedAssetIds: payload.importedAssetIds ?? [],
+      });
       set((s) => ({
         wallet: metadata,
+        assets: restoredAssetsSlice,
         security: {
           ...s.security,
           lastBackupAt: envelope.createdAt,
@@ -1858,19 +1939,216 @@ export const useAppStore = create<StoreState>((set, get) => ({
     const metadata = get().wallet;
     const lastBackupAt = get().security.lastBackupAt ?? null;
     if (!metadata) {
-      return { hasSwapMaterial: false, lastBackupAt, isStale: false };
+      return { hasBackupMaterial: false, lastBackupAt, isStale: false };
     }
     const [metaTs, boltzTs] = await Promise.all([
       getLatestSwapMetadataWriteAt(metadata.id).catch(() => null),
       getLatestBoltzSwapWriteAt().catch(() => null),
     ]);
     const hasSwapMaterial = metaTs != null || boltzTs != null;
+    const importedAssetIds = get().assets.importedAssetIds;
+    const hasBackupMaterial = hasSwapMaterial || importedAssetIds.length > 0;
     const dirty = get().security.dirtyForBackup === true;
     const latest = Math.max(metaTs ?? 0, boltzTs ?? 0);
     const isStale =
-      hasSwapMaterial &&
+      hasBackupMaterial &&
       (lastBackupAt == null || dirty || lastBackupAt < latest);
-    return { hasSwapMaterial, lastBackupAt, isStale };
+    return { hasBackupMaterial, lastBackupAt, isStale };
+  },
+
+  importAsset: async (assetId) => {
+    if (!isValidAssetId(assetId)) {
+      throw new ArkadeError(
+        "send_failed",
+        "Asset id is not a valid 68-character hex string",
+      );
+    }
+    const current = get().assets.importedAssetIds;
+    if (current.includes(assetId)) return;
+    set((s) => ({
+      assets: { importedAssetIds: [...s.assets.importedAssetIds, assetId] },
+    }));
+    markDirtyForBackup();
+    await persist(get());
+  },
+
+  forgetAsset: async (assetId) => {
+    const current = get().assets.importedAssetIds;
+    if (!current.includes(assetId)) return;
+    set((s) => ({
+      assets: {
+        importedAssetIds: s.assets.importedAssetIds.filter(
+          (id) => id !== assetId,
+        ),
+      },
+    }));
+    markDirtyForBackup();
+    await persist(get());
+  },
+
+  sendAsset: async (address, assetId, amount) => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet available");
+    }
+    if (!isValidAssetId(assetId)) {
+      throw new ArkadeError("send_failed", "Invalid asset id");
+    }
+    if (amount <= 0n) {
+      throw new ArkadeError("send_failed", "Amount must be greater than zero");
+    }
+    const balanceEntry = metadata.assetBalances.find(
+      (a) => a.assetId === assetId,
+    );
+    const have = balanceEntry ? BigInt(balanceEntry.amount) : 0n;
+    if (amount > have) {
+      throw new ArkadeError(
+        "insufficient_balance",
+        "Insufficient asset balance for this amount",
+      );
+    }
+    const wallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
+    let txId: string;
+    try {
+      txId = await wallet.send({
+        address,
+        assets: [{ assetId, amount }],
+      });
+    } catch (e) {
+      throw toArkadeError("send_failed", "Asset send failed", e);
+    }
+    await get()
+      .refreshWallet()
+      .catch(() => {
+        // ignore refresh failure; txId is still returned
+      });
+    return txId;
+  },
+
+  issueAsset: async (input) => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet available");
+    }
+    if (input.amount <= 0n) {
+      throw new ArkadeError("send_failed", "Amount must be greater than zero");
+    }
+    const wallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
+    const mode = input.controlMode ?? "none";
+    let controlAssetId = input.controlAssetId;
+    try {
+      if (mode === "new") {
+        const control = await wallet.assetManager.issue({ amount: 1n });
+        controlAssetId = control.assetId;
+        await markSelfIssued(control.assetId);
+      }
+      const metadataObj: Record<string, unknown> = {};
+      if (input.name) metadataObj.name = input.name;
+      if (input.ticker) metadataObj.ticker = input.ticker;
+      if (typeof input.decimals === "number") {
+        metadataObj.decimals = input.decimals;
+      }
+      if (input.icon) metadataObj.icon = input.icon;
+      const result = await wallet.assetManager.issue({
+        amount: input.amount,
+        controlAssetId,
+        metadata:
+          Object.keys(metadataObj).length > 0
+            ? (metadataObj as Parameters<
+                typeof wallet.assetManager.issue
+              >[0]["metadata"])
+            : undefined,
+      });
+      await markSelfIssued(result.assetId);
+      const ids = get().assets.importedAssetIds;
+      if (!ids.includes(result.assetId)) {
+        set((s) => ({
+          assets: {
+            importedAssetIds: [...s.assets.importedAssetIds, result.assetId],
+          },
+        }));
+        markDirtyForBackup();
+        await persist(get());
+      }
+      await get()
+        .refreshWallet()
+        .catch(() => {
+          // ignore refresh failure
+        });
+      return result;
+    } catch (e) {
+      throw toArkadeError("send_failed", "Asset issuance failed", e);
+    }
+  },
+
+  reissueAsset: async (assetId, amount) => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet available");
+    }
+    if (amount <= 0n) {
+      throw new ArkadeError("send_failed", "Amount must be greater than zero");
+    }
+    if (!isValidAssetId(assetId)) {
+      throw new ArkadeError("send_failed", "Invalid asset id");
+    }
+    const wallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
+    let arkTxId: string;
+    try {
+      arkTxId = await wallet.assetManager.reissue({ assetId, amount });
+    } catch (e) {
+      throw toArkadeError("send_failed", "Asset reissue failed", e);
+    }
+    await get()
+      .refreshWallet()
+      .catch(() => {});
+    return arkTxId;
+  },
+
+  burnAsset: async (assetId, amount) => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet available");
+    }
+    if (amount <= 0n) {
+      throw new ArkadeError("send_failed", "Amount must be greater than zero");
+    }
+    if (!isValidAssetId(assetId)) {
+      throw new ArkadeError("send_failed", "Invalid asset id");
+    }
+    const balanceEntry = get().wallet?.assetBalances.find(
+      (a) => a.assetId === assetId,
+    );
+    const have = balanceEntry ? BigInt(balanceEntry.amount) : 0n;
+    if (amount > have) {
+      throw new ArkadeError(
+        "insufficient_balance",
+        "Insufficient asset balance to burn",
+      );
+    }
+    const wallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
+    let arkTxId: string;
+    try {
+      arkTxId = await wallet.assetManager.burn({ assetId, amount });
+    } catch (e) {
+      throw toArkadeError("send_failed", "Asset burn failed", e);
+    }
+    await get()
+      .refreshWallet()
+      .catch(() => {});
+    return arkTxId;
   },
 
   setTheme: (theme) => {

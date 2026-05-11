@@ -18,6 +18,8 @@ export type BitcoinRail = "collab" | "chainswap";
 export type ExecuteSendOptions = {
   /** Selected on-chain rail when `option.type === "bitcoin"`. Default `"collab"`. */
   bitcoinRail?: BitcoinRail;
+  /** When set, route through `sendAsset` instead of `sendArkade`. */
+  asset?: { assetId: string; amountBase: bigint };
 };
 
 export function isPayableInThisMilestone(option: ParsedPaymentOption): boolean {
@@ -127,6 +129,19 @@ export async function executeSend(
   const address = extractArkadeAddress(option);
   if (!address) {
     return { ok: false, error: "No Arkade address found in payment input" };
+  }
+
+  if (opts.asset) {
+    try {
+      const txId = await useAppStore
+        .getState()
+        .sendAsset(address, opts.asset.assetId, opts.asset.amountBase);
+      return { ok: true, txId, feeSats: 0, amountSats };
+    } catch (e) {
+      if (e instanceof ArkadeError) return { ok: false, error: e.message };
+      const msg = e instanceof Error ? e.message : "Asset send failed";
+      return { ok: false, error: msg };
+    }
   }
 
   try {

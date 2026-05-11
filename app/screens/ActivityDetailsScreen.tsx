@@ -6,6 +6,7 @@ import {
   Repeat,
 } from "lucide-react-native";
 import type * as React from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import Button from "../components/Button";
 import CopyableField from "../components/CopyableField";
@@ -19,6 +20,11 @@ import {
   type Section,
   type SectionRow,
 } from "../services/activity-details/buildSections";
+import {
+  type CachedAssetDetails,
+  fetchAssetDetailsCached,
+  readAssetMetadataMap,
+} from "../services/arkade/asset-metadata";
 import type { Activity } from "../store/types";
 import { useAppStore } from "../store/useAppStore";
 import { type AppTheme, radius, spacing, typography } from "../theme/theme";
@@ -134,6 +140,51 @@ export default function ActivityDetailsScreen() {
   const rowErrors = useAppStore((s) => s.rowErrors);
   const { showToast } = useToast();
   const { format: formatSats, label: unitLabel } = useFormatSats();
+  const [assetMetadata, setAssetMetadata] = useState<
+    Map<string, CachedAssetDetails>
+  >(() => new Map());
+  const assetIds = useMemo(
+    () =>
+      activity?.assets && activity.assets.length > 0
+        ? activity.assets.map((a) => a.assetId)
+        : typeof activity?.metadata?.assetId === "string"
+          ? [activity.metadata.assetId as string]
+          : [],
+    [activity],
+  );
+  useEffect(() => {
+    if (!network) return;
+    if (assetIds.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const initial = await readAssetMetadataMap(network, assetIds);
+      if (cancelled) return;
+      if (initial.size > 0) setAssetMetadata(new Map(initial));
+      // Hydrate missing entries from the SDK (or refresh expired).
+      const next = new Map(initial);
+      for (const id of assetIds) {
+        if (next.has(id)) continue;
+        try {
+          const fetched = await fetchAssetDetailsCached(network, id, "cache");
+          if (cancelled) return;
+          next.set(id, fetched);
+        } catch {
+          // best-effort; falls back to bare ids
+        }
+      }
+      if (!cancelled) setAssetMetadata(new Map(next));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [network, assetIds]);
+  const sections = useMemo(
+    () =>
+      activity
+        ? buildActivityDetailSections(activity, { network, assetMetadata })
+        : [],
+    [activity, network, assetMetadata],
+  );
 
   if (!activity) {
     return (
@@ -169,7 +220,6 @@ export default function ActivityDetailsScreen() {
       : theme.colors.text;
   const dirLabel = directionLabel(activity.direction);
   const rail = railLabel(activity.rail);
-  const sections = buildActivityDetailSections(activity, { network });
 
   const refundableChainSwap =
     activity.source.type === "boltz_swap" &&
