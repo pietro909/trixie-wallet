@@ -73,7 +73,11 @@ import {
   readSecret,
   saveSecret,
 } from "../services/arkade/secret-store";
-import { clearSwapBackgroundState } from "../services/arkade/swap-background";
+import {
+  clearSwapBackgroundState,
+  ensureSwapBackgroundRegistered,
+  unregisterSwapBackgroundTask,
+} from "../services/arkade/swap-background";
 import { mergeActivities } from "../services/arkade/swap-mappers";
 import {
   clearSwapMetadataForWallet,
@@ -111,6 +115,8 @@ import type {
   Activity,
   AppState,
   ArkadeWalletMetadata,
+  BackgroundTaskKey,
+  BackgroundTasks,
   BitcoinUnit,
   FiatCurrency,
   LightningResumeState,
@@ -177,6 +183,40 @@ function normalizeWalletBehavior(
   };
 }
 
+const DEFAULT_BACKGROUND_TASKS: BackgroundTasks = {
+  swapPoll: true,
+};
+
+/**
+ * Coerce a persisted `backgroundTasks` blob into a fully-populated slice.
+ * Each key reads as enabled unless the stored value is exactly `false`, so
+ * existing v4 payloads without the slice (or future payloads missing a key
+ * added later, e.g. `pushNotifications`) inherit defaults rather than
+ * silently turning a newly-added task off.
+ */
+function normalizeBackgroundTasks(
+  raw: Partial<BackgroundTasks> | null | undefined,
+): BackgroundTasks {
+  return {
+    swapPoll: raw?.swapPoll !== false,
+  };
+}
+
+type BackgroundTaskDescriptor = {
+  register: () => Promise<void>;
+  unregister: () => Promise<void>;
+};
+
+const BACKGROUND_TASK_DESCRIPTORS: Record<
+  BackgroundTaskKey,
+  BackgroundTaskDescriptor
+> = {
+  swapPoll: {
+    register: ensureSwapBackgroundRegistered,
+    unregister: unregisterSwapBackgroundTask,
+  },
+};
+
 const DEFAULT_STATE: AppState = {
   schemaVersion: 4,
   wallet: null,
@@ -188,6 +228,7 @@ const DEFAULT_STATE: AppState = {
     serverInfo: null,
   },
   walletBehavior: DEFAULT_WALLET_BEHAVIOR,
+  backgroundTasks: DEFAULT_BACKGROUND_TASKS,
   preferences: {
     theme: "system",
     fiatCurrency: "EUR",
@@ -255,6 +296,10 @@ type StoreState = AppState & {
     swapId: string;
   }>;
   setWalletBehavior: (behavior: Partial<WalletBehavior>) => Promise<void>;
+  setBackgroundTaskEnabled: (
+    taskKey: BackgroundTaskKey,
+    enabled: boolean,
+  ) => Promise<void>;
   lockWallet: () => Promise<void>;
   unlockWithPassword: (password: string) => Promise<boolean>;
   unlockWithBiometrics: () => Promise<boolean>;
@@ -292,6 +337,7 @@ async function persist(state: AppState) {
     wallet: state.wallet,
     network: state.network,
     walletBehavior: state.walletBehavior,
+    backgroundTasks: state.backgroundTasks,
     preferences: state.preferences,
     security: state.security,
   };
@@ -362,10 +408,11 @@ function applySnapshot(
 async function maybeEnsureLightning(
   metadata: ArkadeWalletMetadata,
   behavior: WalletBehavior,
+  swapBackgroundEnabled: boolean,
 ): Promise<void> {
   if (!isLightningSupportedForNetwork(metadata.network)) return;
   try {
-    await ensureLightning({ metadata, behavior });
+    await ensureLightning({ metadata, behavior, swapBackgroundEnabled });
   } catch {
     // Best-effort — wallet remains usable without Lightning.
   }
@@ -640,6 +687,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
           ...(parsed.security ?? {}),
         },
         walletBehavior: normalizeWalletBehavior(parsed.walletBehavior),
+        backgroundTasks: normalizeBackgroundTasks(parsed.backgroundTasks),
         wallet: parsed.wallet ?? null,
         _hydrated: true,
       });
@@ -758,7 +806,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
         snapshot,
         snapshot.activities,
       );
-      await maybeEnsureLightning(draft, get().walletBehavior);
+      await maybeEnsureLightning(
+        draft,
+        get().walletBehavior,
+        get().backgroundTasks.swapPoll,
+      );
       const activities = await buildActivities(
         walletId,
         snapshot.activities,
@@ -842,7 +894,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
         snapshot,
         snapshot.activities,
       );
-      await maybeEnsureLightning(draft, get().walletBehavior);
+      await maybeEnsureLightning(
+        draft,
+        get().walletBehavior,
+        get().backgroundTasks.swapPoll,
+      );
       const activities = await buildActivities(
         walletId,
         snapshot.activities,
@@ -883,7 +939,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
         metadata,
         get().walletBehavior,
       );
-      await maybeEnsureLightning(metadata, get().walletBehavior);
+      await maybeEnsureLightning(
+        metadata,
+        get().walletBehavior,
+        get().backgroundTasks.swapPoll,
+      );
       // Do NOT call `refreshSwapsStatus()` here. The foreground SwapManager
       // (WS + 30s periodic poll + fallback polling on WS drop) already keeps
       // every monitored swap's status fresh in the local repo. `refreshWallet`
@@ -940,6 +1000,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
           metadata,
           behavior: get().walletBehavior,
           trigger,
+          swapBackgroundEnabled: get().backgroundTasks.swapPoll,
         });
         resumeState = lightningResumeStateFromSummary(summary);
         shouldMarkDirty =
@@ -1028,7 +1089,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
         `Lightning is not configured for ${metadata.network}`,
       );
     }
-    await maybeEnsureLightning(metadata, get().walletBehavior);
+    await maybeEnsureLightning(
+      metadata,
+      get().walletBehavior,
+      get().backgroundTasks.swapPoll,
+    );
     const response = await sendLightningPayment({ invoice });
     try {
       const swapId = response.swapId;
@@ -1185,7 +1250,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
       );
     }
 
-    await maybeEnsureLightning(metadata, get().walletBehavior);
+    await maybeEnsureLightning(
+      metadata,
+      get().walletBehavior,
+      get().backgroundTasks.swapPoll,
+    );
 
     const response = await createArkToBtcChainSwap({
       btcAddress: address,
@@ -1276,6 +1345,28 @@ export const useAppStore = create<StoreState>((set, get) => ({
     await persist(get());
   },
 
+  setBackgroundTaskEnabled: async (taskKey, enabled) => {
+    const current = get().backgroundTasks;
+    if (current[taskKey] === enabled) return;
+    const descriptor = BACKGROUND_TASK_DESCRIPTORS[taskKey];
+    set({ backgroundTasks: { ...current, [taskKey]: enabled } });
+    await persist(get());
+    try {
+      if (enabled) {
+        await descriptor.register();
+      } else {
+        await descriptor.unregister();
+      }
+    } catch (e) {
+      recordError(
+        "lightning",
+        `background_task_toggle_failed: ${taskKey}=${enabled}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  },
+
   lockWallet: async () => {
     // Lock is purely UI gating. Do NOT dispose Lightning here:
     // ExpoArkadeSwaps.dispose unregisters the OS swap-poll background task,
@@ -1361,7 +1452,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
     if (!metadata) return 0;
     if (!isLightningSupportedForNetwork(metadata.network)) return 0;
     try {
-      await maybeEnsureLightning(metadata, get().walletBehavior);
+      await maybeEnsureLightning(
+        metadata,
+        get().walletBehavior,
+        get().backgroundTasks.swapPoll,
+      );
       return await getNonTerminalSwapCount();
     } catch {
       return 0;
@@ -1385,13 +1480,14 @@ export const useAppStore = create<StoreState>((set, get) => ({
       };
     }
     const behavior = get().walletBehavior;
+    const swapBackgroundEnabled = get().backgroundTasks.swapPoll;
     return scanRecoveryStateService({
       metadata,
       activities: metadata.activities,
       ensureWallet: async () => {
         await ensureWallet({ metadata, behavior });
         if (isLightningSupportedForNetwork(metadata.network)) {
-          await ensureLightning({ metadata, behavior });
+          await ensureLightning({ metadata, behavior, swapBackgroundEnabled });
         }
       },
     });
@@ -1714,7 +1810,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
         ...draft,
         label: payload.wallet.label,
       };
-      await maybeEnsureLightning(restored, payload.walletBehavior);
+      await maybeEnsureLightning(
+        restored,
+        payload.walletBehavior,
+        get().backgroundTasks.swapPoll,
+      );
       const activities = await buildActivities(
         walletId,
         snapshot.activities,

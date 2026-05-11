@@ -26,6 +26,7 @@ import {
 } from "react-native";
 import Button from "../components/Button";
 import { useToast } from "../components/ToastProvider";
+import { useBackgroundTaskMetrics } from "../hooks/useBackgroundTaskMetrics";
 import { useFormatSats } from "../hooks/useFormatSats";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import {
@@ -39,6 +40,8 @@ import {
   normalizeServerUrl,
 } from "../services/arkade/network";
 import { probeServer } from "../services/arkade/runtime";
+import { SWAP_BACKGROUND_TASK_NAME } from "../services/arkade/swap-background";
+import type { BgTaskMetrics } from "../services/diagnostics/bg-task-metrics";
 import { buildSupportBundle } from "../services/diagnostics/bundle";
 import {
   deleteBundleTempFile,
@@ -48,6 +51,7 @@ import {
 } from "../services/diagnostics/storage";
 import type {
   ArkadeServerInfo,
+  BackgroundTaskKey,
   ServerStatus,
   WalletBehavior,
 } from "../store/types";
@@ -92,9 +96,13 @@ export default function AdvancedScreen() {
   const networkState = useAppStore((s) => s.network);
   const wallet = useAppStore((s) => s.wallet);
   const walletBehavior = useAppStore((s) => s.walletBehavior);
+  const backgroundTasks = useAppStore((s) => s.backgroundTasks);
   const setArkServerUrl = useAppStore((s) => s.setArkServerUrl);
   const refreshServer = useAppStore((s) => s.refreshServer);
   const setWalletBehavior = useAppStore((s) => s.setWalletBehavior);
+  const setBackgroundTaskEnabled = useAppStore(
+    (s) => s.setBackgroundTaskEnabled,
+  );
   const { format: formatSats, label: unitLabel } = useFormatSats();
 
   const [draft, setDraft] = React.useState(networkState.arkServerUrl);
@@ -340,6 +348,42 @@ export default function AdvancedScreen() {
       { vtxoAutoRenewal: true, delegatedRenewal: true },
     );
   }
+
+  const applyBackgroundTaskEnabled = React.useCallback(
+    async (taskKey: BackgroundTaskKey, enabled: boolean) => {
+      try {
+        await setBackgroundTaskEnabled(taskKey, enabled);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (e) {
+        showToast(
+          e instanceof Error ? e.message : "Could not update background task",
+          "error",
+        );
+      }
+    },
+    [setBackgroundTaskEnabled, showToast],
+  );
+
+  const toggleSwapPollTask = React.useCallback(() => {
+    if (!backgroundTasks.swapPoll) {
+      void applyBackgroundTaskEnabled("swapPoll", true);
+      return;
+    }
+    Alert.alert(
+      "Turn off Lightning background polling?",
+      "Lightning swaps will stop progressing while the app is in the background. Reverse swaps may stall and submarine refunds will not trigger until you reopen the app.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Turn off",
+          style: "destructive",
+          onPress: () => {
+            void applyBackgroundTaskEnabled("swapPoll", false);
+          },
+        },
+      ],
+    );
+  }, [backgroundTasks.swapPoll, applyBackgroundTaskEnabled]);
 
   const arkUrl = networkState.arkServerUrl;
   const indexerUrl = arkUrl;
@@ -707,6 +751,33 @@ export default function AdvancedScreen() {
                 : "Renewals stay local to this device."
               : "This network has no default delegate endpoint."
           }
+        />
+      </View>
+
+      <Text style={[styles.sectionLabel, { color: theme.colors.textMuted }]}>
+        Background tasks
+      </Text>
+      <View
+        style={[
+          styles.cardFlush,
+          {
+            backgroundColor: theme.colors.card,
+            borderColor: theme.colors.border,
+          },
+        ]}
+      >
+        <BackgroundTaskRow
+          theme={theme}
+          taskName={SWAP_BACKGROUND_TASK_NAME}
+          displayName="Lightning swap polling"
+          description={
+            backgroundTasks.swapPoll
+              ? "Every ~15 minutes the OS wakes the app to advance pending Lightning swaps and trigger refunds."
+              : "Lightning swaps will not advance while the app is in the background."
+          }
+          enabled={backgroundTasks.swapPoll}
+          recommendedOn
+          onToggle={toggleSwapPollTask}
         />
       </View>
 
@@ -1137,6 +1208,146 @@ function BehaviorToggleRow({
   );
 }
 
+function formatRelativeTime(timestamp: number): string {
+  const deltaMs = Date.now() - timestamp;
+  if (!Number.isFinite(deltaMs) || deltaMs < 0) return "just now";
+  const seconds = Math.floor(deltaMs / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+function formatSummary(summary: Record<string, number> | null): string | null {
+  if (!summary) return null;
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(summary)) {
+    if (value > 0) parts.push(`${key} ${value}`);
+  }
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
+function BackgroundTaskRow({
+  theme,
+  taskName,
+  displayName,
+  description,
+  enabled,
+  recommendedOn,
+  onToggle,
+}: {
+  theme: AppTheme;
+  taskName: string;
+  displayName: string;
+  description: string;
+  enabled: boolean;
+  recommendedOn?: boolean;
+  onToggle: () => void;
+}) {
+  const metrics = useBackgroundTaskMetrics(taskName);
+  const showRecommendedTag = recommendedOn === true && !enabled;
+  return (
+    <View>
+      <BehaviorToggleRow
+        theme={theme}
+        label={displayName}
+        checked={enabled}
+        onPress={onToggle}
+        hint={description}
+        tag={showRecommendedTag ? "Recommended on" : undefined}
+      />
+      <BackgroundTaskMetricsBlock theme={theme} metrics={metrics} />
+    </View>
+  );
+}
+
+function BackgroundTaskMetricsBlock({
+  theme,
+  metrics,
+}: {
+  theme: AppTheme;
+  metrics: BgTaskMetrics | null;
+}) {
+  if (!metrics || metrics.totalRuns === 0) return null;
+  const summary = formatSummary(metrics.lastSuccessSummary);
+  const successPart =
+    metrics.lastSuccessAt != null
+      ? `${formatRelativeTime(metrics.lastSuccessAt)}${
+          summary ? ` — ${summary}` : ""
+        }${
+          metrics.lastSuccessDurationMs != null
+            ? ` (${metrics.lastSuccessDurationMs} ms)`
+            : ""
+        }`
+      : null;
+  const failurePart =
+    metrics.lastFailureAt != null
+      ? `${formatRelativeTime(metrics.lastFailureAt)}${
+          metrics.lastFailureMessage ? ` — ${metrics.lastFailureMessage}` : ""
+        }`
+      : null;
+  return (
+    <View
+      style={[styles.bgMetricsBlock, { borderTopColor: theme.colors.divider }]}
+    >
+      {successPart ? (
+        <BackgroundTaskMetricsLine
+          theme={theme}
+          label="Last run"
+          value={successPart}
+        />
+      ) : null}
+      {failurePart ? (
+        <BackgroundTaskMetricsLine
+          theme={theme}
+          label="Last failure"
+          value={failurePart}
+          danger
+        />
+      ) : null}
+      <BackgroundTaskMetricsLine
+        theme={theme}
+        label="Runs"
+        value={`${metrics.totalSuccesses} success / ${metrics.totalRuns} total${
+          metrics.totalFailures > 0 ? ` · ${metrics.totalFailures} failed` : ""
+        }`}
+      />
+    </View>
+  );
+}
+
+function BackgroundTaskMetricsLine({
+  theme,
+  label,
+  value,
+  danger,
+}: {
+  theme: AppTheme;
+  label: string;
+  value: string;
+  danger?: boolean;
+}) {
+  return (
+    <View style={styles.bgMetricsLine}>
+      <Text style={[styles.bgMetricsLabel, { color: theme.colors.textSubtle }]}>
+        {label}
+      </Text>
+      <Text
+        style={[
+          styles.bgMetricsValue,
+          { color: danger ? theme.colors.danger : theme.colors.textMuted },
+        ]}
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
 function RawRow({
   theme,
   label,
@@ -1421,6 +1632,30 @@ const styles = StyleSheet.create({
   behaviorHint: {
     fontSize: typography.size.xs,
     marginTop: spacing[2],
+    lineHeight: typography.lineHeight.xs,
+  },
+  bgMetricsBlock: {
+    paddingHorizontal: spacing[4],
+    paddingBottom: spacing[4],
+    paddingTop: spacing[3],
+    borderTopWidth: 1,
+    gap: spacing[2],
+  },
+  bgMetricsLine: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing[3],
+  },
+  bgMetricsLabel: {
+    width: 96,
+    fontSize: typography.size.xs,
+    fontWeight: typography.weight.medium,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  bgMetricsValue: {
+    flex: 1,
+    fontSize: typography.size.xs,
     lineHeight: typography.lineHeight.xs,
   },
   rawRow: {

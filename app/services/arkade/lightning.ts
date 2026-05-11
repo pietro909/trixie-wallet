@@ -174,6 +174,7 @@ function instanceKey(metadata: ArkadeWalletMetadata): string {
 async function buildInstance(
   metadata: ArkadeWalletMetadata,
   behavior: WalletBehavior,
+  swapBackgroundEnabled: boolean,
 ): Promise<LightningInstance> {
   const network = asBoltzNetwork(metadata.network);
   const apiUrl = network ? BOLTZ_API_URLS[network] : null;
@@ -206,8 +207,10 @@ async function buildInstance(
       e,
     );
   }
-  await ensureSwapBackgroundRegistered().catch(() => {});
-  await seedSwapPollTask().catch(() => {});
+  if (swapBackgroundEnabled) {
+    await ensureSwapBackgroundRegistered().catch(() => {});
+    await seedSwapPollTask().catch(() => {});
+  }
   await attachSwapManagerSubscriptions(instance);
   return instance;
 }
@@ -277,12 +280,18 @@ function detachSwapManagerSubscriptions(): void {
 export type EnsureLightningInput = {
   metadata: ArkadeWalletMetadata;
   behavior: WalletBehavior;
+  /**
+   * Whether the user has the OS-scheduled swap-poll task enabled. Threaded
+   * through here (rather than read from the store) to avoid a service ⇄ store
+   * import cycle; `useAppStore` already imports `lightning.ts`.
+   */
+  swapBackgroundEnabled: boolean;
 };
 
 export async function ensureLightning(
   input: EnsureLightningInput,
 ): Promise<LightningInstance> {
-  const { metadata, behavior } = input;
+  const { metadata, behavior, swapBackgroundEnabled } = input;
   if (!isLightningSupportedForNetwork(metadata.network)) {
     throw new ArkadeError(
       "lightning_unavailable",
@@ -298,10 +307,12 @@ export async function ensureLightning(
     return activePromise;
   }
   await disposeLightning();
-  const promise = buildInstance(metadata, behavior).then((swaps) => {
-    activeInstance = swaps;
-    return swaps;
-  });
+  const promise = buildInstance(metadata, behavior, swapBackgroundEnabled).then(
+    (swaps) => {
+      activeInstance = swaps;
+      return swaps;
+    },
+  );
   activeWalletId = metadata.id;
   activeNetwork = metadata.network;
   activePromise = promise.catch((e) => {
@@ -908,6 +919,7 @@ export async function resumeLightningSwaps(args: {
   metadata: ArkadeWalletMetadata;
   behavior: WalletBehavior;
   trigger: LightningResumeTrigger;
+  swapBackgroundEnabled: boolean;
 }): Promise<LightningResumeSummary> {
   const startedAt = Date.now();
   let reverseCount = 0;
@@ -921,7 +933,11 @@ export async function resumeLightningSwaps(args: {
   let lastError: string | undefined;
 
   try {
-    await ensureLightning({ metadata: args.metadata, behavior: args.behavior });
+    await ensureLightning({
+      metadata: args.metadata,
+      behavior: args.behavior,
+      swapBackgroundEnabled: args.swapBackgroundEnabled,
+    });
   } catch (e) {
     const message =
       e instanceof Error

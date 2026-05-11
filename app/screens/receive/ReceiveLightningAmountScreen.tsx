@@ -54,6 +54,7 @@ export default function ReceiveLightningAmountScreen() {
   const nav = useNavigation<Nav>();
   const wallet = useAppStore((s) => s.wallet);
   const walletBehavior = useAppStore((s) => s.walletBehavior);
+  const swapBackgroundEnabled = useAppStore((s) => s.backgroundTasks.swapPoll);
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
   const { showToast } = useToast();
 
@@ -75,7 +76,11 @@ export default function ReceiveLightningAmountScreen() {
     let cancelled = false;
     (async () => {
       try {
-        await ensureLightning({ metadata: wallet, behavior: walletBehavior });
+        await ensureLightning({
+          metadata: wallet,
+          behavior: walletBehavior,
+          swapBackgroundEnabled,
+        });
         const [l, f] = await Promise.all([
           getLightningLimits(wallet.network),
           getLightningFees(wallet.network).catch(() => null),
@@ -101,7 +106,7 @@ export default function ReceiveLightningAmountScreen() {
     return () => {
       cancelled = true;
     };
-  }, [wallet, walletBehavior, lightningSupported]);
+  }, [wallet, walletBehavior, swapBackgroundEnabled, lightningSupported]);
 
   const sats = Number.parseInt(value.replace(/[^0-9]/g, ""), 10);
   const sanitizedSats = Number.isFinite(sats) ? sats : 0;

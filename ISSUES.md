@@ -66,3 +66,12 @@ With `edgeToEdgeEnabled: true` (Android 15+ requirement), `@react-navigation/nat
 **Where:** on the UI, possibly in "Wallet behavior"
 
 As a user, I want to see the background tasks configured in the app with some metrics (ie: last successful run, last failed run, last run duration, etc.) and be able to turn off the background tasks.
+
+## 11. Support mainnet (bitcoin)
+**Where:** Restore wallet screen
+
+As a user, I want to see a switch between mutinynet and mainnet when I restore a wallet. This information should be stored also in the backup file so that if I restore from a backup, the network will be automatically selected and the selector disabled.
+
+But I'm creating a new wallet or restoring from a seed, I must be able to select the network I want to use.
+
+The relevant URLs can be retrieved from the sister app `../wallet`

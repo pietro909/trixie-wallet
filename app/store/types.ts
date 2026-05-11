@@ -100,6 +100,20 @@ export type WalletBehavior = {
   delegatedRenewal: boolean;
 };
 
+/**
+ * User-controllable enables for the app's OS-scheduled background tasks.
+ * Kept as its own `AppState` slice rather than nested under `WalletBehavior`
+ * because the scheduler toggle must not trigger the wallet-restart /
+ * backup-dirty side effects that `setWalletBehavior` carries, and because the
+ * backup serializer intentionally does not carry device-local scheduler prefs.
+ */
+export type BackgroundTasks = {
+  /** OS-scheduled Boltz swap-poll (`trixie-boltz-swap-poll`). */
+  swapPoll: boolean;
+};
+
+export type BackgroundTaskKey = keyof BackgroundTasks;
+
 export type IntentFeeProgramConfig = {
   offchainInput?: string;
   onchainInput?: string;
@@ -129,6 +143,7 @@ export type AppState = {
     serverInfo: ArkadeServerInfo | null;
   };
   walletBehavior: WalletBehavior;
+  backgroundTasks: BackgroundTasks;
   preferences: {
     theme: ThemePref;
     fiatCurrency: FiatCurrency;

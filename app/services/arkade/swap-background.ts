@@ -12,6 +12,11 @@ import {
 } from "@arkade-os/sdk/worker/expo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { ArkadeWalletMetadata } from "../../store/types";
+import {
+  type BgTaskSummary,
+  clearBgTaskMetrics,
+  recordBgTaskRun,
+} from "../diagnostics/bg-task-metrics";
 import { recordPersistedError } from "../diagnostics/persisted";
 import { buildIdentityFromSecret } from "./identity";
 import { isMainnetForNetworkName } from "./network";
@@ -53,6 +58,37 @@ function parseRecentResults(raw: string): RecordedSwapTaskResult[] {
   }
 }
 
+const SWAP_POLL_SUMMARY_KEYS = [
+  "polled",
+  "updated",
+  "claimed",
+  "refunded",
+  "errors",
+] as const;
+
+function summaryFromSwapPollData(
+  data: Record<string, unknown> | undefined,
+): BgTaskSummary | undefined {
+  if (!data) return undefined;
+  const out: BgTaskSummary = {};
+  for (const key of SWAP_POLL_SUMMARY_KEYS) {
+    const value = data[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      out[key] = value;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function errorMessageFromSwapPollData(
+  data: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!data) return undefined;
+  const err = data.error;
+  if (typeof err === "string" && err.length > 0) return err;
+  return undefined;
+}
+
 class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
   async pushResult(result: TaskResult): Promise<void> {
     await super.pushResult(result);
@@ -65,6 +101,16 @@ class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
     list.push(recorded);
     while (list.length > RECENT_RESULTS_CAP) list.shift();
     await AsyncStorage.setItem(RECENT_RESULTS_KEY, JSON.stringify(list));
+    // Persist durable per-task metrics for the Advanced UI. Separate from the
+    // shadow log above, which is foreground-resume-only and destructive.
+    // `TaskResult` has no start time and the package wrapper exposes no
+    // before/after hook, so `durationMs` is omitted.
+    await recordBgTaskRun(SWAP_BACKGROUND_TASK_NAME, {
+      status: result.status,
+      occurredAt: result.executedAt,
+      summary: summaryFromSwapPollData(result.data),
+      errorMessage: errorMessageFromSwapPollData(result.data),
+    });
   }
 }
 
@@ -150,7 +196,19 @@ export async function clearSwapBackgroundState(): Promise<void> {
     AsyncStorage.removeItem(QUEUE_INBOX_KEY),
     AsyncStorage.removeItem(QUEUE_OUTBOX_KEY),
     AsyncStorage.removeItem(QUEUE_CONFIG_KEY),
+    clearBgTaskMetrics(SWAP_BACKGROUND_TASK_NAME),
   ]);
+}
+
+/**
+ * App-owned unregister helper. Wraps the package's unregister with the
+ * package-specific task name so callers (e.g. the store's BG-task descriptor)
+ * never need to know the OS task name.
+ */
+export async function unregisterSwapBackgroundTask(): Promise<void> {
+  await unregisterExpoSwapBackgroundTask(SWAP_BACKGROUND_TASK_NAME).catch(
+    () => {},
+  );
 }
 
 export async function seedSwapPollTask(): Promise<void> {
