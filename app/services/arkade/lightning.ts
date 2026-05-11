@@ -418,19 +418,34 @@ export async function createLightningInvoice(
   }
 }
 
+export type SendLightningPaymentResult = SendLightningPaymentResponse & {
+  swapId: string | null;
+};
+
+let lightningSendLock: Promise<unknown> = Promise.resolve();
+
 export async function sendLightningPayment(
   args: SendLightningPaymentRequest,
-): Promise<SendLightningPaymentResponse> {
-  const swaps = await getLightning();
-  try {
-    return await swaps.sendLightningPayment(args);
-  } catch (e) {
-    throw toArkadeError(
-      "swap_settle_failed",
-      "Failed to send Lightning payment",
-      e,
-    );
-  }
+): Promise<SendLightningPaymentResult> {
+  const run = async (): Promise<SendLightningPaymentResult> => {
+    const swaps = await getLightning();
+    const knownIds = await captureSubmarineSwapIds();
+    let response: SendLightningPaymentResponse;
+    try {
+      response = await swaps.sendLightningPayment(args);
+    } catch (e) {
+      throw toArkadeError(
+        "swap_settle_failed",
+        "Failed to send Lightning payment",
+        e,
+      );
+    }
+    const swapId = await findNewSubmarineSwapId(knownIds);
+    return { ...response, swapId };
+  };
+  const next = lightningSendLock.catch(() => {}).then(run);
+  lightningSendLock = next;
+  return next;
 }
 
 export async function getLightningLimits(
@@ -691,14 +706,22 @@ export async function getNonTerminalSwapCount(): Promise<number> {
   }
 }
 
-/**
- * Returns the most recent submarine swap id created at or after `afterTs`.
- * Used by the send flow to bridge `sendLightningPayment`'s `txid`-only response
- * back to the swap row in the repository for linkage. Returns null if no fresh
- * candidate is found.
- */
-export async function findRecentSubmarineSwapId(
-  afterTs: number,
+async function captureSubmarineSwapIds(): Promise<Set<string>> {
+  if (!activeInstance) return new Set();
+  try {
+    const swaps = await activeInstance.swapRepository.getAllSwaps({
+      type: "submarine",
+      orderBy: "createdAt",
+      orderDirection: "desc",
+    });
+    return new Set(swaps.map((s) => s.id));
+  } catch {
+    return new Set();
+  }
+}
+
+async function findNewSubmarineSwapId(
+  knownIds: Set<string>,
 ): Promise<string | null> {
   if (!activeInstance) return null;
   try {
@@ -708,7 +731,7 @@ export async function findRecentSubmarineSwapId(
       orderDirection: "desc",
     });
     for (const swap of swaps) {
-      if (swap.createdAt * 1000 >= afterTs) return swap.id;
+      if (!knownIds.has(swap.id)) return swap.id;
     }
   } catch {
     // ignore

@@ -28,7 +28,6 @@ import {
   createArkToBtcChainSwap,
   disposeLightning,
   ensureLightning,
-  findRecentSubmarineSwapId,
   getLatestBoltzSwapWriteAt,
   getLightningActivitySources,
   getNonTerminalSwapCount,
@@ -67,7 +66,6 @@ import {
   probeServer,
   refreshWalletSnapshot,
   setIncomingFundsListener,
-  snapshotWallet,
   type WalletSnapshot,
 } from "../services/arkade/runtime";
 import {
@@ -428,6 +426,8 @@ function scheduleLightningRestore(walletId: string): void {
 }
 
 let lightningResumeInFlight: Promise<void> | null = null;
+let refreshInFlight: Promise<void> | null = null;
+let refreshPending = false;
 
 type LightningResumeSummary = Awaited<ReturnType<typeof resumeLightningSwaps>>;
 
@@ -870,30 +870,57 @@ export const useAppStore = create<StoreState>((set, get) => ({
     }
   },
 
-  refreshWallet: async () => {
-    const metadata = get().wallet;
-    if (!metadata) return;
-    const snapshot = await refreshWalletSnapshot(
-      metadata,
-      get().walletBehavior,
-    );
-    await maybeEnsureLightning(metadata, get().walletBehavior);
-    // Do NOT call `refreshSwapsStatus()` here. The foreground SwapManager
-    // (WS + 30s periodic poll + fallback polling on WS drop) already keeps
-    // every monitored swap's status fresh in the local repo. `refreshWallet`
-    // is the universal target for swap-event-driven refreshes (debounced via
-    // `setSwapEventListener`), every send op, and pull-to-refresh — adding a
-    // per-swap HTTP poll here storms Boltz on each event without adding
-    // information the SwapManager hasn't already saved. The resume path keeps
-    // an explicit `refreshSwapsStatus()` because at resume time the WS may
-    // not yet be connected.
-    const activities = await buildActivities(
-      metadata.id,
-      snapshot.activities,
-      get().network.detectedNetwork ?? metadata.network,
-    );
-    set({ wallet: applySnapshot(metadata, snapshot, activities) });
-    await persist(get());
+  refreshWallet: () => {
+    if (refreshInFlight) {
+      refreshPending = true;
+      return refreshInFlight;
+    }
+
+    const refreshWalletOnce = async () => {
+      const metadata = get().wallet;
+      if (!metadata) return;
+      const snapshot = await refreshWalletSnapshot(
+        metadata,
+        get().walletBehavior,
+      );
+      await maybeEnsureLightning(metadata, get().walletBehavior);
+      // Do NOT call `refreshSwapsStatus()` here. The foreground SwapManager
+      // (WS + 30s periodic poll + fallback polling on WS drop) already keeps
+      // every monitored swap's status fresh in the local repo. `refreshWallet`
+      // is the universal target for swap-event-driven refreshes (debounced via
+      // `setSwapEventListener`), every send op, and pull-to-refresh — adding a
+      // per-swap HTTP poll here storms Boltz on each event without adding
+      // information the SwapManager hasn't already saved. The resume path keeps
+      // an explicit `refreshSwapsStatus()` because at resume time the WS may
+      // not yet be connected.
+      const activities = await buildActivities(
+        metadata.id,
+        snapshot.activities,
+        get().network.detectedNetwork ?? metadata.network,
+      );
+      const current = get().wallet;
+      if (!current || current.id !== metadata.id) return;
+      set({ wallet: applySnapshot(current, snapshot, activities) });
+      await persist(get());
+    };
+
+    refreshInFlight = (async () => {
+      let lastError: unknown = null;
+      do {
+        refreshPending = false;
+        try {
+          await refreshWalletOnce();
+          lastError = null;
+        } catch (e) {
+          lastError = e;
+        }
+      } while (refreshPending);
+      if (lastError) throw lastError;
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+
+    return refreshInFlight;
   },
 
   resumeLightning: async (trigger) => {
@@ -982,20 +1009,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
     } catch (e) {
       throw toArkadeError("send_failed", "Send failed", e);
     }
-    try {
-      const snapshot = await snapshotWallet(wallet, metadata.arkServerUrl, {
-        network: get().network.detectedNetwork ?? metadata.network,
+    await get()
+      .refreshWallet()
+      .catch(() => {
+        // ignore refresh failure; txId is still returned
       });
-      const activities = await buildActivities(
-        metadata.id,
-        snapshot.activities,
-        get().network.detectedNetwork ?? metadata.network,
-      );
-      set({ wallet: applySnapshot(metadata, snapshot, activities) });
-      await persist(get());
-    } catch {
-      // ignore refresh failure; txId is still returned
-    }
     return txId;
   },
 
@@ -1011,10 +1029,9 @@ export const useAppStore = create<StoreState>((set, get) => ({
       );
     }
     await maybeEnsureLightning(metadata, get().walletBehavior);
-    const beforeTs = Date.now();
     const response = await sendLightningPayment({ invoice });
     try {
-      const swapId = await findRecentSubmarineSwapId(beforeTs);
+      const swapId = response.swapId;
       if (swapId) {
         await recordSwapMetadata({
           swapId,
@@ -1033,24 +1050,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
     } catch {
       // metadata persistence is best-effort; the send already settled.
     }
-    try {
-      const wallet = await ensureWallet({
-        metadata,
-        behavior: get().walletBehavior,
+    await get()
+      .refreshWallet()
+      .catch(() => {
+        // refresh failure; ignore
       });
-      const snapshot = await snapshotWallet(wallet, metadata.arkServerUrl, {
-        network: get().network.detectedNetwork ?? metadata.network,
-      });
-      const activities = await buildActivities(
-        metadata.id,
-        snapshot.activities,
-        get().network.detectedNetwork ?? metadata.network,
-      );
-      set({ wallet: applySnapshot(metadata, snapshot, activities) });
-      await persist(get());
-    } catch {
-      // refresh failure; ignore
-    }
     const feeSats = Math.max(0, response.amount - amountSats);
     return { txId: response.txid, feeSats, amountSats: response.amount };
   },
@@ -1131,20 +1135,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
       throw toArkadeError("send_failed", "Collaborative exit failed", e);
     }
 
-    try {
-      const snapshot = await snapshotWallet(wallet, metadata.arkServerUrl, {
-        network,
+    await get()
+      .refreshWallet()
+      .catch(() => {
+        // refresh failure; ignore — txId is still returned
       });
-      const activities = await buildActivities(
-        metadata.id,
-        snapshot.activities,
-        network,
-      );
-      set({ wallet: applySnapshot(metadata, snapshot, activities) });
-      await persist(get());
-    } catch {
-      // refresh failure; ignore — txId is still returned
-    }
     return { txId, feeSats: estimate.feeSats, amountSats };
   },
 
@@ -1251,20 +1246,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
       // Failures surface via SwapManager events / Activity row status.
     });
 
-    try {
-      const snapshot = await snapshotWallet(wallet, metadata.arkServerUrl, {
-        network,
+    await get()
+      .refreshWallet()
+      .catch(() => {
+        // refresh failure; offchain leg is still confirmed locally
       });
-      const activities = await buildActivities(
-        metadata.id,
-        snapshot.activities,
-        network,
-      );
-      set({ wallet: applySnapshot(metadata, snapshot, activities) });
-      await persist(get());
-    } catch {
-      // refresh failure; offchain leg is still confirmed locally
-    }
 
     return {
       txId: walletTxId,
