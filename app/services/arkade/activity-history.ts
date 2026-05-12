@@ -447,14 +447,28 @@ export async function buildActivityHistory(
       settledAmount: bigint;
       boardingTxid: string | null;
     } | null = null;
-    if (decomp.kind === "batch_receive") {
-      const match = findBoardingMatch(decomp.createdAmount, true);
-      if (match) {
-        usedBoardingTxids.add(match.key.boardingTxid);
-        boardingSettlement = {
-          settledAmount: decomp.createdAmount,
-          boardingTxid: match.key.boardingTxid,
-        };
+
+    if (
+      decomp.kind === "batch_receive" ||
+      decomp.kind === "renewal_plus_receive" ||
+      decomp.kind === "renewal"
+    ) {
+      const amount =
+        decomp.kind === "batch_receive"
+          ? decomp.createdAmount
+          : decomp.kind === "renewal_plus_receive"
+            ? decomp.receiveAmount
+            : decomp.createdAmount - decomp.spentAmount;
+
+      if (amount > 0n) {
+        const match = findBoardingMatch(amount, false);
+        if (match) {
+          usedBoardingTxids.add(match.key.boardingTxid);
+          boardingSettlement = {
+            settledAmount: amount,
+            boardingTxid: match.key.boardingTxid,
+          };
+        }
       }
     } else if (
       decomp.kind === "settlement" &&
@@ -492,7 +506,12 @@ export async function buildActivityHistory(
         },
         metadata: withNetwork(meta, network),
       });
-      continue;
+
+      // Pure payment/settlement rows are fully consumed by boarding reclassification.
+      // Mixed rows (renewals) must fall through to the switch to emit the renewal part.
+      if (decomp.kind === "batch_receive" || decomp.kind === "settlement") {
+        continue;
+      }
     }
 
     switch (decomp.kind) {
@@ -575,6 +594,10 @@ export async function buildActivityHistory(
             network,
           ),
         });
+
+        // Skip the 'Arkade received' payment row if it was already reclassified as boarding_settled
+        if (boardingSettlement) break;
+
         const receiveMeta: NonNullable<Activity["metadata"]> = {
           commitmentTxid,
           mixedWithRenewal: true,

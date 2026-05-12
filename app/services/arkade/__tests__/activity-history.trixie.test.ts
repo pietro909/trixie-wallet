@@ -389,3 +389,86 @@ describe("Phase F — Trixie-specific cases", () => {
     });
   });
 });
+
+  // F-12 — Boarding settled mixed with renewal (lag case): isBoardingMixed=false,
+  // kind=renewal_plus_receive, but amount matches a boarding tx.
+  // Reclassifies the receive part to boarding_settled.
+  it("F-12: boarding settlement mixed with renewal (lag case) → renewal + boarding_settled", async () => {
+    const C = "cmt-F12";
+    const B = "B-F12";
+    const tx = boardingTx({
+      key: { boardingTxid: B, commitmentTxid: "", arkTxid: "" },
+      amount: 1000,
+      settled: true, // Already settled (partial SDK lag)
+    });
+    const prev = vtxo({
+      txid: "prev-F12",
+      value: 500,
+      settledBy: C,
+      isSpent: true,
+    });
+    const leaf = leafVtxo(C, {
+      txid: "leaf-F12",
+      value: 1500, // 500 renewal + 1000 boarding
+      createdAt: new Date(baseDate.getTime() + 1000),
+    });
+
+    // isBoardingMixed (Set) is empty -> SDK lag
+    const activities = await buildActivityHistory([prev, leaf], [tx], new Set());
+
+    const ids = activities.map((a) => a.id).sort();
+    expect(ids).toContain(`arkade:boarding:${B}`);
+    expect(ids).toContain(`arkade:boarding_settled:${C}`);
+    expect(activities.find((a) => a.id === `arkade:renewal:${C}`)).toBeDefined();
+    // The "Arkade received" row from renewal_plus_receive is suppressed:
+    expect(activities.find((a) => a.id === `arkade:batch:${C}`)).toBeUndefined();
+
+    const settled = activities.find(
+      (a) => a.id === `arkade:boarding_settled:${C}`,
+    );
+    expect(settled?.metadata).toMatchObject({
+      commitmentTxid: C,
+      settledAmountSats: 1000,
+      boardingTxid: B,
+    });
+  });
+
+  // F-13 — Boarding settled mixed with renewal (explicit case): isBoardingMixed=true,
+  // kind=renewal. leftover = boarding amount.
+  // Emits renewal + boarding_settled.
+  it("F-13: boarding settlement mixed with renewal (explicit case) → renewal + boarding_settled", async () => {
+    const C = "cmt-F13";
+    const B = "B-F13";
+    const tx = boardingTx({
+      key: { boardingTxid: B, commitmentTxid: "", arkTxid: "" },
+      amount: 1000,
+      settled: true,
+    });
+    const prev = vtxo({
+      txid: "prev-F13",
+      value: 500,
+      settledBy: C,
+      isSpent: true,
+    });
+    const leaf = leafVtxo(C, {
+      txid: "leaf-F13",
+      value: 1500, // 500 renewal + 1000 boarding
+      createdAt: new Date(baseDate.getTime() + 1000),
+    });
+
+    const activities = await buildActivityHistory([prev, leaf], [tx], new Set([C]));
+
+    const ids = activities.map((a) => a.id).sort();
+    expect(ids).toContain(`arkade:boarding:${B}`);
+    expect(ids).toContain(`arkade:boarding_settled:${C}`);
+    expect(activities.find((a) => a.id === `arkade:renewal:${C}`)).toBeDefined();
+
+    const settled = activities.find(
+      (a) => a.id === `arkade:boarding_settled:${C}`,
+    );
+    expect(settled?.metadata).toMatchObject({
+      commitmentTxid: C,
+      settledAmountSats: 1000,
+      boardingTxid: B,
+    });
+  });
