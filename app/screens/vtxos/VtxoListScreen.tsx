@@ -96,65 +96,76 @@ export default function VtxoListScreen(): React.ReactElement {
     }, [fetch]),
   );
 
-  function openExplorer() {
+  const openExplorer = React.useCallback(() => {
     if (!arkAddress || !network) return;
     const base =
       network.toLowerCase() === "mutinynet"
         ? "https://explorer.mutinynet.arkade.sh"
         : "https://arkade.space";
     void Linking.openURL(`${base}/address/${arkAddress}`);
-  }
+  }, [arkAddress, network]);
 
-  function renderItem({ item }: { item: ClassifiedVtxo }) {
-    const visuals = vtxoStatusVisuals(item.status, theme);
-    const hasAssets = item.assets && item.assets.length > 0;
-    return (
-      <Pressable
-        onPress={() => nav.navigate("VtxoDetail", { outpoint: item.outpoint })}
-        style={({ pressed }) => [
-          styles.row,
-          {
-            borderBottomColor: theme.colors.divider,
-            opacity: pressed ? 0.6 : 1,
-          },
-        ]}
-      >
-        <View style={styles.rowMain}>
-          <Text
-            style={[styles.amount, { color: visuals.amountColor }]}
-            numberOfLines={1}
-          >
-            {formatSats(item.amountSats)} {unitLabel}
-          </Text>
-          <View style={[styles.pill, { backgroundColor: visuals.bg }]}>
-            <Text style={[styles.pillText, { color: visuals.fg }]}>
-              {visuals.label}
-            </Text>
-          </View>
-          {hasAssets ? (
-            <View
-              style={[
-                styles.pill,
-                { backgroundColor: theme.colors.primarySoft },
-              ]}
+  // `renderItem` must keep a stable identity across renders: FlatList
+  // compares it by reference when deciding whether to re-render visible
+  // rows. A fresh function each render forces every on-screen VTXO to
+  // recompute its visuals — fine at 30 rows, painful at 3000.
+  const renderItem = React.useCallback(
+    ({ item }: { item: ClassifiedVtxo }) => {
+      const visuals = vtxoStatusVisuals(item.status, theme);
+      const hasAssets = item.assets && item.assets.length > 0;
+      return (
+        <Pressable
+          onPress={() =>
+            nav.navigate("VtxoDetail", { outpoint: item.outpoint })
+          }
+          style={({ pressed }) => [
+            styles.row,
+            {
+              borderBottomColor: theme.colors.divider,
+              opacity: pressed ? 0.6 : 1,
+            },
+          ]}
+        >
+          <View style={styles.rowMain}>
+            <Text
+              style={[styles.amount, { color: visuals.amountColor }]}
+              numberOfLines={1}
             >
-              <Text style={[styles.pillText, { color: theme.colors.primary }]}>
-                + ASSET
+              {formatSats(item.amountSats)} {unitLabel}
+            </Text>
+            <View style={[styles.pill, { backgroundColor: visuals.bg }]}>
+              <Text style={[styles.pillText, { color: visuals.fg }]}>
+                {visuals.label}
               </Text>
             </View>
-          ) : null}
-        </View>
-        <View style={styles.rowSub}>
-          <Text style={[styles.outpoint, { color: theme.colors.textSubtle }]}>
-            {shortOutpoint(item.outpoint)}
-          </Text>
-          <Text style={[styles.created, { color: theme.colors.textSubtle }]}>
-            {relativeTime(item.createdAt.getTime())}
-          </Text>
-        </View>
-      </Pressable>
-    );
-  }
+            {hasAssets ? (
+              <View
+                style={[
+                  styles.pill,
+                  { backgroundColor: theme.colors.primarySoft },
+                ]}
+              >
+                <Text
+                  style={[styles.pillText, { color: theme.colors.primary }]}
+                >
+                  + ASSET
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          <View style={styles.rowSub}>
+            <Text style={[styles.outpoint, { color: theme.colors.textSubtle }]}>
+              {shortOutpoint(item.outpoint)}
+            </Text>
+            <Text style={[styles.created, { color: theme.colors.textSubtle }]}>
+              {relativeTime(item.createdAt.getTime())}
+            </Text>
+          </View>
+        </Pressable>
+      );
+    },
+    [theme, formatSats, unitLabel, nav],
+  );
 
   const header = (
     <View>
