@@ -387,7 +387,13 @@ type StoreState = AppState & {
   }) => Promise<{ arkTxId: string; assetId: string }>;
   reissueAsset: (assetId: string, amount: bigint) => Promise<string>;
   burnAsset: (assetId: string, amount: bigint) => Promise<string>;
-  loadWalletVtxos: () => Promise<ClassifiedVtxo[]>;
+  /**
+   * Load classified VTXOs. With `maxAgeMs`, returns the cached snapshot when
+   * it's within the freshness window (avoids the SDK round-trip on
+   * back-and-forth navigation between the list and detail screens). Without
+   * `maxAgeMs`, always re-fetches.
+   */
+  loadWalletVtxos: (opts?: { maxAgeMs?: number }) => Promise<ClassifiedVtxo[]>;
   setTheme: (theme: ThemePref) => Promise<void>;
   setFiatCurrency: (currency: FiatCurrency) => Promise<void>;
   setBitcoinUnit: (unit: BitcoinUnit) => Promise<void>;
@@ -456,6 +462,23 @@ function buildMetadata(
 }
 
 let balanceAuditWarned = false;
+
+/**
+ * In-memory cache for the most recent {@link ClassifiedVtxo} snapshot. Keyed
+ * by walletId so wallet swaps cannot leak stale data. Not in Zustand state
+ * because `ClassifiedVtxo.createdAt` is a `Date` (persist serialization
+ * would mangle it), and the snapshot is purely a UI-side optimization.
+ * Invalidated on lock, reset, and create-wallet.
+ */
+let vtxoSnapshotCache: {
+  walletId: string;
+  items: ClassifiedVtxo[];
+  fetchedAt: number;
+} | null = null;
+
+function invalidateVtxoSnapshotCache(): void {
+  vtxoSnapshotCache = null;
+}
 
 function applySnapshot(
   metadata: ArkadeWalletMetadata,
@@ -1464,6 +1487,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
     // which would silently kill background polling until the next unlock.
     // The in-process wallet is kept too because the Lightning instance holds
     // a reference to it and would crash on swap events otherwise.
+    invalidateVtxoSnapshotCache();
     set((s) => ({
       security: { ...s.security, isLocked: true },
     }));
@@ -1500,6 +1524,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
   },
 
   resetWallet: async () => {
+    invalidateVtxoSnapshotCache();
     const metadata = get().wallet;
     await disposeLightning();
     if (metadata) {
@@ -2181,7 +2206,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
     return arkTxId;
   },
 
-  loadWalletVtxos: async () => {
+  loadWalletVtxos: async (opts) => {
     const metadata = get().wallet;
     if (!metadata) {
       throw new ArkadeError("wallet_not_ready", "No wallet available");
@@ -2189,12 +2214,31 @@ export const useAppStore = create<StoreState>((set, get) => ({
     if (get().security.isLocked) {
       throw new ArkadeError("wallet_not_ready", "Unlock the wallet first");
     }
+    const maxAgeMs = opts?.maxAgeMs;
+    if (
+      maxAgeMs != null &&
+      vtxoSnapshotCache &&
+      vtxoSnapshotCache.walletId === metadata.id &&
+      Date.now() - vtxoSnapshotCache.fetchedAt < maxAgeMs
+    ) {
+      return vtxoSnapshotCache.items;
+    }
     const wallet = await ensureWallet({
       metadata,
       behavior: get().walletBehavior,
     });
     const dustSats = get().network.serverInfo?.dustSats ?? 0;
-    return loadVtxos(wallet, { includeRecoverable: true }, dustSats);
+    const items = await loadVtxos(
+      wallet,
+      { includeRecoverable: true },
+      dustSats,
+    );
+    vtxoSnapshotCache = {
+      walletId: metadata.id,
+      items,
+      fetchedAt: Date.now(),
+    };
+    return items;
   },
 
   setTheme: async (theme) => {

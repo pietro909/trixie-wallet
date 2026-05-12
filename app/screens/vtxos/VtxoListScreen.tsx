@@ -20,8 +20,9 @@ import type {
   ClassifiedVtxo,
   VtxoStatus,
 } from "../../services/arkade/vtxo-listing";
+import { vtxoStatusVisuals } from "../../services/vtxo-status";
 import { useAppStore } from "../../store/useAppStore";
-import { type AppTheme, radius, spacing, typography } from "../../theme/theme";
+import { radius, spacing, typography } from "../../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "VtxoList">;
 
@@ -41,71 +42,6 @@ function relativeTime(ts: number): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
-}
-
-type StatusStyle = {
-  label: string;
-  fg: string;
-  bg: string;
-  amountColor: string;
-  description: string;
-};
-
-function statusStyle(status: VtxoStatus, theme: AppTheme): StatusStyle {
-  switch (status) {
-    case "settled":
-      return {
-        label: "Settled",
-        fg: theme.colors.success,
-        bg: theme.colors.successSoft,
-        amountColor: theme.colors.text,
-        description:
-          "Finalized in a batch. Fully spendable through normal Arkade flows.",
-      };
-    case "preconfirmed":
-      return {
-        label: "Pending",
-        fg: theme.colors.pending,
-        bg: theme.colors.pendingSoft,
-        amountColor: theme.colors.text,
-        description:
-          "Received but not yet finalized in a batch. Spendable once it settles.",
-      };
-    case "swept":
-      return {
-        label: "Recoverable",
-        fg: theme.colors.warning,
-        bg: theme.colors.pendingSoft,
-        amountColor: theme.colors.text,
-        description:
-          "Swept by the server but still claimable. Will be folded into a fresh batch.",
-      };
-    case "subdust":
-      return {
-        label: "Dust",
-        fg: theme.colors.textMuted,
-        bg: theme.colors.surfaceSubtle,
-        amountColor: theme.colors.textSubtle,
-        description:
-          "Below the dust threshold — currently unspendable on its own.",
-      };
-    case "spent":
-      return {
-        label: "Spent",
-        fg: theme.colors.danger,
-        bg: theme.colors.dangerSoft,
-        amountColor: theme.colors.textSubtle,
-        description: "Already consumed by a later transaction.",
-      };
-    default:
-      return {
-        label: "Unknown",
-        fg: theme.colors.textMuted,
-        bg: theme.colors.surfaceSubtle,
-        amountColor: theme.colors.text,
-        description: "Unclassified entry. Investigate via the explorer.",
-      };
-  }
 }
 
 const STATUS_KEY: VtxoStatus[] = [
@@ -169,7 +105,7 @@ export default function VtxoListScreen(): React.ReactElement {
   }
 
   function renderItem({ item }: { item: ClassifiedVtxo }) {
-    const visuals = statusStyle(item.status, theme);
+    const visuals = vtxoStatusVisuals(item.status, theme);
     const hasAssets = item.assets && item.assets.length > 0;
     return (
       <Pressable
@@ -230,7 +166,7 @@ export default function VtxoListScreen(): React.ReactElement {
       </Text>
       <View style={styles.legend}>
         {STATUS_KEY.map((key) => {
-          const s = statusStyle(key, theme);
+          const s = vtxoStatusVisuals(key, theme);
           return (
             <View key={key} style={styles.legendRow}>
               <View style={[styles.pill, { backgroundColor: s.bg }]}>

@@ -43,7 +43,14 @@ function formatOutpoint(vtxo: ExtendedVirtualCoin): string {
  * 1. `subdust` — wins over everything (most user-relevant signal).
  * 2. `swept` — when the SDK marks the entry recoverable (sweep happened,
  *    but the value is still claimable in a future batch).
- * 3. `virtualStatus.state` mapped 1:1 for the remaining cases.
+ * 3. explicit map from `virtualStatus.state` for the remaining cases.
+ *
+ * The explicit switch is intentional: assigning `state` directly is
+ * type-safe today (SDK union is a subset of {@link VtxoStatus}) but a future
+ * SDK that adds a new state would either fail compile or — worse, after a
+ * stale-types mismatch — slip through as an unknown string at runtime.
+ * Falling back to `"preconfirmed"` is the safe choice: it never claims an
+ * unknown output is finalized.
  */
 export function classifyVtxo(
   vtxo: ExtendedVirtualCoin,
@@ -51,7 +58,18 @@ export function classifyVtxo(
 ): VtxoStatus {
   if (dustSats > 0 && isSubdust(vtxo, BigInt(dustSats))) return "subdust";
   if (isRecoverable(vtxo)) return "swept";
-  return vtxo.virtualStatus.state;
+  switch (vtxo.virtualStatus.state) {
+    case "settled":
+      return "settled";
+    case "preconfirmed":
+      return "preconfirmed";
+    case "swept":
+      return "swept";
+    case "spent":
+      return "spent";
+    default:
+      return "preconfirmed";
+  }
 }
 
 /**
@@ -82,7 +100,7 @@ export async function loadVtxos(
     }),
   );
   classified.sort((a, b) => {
-    if (a.value !== b.value) return b.value - a.value;
+    if (a.amountSats !== b.amountSats) return b.amountSats - a.amountSats;
     return b.createdAt.getTime() - a.createdAt.getTime();
   });
   return classified;

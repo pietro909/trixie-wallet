@@ -22,10 +22,8 @@ import {
   readAssetMetadataMap,
 } from "../../services/arkade/asset-metadata";
 import { ArkadeError } from "../../services/arkade/errors";
-import type {
-  ClassifiedVtxo,
-  VtxoStatus,
-} from "../../services/arkade/vtxo-listing";
+import type { ClassifiedVtxo } from "../../services/arkade/vtxo-listing";
+import { vtxoStatusVisuals } from "../../services/vtxo-status";
 import { useAppStore } from "../../store/useAppStore";
 import { type AppTheme, radius, spacing, typography } from "../../theme/theme";
 
@@ -57,63 +55,6 @@ function relative(ts: number): string {
   return fmt(days, "d");
 }
 
-function statusCopy(status: VtxoStatus): {
-  label: string;
-  description: string;
-} {
-  switch (status) {
-    case "settled":
-      return {
-        label: "Settled",
-        description: "Finalized in a batch. Fully spendable.",
-      };
-    case "preconfirmed":
-      return {
-        label: "Pending",
-        description: "Received but not yet finalized in a batch.",
-      };
-    case "swept":
-      return {
-        label: "Recoverable",
-        description:
-          "Swept by the server but still claimable in a future batch.",
-      };
-    case "subdust":
-      return {
-        label: "Dust",
-        description:
-          "Below the dust threshold — currently unspendable on its own.",
-      };
-    case "spent":
-      return {
-        label: "Spent",
-        description: "Already consumed by a later transaction.",
-      };
-    default:
-      return { label: "Unknown", description: "Unclassified entry." };
-  }
-}
-
-function statusPillColors(
-  status: VtxoStatus,
-  theme: AppTheme,
-): { fg: string; bg: string } {
-  switch (status) {
-    case "settled":
-      return { fg: theme.colors.success, bg: theme.colors.successSoft };
-    case "preconfirmed":
-      return { fg: theme.colors.pending, bg: theme.colors.pendingSoft };
-    case "swept":
-      return { fg: theme.colors.warning, bg: theme.colors.pendingSoft };
-    case "subdust":
-      return { fg: theme.colors.textMuted, bg: theme.colors.surfaceSubtle };
-    case "spent":
-      return { fg: theme.colors.danger, bg: theme.colors.dangerSoft };
-    default:
-      return { fg: theme.colors.textMuted, bg: theme.colors.surfaceSubtle };
-  }
-}
-
 export default function VtxoDetailScreen(): React.ReactElement {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
@@ -137,7 +78,9 @@ export default function VtxoDetailScreen(): React.ReactElement {
     setLoading(true);
     void (async () => {
       try {
-        const list = await loadWalletVtxos();
+        // Reuse the list-screen snapshot when fresh enough — tapping a row
+        // shouldn't trigger a second `getVtxos` round-trip.
+        const list = await loadWalletVtxos({ maxAgeMs: 30_000 });
         if (cancelled) return;
         const found = list.find((v) => v.outpoint === outpoint) ?? null;
         setVtxo(found);
@@ -232,8 +175,7 @@ export default function VtxoDetailScreen(): React.ReactElement {
     );
   }
 
-  const status = statusCopy(vtxo.status);
-  const pill = statusPillColors(vtxo.status, theme);
+  const visuals = vtxoStatusVisuals(vtxo.status, theme);
   const expiry = vtxo.virtualStatus.batchExpiry;
   const [txid] = vtxo.outpoint.split(":");
   const txExplorer = txid ? explorerUrl("ark_tx", txid, network) : null;
@@ -255,13 +197,13 @@ export default function VtxoDetailScreen(): React.ReactElement {
         <Text style={[styles.amount, { color: theme.colors.text }]}>
           {formatSats(vtxo.amountSats)} {unitLabel}
         </Text>
-        <View style={[styles.pill, { backgroundColor: pill.bg }]}>
-          <Text style={[styles.pillText, { color: pill.fg }]}>
-            {status.label}
+        <View style={[styles.pill, { backgroundColor: visuals.bg }]}>
+          <Text style={[styles.pillText, { color: visuals.fg }]}>
+            {visuals.label}
           </Text>
         </View>
         <Text style={[styles.statusBlurb, { color: theme.colors.textMuted }]}>
-          {status.description}
+          {visuals.description}
         </Text>
       </View>
 
