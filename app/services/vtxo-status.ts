@@ -35,12 +35,12 @@ export function vtxoStatusVisuals(
       };
     case "preconfirmed":
       return {
-        fg: theme.colors.pending,
-        bg: theme.colors.pendingSoft,
+        fg: theme.colors.textMuted,
+        bg: theme.colors.surfaceSubtle,
         amountColor: theme.colors.text,
-        label: "Pending",
+        label: "Preconfirmed",
         description:
-          "Received but not yet finalized in a batch. Spendable once it settles.",
+          "Confirmed off-chain by the server but not yet anchored in a batch. Spendable today; will be folded into the next batch.",
       };
     case "swept":
       return {

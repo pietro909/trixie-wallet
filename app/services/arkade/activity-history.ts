@@ -240,7 +240,6 @@ function buildAssetActivity(args: {
   direction: "send" | "receive";
   anchorSats: bigint;
   assetDelta: Asset[];
-  settled: boolean;
   network: string | null;
 }): Activity {
   const cls = classifyAssetActivity({
@@ -266,7 +265,7 @@ function buildAssetActivity(args: {
     direction: assetDirection(cls),
     timestamp: args.timestamp,
     title: assetTitle(cls),
-    status: args.settled ? "confirmed" : "pending",
+    status: "confirmed",
     rail: "arkade",
     source: { type: "wallet_event", eventId: id },
     metadata,
@@ -644,7 +643,6 @@ export async function getActivityHistory(
       if (!isChangeOfOwnTx && !offchainReceivesEmitted.has(v.txid)) {
         offchainReceivesEmitted.add(v.txid);
         const assets = collectAssets([v]);
-        const settled = v.status.isLeaf || v.isSpent === true;
         const ts = v.createdAt.getTime();
         if (assets.length > 0) {
           activities.push(
@@ -654,7 +652,6 @@ export async function getActivityHistory(
               direction: "receive",
               anchorSats: BigInt(v.value),
               assetDelta: assets,
-              settled,
               network,
             }),
           );
@@ -670,7 +667,7 @@ export async function getActivityHistory(
             amountSats: v.value,
             timestamp: ts,
             title: "Arkade received",
-            status: settled ? "confirmed" : "pending",
+            status: "confirmed",
             rail: "arkade",
             source: { type: "arkade_tx", walletTxId: v.txid },
             metadata: withNetwork(receiveMeta, network),
@@ -701,7 +698,6 @@ export async function getActivityHistory(
             direction: "send",
             anchorSats: txAmount,
             assetDelta: assets,
-            settled: true,
             network,
           }),
         );
