@@ -6,8 +6,8 @@ import {
   ChevronRight,
   Clock,
   Inbox,
+  ListTree,
   Plus,
-  Repeat,
 } from "lucide-react-native";
 import * as React from "react";
 import {
@@ -18,6 +18,7 @@ import {
   Text,
   View,
 } from "react-native";
+import ActivityRow from "../components/ActivityRow";
 import AssetCard from "../components/AssetCard";
 import Button from "../components/Button";
 import { useFormatSats } from "../hooks/useFormatSats";
@@ -29,6 +30,7 @@ import {
   fetchAssetDetailsCached,
   readAssetMetadataMap,
 } from "../services/arkade/asset-metadata";
+import { computePendingTotals } from "../services/wallet-balance";
 import { satsToFiat } from "../store/mock";
 import { useAppStore } from "../store/useAppStore";
 import { radius, spacing, typography } from "../theme/theme";
@@ -139,6 +141,7 @@ export default function WalletScreen() {
   }
 
   const recentActivity = wallet.activities.slice(0, 4);
+  const pendingTotals = computePendingTotals(wallet.activities);
 
   return (
     <ScrollView
@@ -317,69 +320,19 @@ export default function WalletScreen() {
             </Text>
           </View>
         ) : (
-          recentActivity.map((item) => {
-            const isIn = item.direction === "in";
-            const isSelf = item.direction === "self";
-            const iconBg = isSelf
-              ? `${theme.colors.textSubtle}20`
-              : isIn
-                ? `${theme.colors.success}20`
-                : `${theme.colors.danger}20`;
-            const iconColor = isSelf
-              ? theme.colors.textSubtle
-              : isIn
-                ? theme.colors.success
-                : theme.colors.danger;
-            const amountColor = isSelf
-              ? theme.colors.text
-              : isIn
-                ? theme.colors.success
-                : theme.colors.text;
-            const sign =
-              isSelf || item.amountSats == null ? "" : isIn ? "+" : "-";
-            return (
-              <Pressable
-                key={item.id}
-                onPress={() =>
-                  nav.navigate("ActivityDetails", { activityId: item.id })
-                }
-                style={({ pressed }) => [
-                  styles.txRow,
-                  {
-                    borderBottomColor: theme.colors.divider,
-                    opacity: pressed ? 0.6 : 1,
-                  },
-                ]}
-              >
-                <View style={[styles.txIcon, { backgroundColor: iconBg }]}>
-                  {isSelf ? (
-                    <Repeat color={iconColor} size={18} />
-                  ) : isIn ? (
-                    <ArrowDownLeft color={iconColor} size={18} />
-                  ) : (
-                    <ArrowUpRight color={iconColor} size={18} />
-                  )}
-                </View>
-                <View style={styles.txInfo}>
-                  <Text style={[styles.txLabel, { color: theme.colors.text }]}>
-                    {item.title}
-                  </Text>
-                  <Text
-                    style={[styles.txTime, { color: theme.colors.textSubtle }]}
-                  >
-                    {formatRelativeTime(item.timestamp)}
-                    {item.status === "pending" ? " · Pending" : ""}
-                  </Text>
-                </View>
-                {item.amountSats != null ? (
-                  <Text style={[styles.txAmount, { color: amountColor }]}>
-                    {sign}
-                    {formatSats(item.amountSats)}
-                  </Text>
-                ) : null}
-              </Pressable>
-            );
-          })
+          recentActivity.map((item) => (
+            <ActivityRow
+              key={item.id}
+              activity={item}
+              theme={theme}
+              onPress={() =>
+                nav.navigate("ActivityDetails", { activityId: item.id })
+              }
+              formatTimestamp={formatRelativeTime}
+              assetMetadata={assetMetadata}
+              iconApprovals={iconApprovals}
+            />
+          ))
         )}
       </View>
 
@@ -403,9 +356,68 @@ export default function WalletScreen() {
           Boarding (onchain): {formatSats(wallet.balanceBoardingSats)}{" "}
           {unitLabel}
         </Text>
+        {pendingTotals.inboundSats > 0 ? (
+          <View style={styles.pendingLine}>
+            <Text style={[styles.statLine, { color: theme.colors.pending }]}>
+              Pending inbound: {formatSats(pendingTotals.inboundSats)}{" "}
+              {unitLabel}
+            </Text>
+            <View
+              style={[
+                styles.pendingChip,
+                { backgroundColor: theme.colors.pendingSoft },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.pendingChipText,
+                  { color: theme.colors.pending },
+                ]}
+              >
+                Pending
+              </Text>
+            </View>
+          </View>
+        ) : null}
+        {pendingTotals.outboundSats > 0 ? (
+          <View style={styles.pendingLine}>
+            <Text style={[styles.statLine, { color: theme.colors.pending }]}>
+              Pending outbound: {formatSats(pendingTotals.outboundSats)}{" "}
+              {unitLabel}
+            </Text>
+            <View
+              style={[
+                styles.pendingChip,
+                { backgroundColor: theme.colors.pendingSoft },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.pendingChipText,
+                  { color: theme.colors.pending },
+                ]}
+              >
+                In flight
+              </Text>
+            </View>
+          </View>
+        ) : null}
         <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
           Total: {formatSats(wallet.balanceTotalSats)} {unitLabel}
         </Text>
+        <Pressable
+          onPress={() => nav.navigate("VtxoList")}
+          style={({ pressed }) => [
+            styles.vtxoLink,
+            { opacity: pressed ? 0.6 : 1 },
+          ]}
+        >
+          <ListTree color={theme.colors.primary} size={16} />
+          <Text style={[styles.vtxoLinkText, { color: theme.colors.primary }]}>
+            View VTXOs
+          </Text>
+          <ChevronRight color={theme.colors.primary} size={16} />
+        </Pressable>
       </View>
     </ScrollView>
   );
@@ -484,36 +496,6 @@ const styles = StyleSheet.create({
   assetsEmpty: {
     fontSize: typography.size.sm,
   },
-  txRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: spacing[3],
-    borderBottomWidth: 1,
-  },
-  txIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  txInfo: {
-    flex: 1,
-    marginLeft: spacing[3],
-  },
-  txLabel: {
-    fontSize: typography.size.sm,
-    fontWeight: typography.weight.medium,
-  },
-  txTime: {
-    fontSize: typography.size.xs,
-    marginTop: 2,
-  },
-  txAmount: {
-    fontSize: typography.size.sm,
-    fontWeight: typography.weight.semibold,
-    fontVariant: ["tabular-nums"],
-  },
   statsCard: {
     marginTop: spacing[6],
     padding: spacing[5],
@@ -528,6 +510,31 @@ const styles = StyleSheet.create({
   statLine: {
     fontSize: typography.size.sm,
     marginBottom: spacing[1],
+  },
+  pendingLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[2],
+  },
+  pendingChip: {
+    paddingHorizontal: spacing[2],
+    paddingVertical: 1,
+    borderRadius: radius.pill,
+    marginBottom: spacing[1],
+  },
+  pendingChipText: {
+    fontSize: typography.size.xs,
+    fontWeight: typography.weight.medium,
+  },
+  vtxoLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing[1],
+    marginTop: spacing[3],
+  },
+  vtxoLinkText: {
+    fontSize: typography.size.sm,
+    fontWeight: typography.weight.medium,
   },
   empty: {
     flex: 1,

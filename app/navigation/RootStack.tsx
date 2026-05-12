@@ -32,6 +32,8 @@ import SendOptionsScreen from "../screens/send/SendOptionsScreen";
 import SendResultScreen from "../screens/send/SendResultScreen";
 import SendReviewScreen from "../screens/send/SendReviewScreen";
 import UnlockScreen from "../screens/UnlockScreen";
+import VtxoDetailScreen from "../screens/vtxos/VtxoDetailScreen";
+import VtxoListScreen from "../screens/vtxos/VtxoListScreen";
 import type { EncryptedEnvelope } from "../services/backup/crypto";
 import type {
   ParsedPaymentOption,
@@ -107,6 +109,8 @@ export type RootStackParamList = {
   AssetReissue: { assetId: string };
   AssetBurn: { assetId: string };
   AssetImport: undefined;
+  VtxoList: undefined;
+  VtxoDetail: { outpoint: string };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -345,6 +349,16 @@ export default function RootStack() {
             name="AssetBurn"
             component={AssetBurnScreen}
             options={{ ...headerOptions, title: "Burn" }}
+          />
+          <Stack.Screen
+            name="VtxoList"
+            component={VtxoListScreen}
+            options={{ ...headerOptions, title: "VTXOs" }}
+          />
+          <Stack.Screen
+            name="VtxoDetail"
+            component={VtxoDetailScreen}
+            options={{ ...headerOptions, title: "VTXO" }}
           />
         </>
       )}

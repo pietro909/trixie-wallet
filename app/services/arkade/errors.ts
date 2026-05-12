@@ -28,7 +28,8 @@ export type ArkadeErrorKind =
   | "recovery_action_failed"
   | "recovery_item_missing"
   | "recovery_pending_tx_not_found"
-  | "recovery_finalize_failed";
+  | "recovery_finalize_failed"
+  | "vtxos_fetch_failed";
 
 const CATEGORY_BY_KIND: Record<ArkadeErrorKind, ErrorCategory> = {
   server_unreachable: "server",
@@ -59,6 +60,7 @@ const CATEGORY_BY_KIND: Record<ArkadeErrorKind, ErrorCategory> = {
   recovery_item_missing: "swap",
   recovery_pending_tx_not_found: "swap",
   recovery_finalize_failed: "swap",
+  vtxos_fetch_failed: "wallet",
 };
 
 export class ArkadeError extends Error {

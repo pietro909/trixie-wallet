@@ -94,6 +94,10 @@ import {
   restoreSwapMetadataRows,
 } from "../services/arkade/swap-storage";
 import {
+  type ClassifiedVtxo,
+  loadVtxos,
+} from "../services/arkade/vtxo-listing";
+import {
   BackupError,
   decryptBundle,
   type EncryptedEnvelope,
@@ -117,6 +121,10 @@ import {
   isBitcoinAddressForNetwork,
   networkNameOrNull,
 } from "../services/paymentParser";
+import {
+  auditBalanceIntegrity,
+  computePendingTotals,
+} from "../services/wallet-balance";
 import type {
   Activity,
   AppState,
@@ -379,6 +387,7 @@ type StoreState = AppState & {
   }) => Promise<{ arkTxId: string; assetId: string }>;
   reissueAsset: (assetId: string, amount: bigint) => Promise<string>;
   burnAsset: (assetId: string, amount: bigint) => Promise<string>;
+  loadWalletVtxos: () => Promise<ClassifiedVtxo[]>;
   setTheme: (theme: ThemePref) => Promise<void>;
   setFiatCurrency: (currency: FiatCurrency) => Promise<void>;
   setBitcoinUnit: (unit: BitcoinUnit) => Promise<void>;
@@ -446,11 +455,27 @@ function buildMetadata(
   };
 }
 
+let balanceAuditWarned = false;
+
 function applySnapshot(
   metadata: ArkadeWalletMetadata,
   snapshot: WalletSnapshot,
   activities: Activity[],
 ): ArkadeWalletMetadata {
+  if (__DEV__ && !balanceAuditWarned) {
+    const pending = computePendingTotals(activities);
+    const warning = auditBalanceIntegrity(
+      {
+        availableSats: snapshot.balance.available,
+        totalSats: snapshot.balance.total,
+      },
+      pending,
+    );
+    if (warning) {
+      balanceAuditWarned = true;
+      recordError("wallet", warning);
+    }
+  }
   return {
     ...metadata,
     arkAddress: snapshot.arkAddress,
@@ -2154,6 +2179,22 @@ export const useAppStore = create<StoreState>((set, get) => ({
       .refreshWallet()
       .catch(() => {});
     return arkTxId;
+  },
+
+  loadWalletVtxos: async () => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet available");
+    }
+    if (get().security.isLocked) {
+      throw new ArkadeError("wallet_not_ready", "Unlock the wallet first");
+    }
+    const wallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
+    const dustSats = get().network.serverInfo?.dustSats ?? 0;
+    return loadVtxos(wallet, { includeRecoverable: true }, dustSats);
   },
 
   setTheme: async (theme) => {

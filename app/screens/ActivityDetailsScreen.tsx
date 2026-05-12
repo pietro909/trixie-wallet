@@ -20,6 +20,7 @@ import {
   type Section,
   type SectionRow,
 } from "../services/activity-details/buildSections";
+import { statusAmountColor, statusVisuals } from "../services/activity-status";
 import {
   type CachedAssetDetails,
   fetchAssetDetailsCached,
@@ -40,21 +41,6 @@ function formatTimestamp(ts: number): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function statusLabel(status: Activity["status"]): string {
-  switch (status) {
-    case "pending":
-      return "Pending";
-    case "confirmed":
-      return "Confirmed";
-    case "failed":
-      return "Failed";
-    case "refunded":
-      return "Refunded";
-    case "info":
-      return "Info";
-  }
 }
 
 function railLabel(rail: Activity["rail"]): string | null {
@@ -213,11 +199,12 @@ export default function ActivityDetailsScreen() {
       : theme.colors.danger;
   const iconBg = `${iconColor}20`;
   const sign = isSelf || activity.amountSats == null ? "" : isIn ? "+" : "-";
-  const amountColor = isSelf
-    ? theme.colors.text
-    : isIn
-      ? theme.colors.success
-      : theme.colors.text;
+  const amountColor = statusAmountColor(
+    activity.status,
+    activity.direction,
+    theme,
+  );
+  const visuals = statusVisuals(activity.status, theme);
   const dirLabel = directionLabel(activity.direction);
   const rail = railLabel(activity.rail);
 
@@ -305,14 +292,9 @@ export default function ActivityDetailsScreen() {
           {formatTimestamp(activity.timestamp)}
         </Text>
         <View style={styles.tags}>
-          <View
-            style={[
-              styles.tag,
-              { backgroundColor: theme.colors.surfaceSubtle },
-            ]}
-          >
-            <Text style={[styles.tagText, { color: theme.colors.textMuted }]}>
-              {statusLabel(activity.status)}
+          <View style={[styles.tag, { backgroundColor: visuals.bg }]}>
+            <Text style={[styles.tagText, { color: visuals.fg }]}>
+              {visuals.label}
             </Text>
           </View>
           {rail ? (

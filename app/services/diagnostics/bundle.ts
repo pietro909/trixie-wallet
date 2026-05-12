@@ -9,8 +9,9 @@ import {
   snapshotBoltzSwaps,
 } from "../arkade/lightning";
 import { discoverPendingTxs } from "../arkade/pending-tx-recovery";
-import { fetchRawServerInfo } from "../arkade/runtime";
+import { fetchRawServerInfo, getWallet } from "../arkade/runtime";
 import { getAllSwapMetadata } from "../arkade/swap-storage";
+import { loadVtxos, type VtxoStatus } from "../arkade/vtxo-listing";
 import {
   type ErrorEntry,
   getRecentErrors,
@@ -93,6 +94,19 @@ export type SupportBundle = {
     nonZeroBalanceCount: number;
     cachedMetadataCount: number;
   };
+  /**
+   * Counts-only VTXO snapshot. No raw outpoints, txids, or scripts (privacy
+   * parity with swap ids). `null` when the listing call failed — the
+   * underlying error is recorded via the diagnostics recorder.
+   */
+  vtxos: {
+    total: number;
+    byStatus: Record<VtxoStatus, number>;
+    dustSats: number;
+    sweptSats: number;
+    oldestCreatedAt: number | null;
+    newestCreatedAt: number | null;
+  } | null;
   recovery: {
     lastBackupAt: number | null;
     dirtyForBackup: boolean;
@@ -335,6 +349,51 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
     }
   }
 
+  let vtxoSummary: SupportBundle["vtxos"] = null;
+  if (wallet) {
+    try {
+      const liveWallet = await getWallet();
+      const dustSats = state.network.serverInfo?.dustSats ?? 0;
+      const classified = await loadVtxos(
+        liveWallet,
+        { includeRecoverable: true },
+        dustSats,
+      );
+      const byStatus: Record<VtxoStatus, number> = {
+        settled: 0,
+        preconfirmed: 0,
+        swept: 0,
+        subdust: 0,
+        spent: 0,
+      };
+      let dustSum = 0;
+      let sweptSum = 0;
+      let oldest: number | null = null;
+      let newest: number | null = null;
+      for (const v of classified) {
+        byStatus[v.status] += 1;
+        if (v.status === "subdust") dustSum += v.amountSats;
+        if (v.status === "swept") sweptSum += v.amountSats;
+        const ts = v.createdAt.getTime();
+        if (oldest == null || ts < oldest) oldest = ts;
+        if (newest == null || ts > newest) newest = ts;
+      }
+      vtxoSummary = {
+        total: classified.length,
+        byStatus,
+        dustSats: dustSum,
+        sweptSats: sweptSum,
+        oldestCreatedAt: oldest,
+        newestCreatedAt: newest,
+      };
+    } catch (e) {
+      recordError(
+        "wallet",
+        `bundle_vtxo_summary_failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
   return {
     schemaVersion: BUNDLE_SCHEMA_VERSION,
     generatedAt: Date.now(),
@@ -411,6 +470,7 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
       }).length,
       cachedMetadataCount: await countCachedAssetMetadata(),
     },
+    vtxos: vtxoSummary,
     recovery: {
       lastBackupAt: state.security.lastBackupAt ?? null,
       dirtyForBackup: state.security.dirtyForBackup === true,

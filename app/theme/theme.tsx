@@ -165,9 +165,13 @@ function createTheme(mode: Mode) {
         onPrimary: "#ffffff",
 
         success: "#32D583",
+        successSoft: rgba("#32D583", 0.18),
         warning: "#FDB022",
         danger: "#FDA29B",
+        dangerSoft: rgba("#FDA29B", 0.18),
         info: "#53B1FD",
+        pending: "#FDB022",
+        pendingSoft: rgba("#FDB022", 0.18),
 
         tabBarTint: brand[500],
         tabBarInactive: neutral[400],
@@ -199,9 +203,13 @@ function createTheme(mode: Mode) {
         onPrimary: "#ffffff",
 
         success: "#12B76A",
+        successSoft: rgba("#12B76A", 0.12),
         warning: "#F79009",
         danger: "#F04438",
+        dangerSoft: rgba("#F04438", 0.12),
         info: "#2E90FA",
+        pending: "#F79009",
+        pendingSoft: rgba("#F79009", 0.12),
 
         tabBarTint: brand[500],
         tabBarInactive: neutral[600],
