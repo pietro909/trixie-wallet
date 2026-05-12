@@ -72,7 +72,7 @@ export class ArkadeError extends Error {
     this.name = "ArkadeError";
     this.kind = kind;
     this.cause = cause;
-    recordError(CATEGORY_BY_KIND[kind] ?? "unknown", `${kind}: ${message}`, {
+    recordError(CATEGORY_BY_KIND[kind], `${kind}: ${message}`, {
       cause: causeMessage(cause),
     });
   }

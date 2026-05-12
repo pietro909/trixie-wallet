@@ -55,6 +55,16 @@ function relative(ts: number): string {
   return fmt(days, "d");
 }
 
+/**
+ * Lower bound (ms since epoch) used to distinguish a real `batchExpiry`
+ * timestamp from a block-height value. The SDK reports `batchExpiry` in ms
+ * on production networks but emits raw block heights on regtest — same
+ * guard the SDK's own `isExpired` helper uses. 1e12 ms ≈ 2001-09-09, so
+ * any value above this threshold is a timestamp and any value below it is
+ * either unset or a block height (max realistic Bitcoin height ≪ 1e9).
+ */
+const BATCH_EXPIRY_MS_LOWER_BOUND = 1_000_000_000_000;
+
 export default function VtxoDetailScreen(): React.ReactElement {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
@@ -247,7 +257,7 @@ export default function VtxoDetailScreen(): React.ReactElement {
             {relative(vtxo.createdAt.getTime())}
           </Text>
         </View>
-        {expiry != null && expiry > 1_000_000_000_000 ? (
+        {expiry != null && expiry > BATCH_EXPIRY_MS_LOWER_BOUND ? (
           <View style={styles.kv}>
             <Text style={[styles.kvKey, { color: theme.colors.textSubtle }]}>
               Batch expiry

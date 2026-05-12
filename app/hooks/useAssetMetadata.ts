@@ -77,6 +77,10 @@ export function useAssetMetadata(
       if (!hydrateMissing) return;
       const next = new Map(initial);
       for (const id of ids) {
+        // Re-check on every iteration: a failed fetch falls into catch and
+        // would otherwise keep firing async work for the rest of the id list
+        // after the component unmounts.
+        if (cancelled) return;
         if (next.has(id)) continue;
         try {
           const fetched = await fetchAssetDetailsCached(network, id, "cache");
