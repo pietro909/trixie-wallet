@@ -9,6 +9,7 @@ import * as React from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Button from "../../components/Button";
 import CopyableField from "../../components/CopyableField";
+import { useAssetMetadata } from "../../hooks/useAssetMetadata";
 import { useFormatSats } from "../../hooks/useFormatSats";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
@@ -17,10 +18,6 @@ import {
   prettyAssetAmount,
   truncatedAssetId,
 } from "../../services/arkade/asset-format";
-import {
-  type CachedAssetDetails,
-  readAssetMetadataMap,
-} from "../../services/arkade/asset-metadata";
 import { ArkadeError } from "../../services/arkade/errors";
 import type { ClassifiedVtxo } from "../../services/arkade/vtxo-listing";
 import { vtxoStatusVisuals } from "../../services/vtxo-status";
@@ -79,9 +76,6 @@ export default function VtxoDetailScreen(): React.ReactElement {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [showScript, setShowScript] = React.useState(false);
-  const [assetMetadata, setAssetMetadata] = React.useState<
-    Map<string, CachedAssetDetails>
-  >(() => new Map());
 
   React.useEffect(() => {
     let cancelled = false;
@@ -118,17 +112,10 @@ export default function VtxoDetailScreen(): React.ReactElement {
     return vtxo.assets.map((a) => a.assetId);
   }, [vtxo]);
 
-  React.useEffect(() => {
-    if (!network || assetIds.length === 0) return;
-    let cancelled = false;
-    void (async () => {
-      const map = await readAssetMetadataMap(network, assetIds);
-      if (!cancelled) setAssetMetadata(map);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [network, assetIds]);
+  // Cache-only: the asset metadata cache is warmed by the screens that own
+  // the mint/import flows (Wallet / AssetDetail); a forensic VTXO inspector
+  // shouldn't reach out to the SDK for asset hydration.
+  const { assetMetadata } = useAssetMetadata(network, assetIds);
 
   if (loading) {
     return (
