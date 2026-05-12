@@ -4,13 +4,9 @@ import { Inbox } from "lucide-react-native";
 import * as React from "react";
 import { FlatList, RefreshControl, StyleSheet, Text, View } from "react-native";
 import ActivityRow from "../components/ActivityRow";
+import { useAssetMetadata } from "../hooks/useAssetMetadata";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../navigation/RootStack";
-import { readIconApprovals } from "../services/arkade/asset-icon-approval";
-import {
-  type CachedAssetDetails,
-  readAssetMetadataMap,
-} from "../services/arkade/asset-metadata";
 import type { Activity } from "../store/types";
 import { useAppStore } from "../store/useAppStore";
 import { spacing, typography } from "../theme/theme";
@@ -36,12 +32,6 @@ export default function ActivityScreen() {
   );
   const refreshWallet = useAppStore((s) => s.refreshWallet);
   const [refreshing, setRefreshing] = React.useState(false);
-  const [assetMetadata, setAssetMetadata] = React.useState<
-    Map<string, CachedAssetDetails>
-  >(() => new Map());
-  const [iconApprovals, setIconApprovals] = React.useState<
-    Record<string, boolean>
-  >({});
 
   const activities = wallet?.activities ?? [];
 
@@ -55,22 +45,11 @@ export default function ActivityScreen() {
     return Array.from(set);
   }, [activities]);
 
-  React.useEffect(() => {
-    if (!network || assetIdsInActivities.length === 0) return;
-    let cancelled = false;
-    void (async () => {
-      const [map, approvals] = await Promise.all([
-        readAssetMetadataMap(network, assetIdsInActivities),
-        readIconApprovals(),
-      ]);
-      if (cancelled) return;
-      setAssetMetadata(map);
-      setIconApprovals(approvals);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [network, assetIdsInActivities]);
+  const { assetMetadata, iconApprovals } = useAssetMetadata(
+    network,
+    assetIdsInActivities,
+    { withIconApprovals: true },
+  );
 
   async function handleRefresh() {
     setRefreshing(true);

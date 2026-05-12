@@ -6,11 +6,12 @@ import {
   Repeat,
 } from "lucide-react-native";
 import type * as React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import Button from "../components/Button";
 import CopyableField from "../components/CopyableField";
 import { useToast } from "../components/ToastProvider";
+import { useAssetMetadata } from "../hooks/useAssetMetadata";
 import { useFormatSats } from "../hooks/useFormatSats";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../navigation/RootStack";
@@ -21,11 +22,6 @@ import {
   type SectionRow,
 } from "../services/activity-details/buildSections";
 import { statusAmountColor, statusVisuals } from "../services/activity-status";
-import {
-  type CachedAssetDetails,
-  fetchAssetDetailsCached,
-  readAssetMetadataMap,
-} from "../services/arkade/asset-metadata";
 import type { Activity } from "../store/types";
 import { useAppStore } from "../store/useAppStore";
 import { type AppTheme, radius, spacing, typography } from "../theme/theme";
@@ -126,9 +122,6 @@ export default function ActivityDetailsScreen() {
   const rowErrors = useAppStore((s) => s.rowErrors);
   const { showToast } = useToast();
   const { format: formatSats, label: unitLabel } = useFormatSats();
-  const [assetMetadata, setAssetMetadata] = useState<
-    Map<string, CachedAssetDetails>
-  >(() => new Map());
   const assetIds = useMemo(
     () =>
       activity?.assets && activity.assets.length > 0
@@ -138,32 +131,9 @@ export default function ActivityDetailsScreen() {
           : [],
     [activity],
   );
-  useEffect(() => {
-    if (!network) return;
-    if (assetIds.length === 0) return;
-    let cancelled = false;
-    void (async () => {
-      const initial = await readAssetMetadataMap(network, assetIds);
-      if (cancelled) return;
-      if (initial.size > 0) setAssetMetadata(new Map(initial));
-      // Hydrate missing entries from the SDK (or refresh expired).
-      const next = new Map(initial);
-      for (const id of assetIds) {
-        if (next.has(id)) continue;
-        try {
-          const fetched = await fetchAssetDetailsCached(network, id, "cache");
-          if (cancelled) return;
-          next.set(id, fetched);
-        } catch {
-          // best-effort; falls back to bare ids
-        }
-      }
-      if (!cancelled) setAssetMetadata(new Map(next));
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [network, assetIds]);
+  const { assetMetadata } = useAssetMetadata(network, assetIds, {
+    hydrateMissing: true,
+  });
   const sections = useMemo(
     () =>
       activity
