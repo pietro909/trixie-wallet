@@ -873,6 +873,10 @@ export const useAppStore = create<StoreState>((set, get) => ({
         "A wallet already exists. Reset before creating a new one.",
       );
     }
+    // Defensive: the !get().wallet guard above means there's no live cache
+    // to leak through, but if the guard is ever relaxed (e.g. multi-wallet
+    // support) we don't want a stale snapshot surviving the boundary.
+    invalidateVtxoSnapshotCache();
     const arkServerUrl = get().network.arkServerUrl;
     set((s) => ({
       network: { ...s.network, status: "connecting", lastError: null },
