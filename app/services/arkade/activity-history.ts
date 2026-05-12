@@ -4,8 +4,12 @@ import type {
   VirtualCoin,
   Wallet,
 } from "@arkade-os/sdk";
-import { ExpoIndexerProvider } from "@arkade-os/sdk/adapters/expo";
 import type { Activity, ActivityDirection } from "../../store/types";
+
+// ExpoIndexerProvider is imported dynamically inside getActivityHistory so
+// tests can import the pure helpers and buildActivityHistory without
+// loading the Expo adapter (which transitively pulls in ESM-only deps
+// that aren't transformed by jest-expo).
 
 // ===== Activity id helpers =====
 
@@ -307,6 +311,9 @@ export async function getActivityHistory(
   const contracts = await cm.getContractsWithVtxos();
   const vtxos: VirtualCoin[] = contracts.flatMap((c) => c.vtxos);
   const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
+  const { ExpoIndexerProvider } = await import(
+    "@arkade-os/sdk/adapters/expo"
+  );
   const indexer = new ExpoIndexerProvider(arkServerUrl);
   const getTxCreatedAt = (txid: string): Promise<number | undefined> =>
     indexer
