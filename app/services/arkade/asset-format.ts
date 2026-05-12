@@ -35,19 +35,73 @@ export function prettyAssetAmountHide(value: bigint, suffix: string): string {
   return suffix ? `${dots} ${suffix}` : dots;
 }
 
+/**
+ * Format a numeric value for display.
+ *
+ * Note: web devs expect the `Intl.NumberFormat` API to accept `BigInt` like
+ * V8/Chrome does, but some JS engines used on Android (Hermes or older JSC
+ * builds) either reject `BigInt` or throw when converting it to `Number`.
+ * That leads to runtime `TypeError: Cannot convert BigInt to number` errors
+ * which we've observed in the Android emulator. To be robust across engines
+ * we handle `bigint` specially:
+ *  - If the `bigint` fits within `Number.MAX_SAFE_INTEGER`, we pass it to
+ *    `Intl.NumberFormat` (preserving locale, grouping and fraction settings).
+ *  - Otherwise we fall back to a safe, engine-independent formatting of the
+ *    integer portion (manual thousands grouping). For consistency with callers
+ *    that rely on `minimumFractionDigits`, we append zeroes up to the
+ *    requested minimum (clamped by `maximumFractionDigits`) — note this is a
+ *    simple fallback and does not reproduce all locale-specific fractional
+ *    formatting/rounding behavior of `Intl`.
+ */
 export function prettyAssetNumber(
-  num?: bigint,
+  num?: bigint | number,
   maximumFractionDigits = 8,
   useGrouping = true,
   minimumFractionDigits?: number,
 ): string {
   if (num === undefined || num === null) return "0";
-  return new Intl.NumberFormat("en", {
-    style: "decimal",
-    maximumFractionDigits,
-    minimumFractionDigits,
-    useGrouping,
-  }).format(num);
+  try {
+    if (typeof num === "bigint") {
+      const sign = num < BigInt(0) ? "-" : "";
+      const absStr = (num < BigInt(0) ? (-num).toString() : num.toString());
+      // Compute how many fractional zeroes to append for the fallback. If
+      // caller requested a minimum, append that many zeros (but don't exceed
+      // the maximumFractionDigits if provided).
+      const minFrac = Math.max(0, minimumFractionDigits ?? 0);
+      const fracCount = Math.min(maximumFractionDigits, minFrac);
+
+      // If the bigint fits into a JS number safely, prefer Intl formatting
+      const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
+      const minSafe = BigInt(Number.MIN_SAFE_INTEGER);
+      if (num <= maxSafe && num >= minSafe) {
+        return new Intl.NumberFormat("en", {
+          style: "decimal",
+          maximumFractionDigits,
+          minimumFractionDigits,
+          useGrouping,
+        }).format(Number(num));
+      }
+
+      // Fallback: apply grouping to the integer string manually (or leave as
+      //-is when grouping disabled), then append fractional zeroes if needed.
+      const grouped = useGrouping
+        ? absStr.replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+        : absStr;
+      const fracSuffix = fracCount > 0 ? `.${"0".repeat(fracCount)}` : "";
+      return `${sign}${grouped}${fracSuffix}`;
+    }
+
+    const r = new Intl.NumberFormat("en", {
+      style: "decimal",
+      maximumFractionDigits,
+      minimumFractionDigits,
+      useGrouping,
+    }).format(num);
+    return r;
+  } catch (e) {
+    console.error(`Failed to format number: ${num} of type ${typeof num}`, e);
+    return "0";
+  }
 }
 
 export function prettyAssetAmount(
@@ -59,19 +113,23 @@ export function prettyAssetAmount(
     return prettyAssetNumber(amount, 0, useGrouping);
   }
 
-  const divisor = BigInt(10) ** BigInt(decimals);
   const negative = amount < BigInt(0);
   const abs = negative ? -amount : amount;
-  const whole = abs / divisor;
-  const frac = abs % divisor;
+
   const sign = negative ? "-" : "";
 
+  const divisor = BigInt(10) ** BigInt(decimals);
+  const whole = abs / divisor;
+  const frac = abs % divisor;
+
+  const formattedWhole = prettyAssetNumber(whole, 0, useGrouping);
+
   if (frac === BigInt(0)) {
-    return `${sign}${prettyAssetNumber(whole, 0, useGrouping)}`;
+    return `${sign}${formattedWhole}`;
   }
 
   const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
-  return `${sign}${prettyAssetNumber(whole, 0, useGrouping)}.${fracStr}`;
+  return `${sign}${formattedWhole}.${fracStr}`;
 }
 
 /**
