@@ -17,7 +17,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { type ErrorCategory, redactString } from "./recorder";
 
 const STORAGE_KEY = "trixie:persisted-errors";
-const MAX_ENTRIES = 50;
+const MAX_ENTRIES = 100;
 
 export type PersistedErrorEntry = {
   /** ms since epoch when the BG-side error was captured. */

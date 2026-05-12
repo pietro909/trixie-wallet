@@ -105,12 +105,20 @@ class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
     // shadow log above, which is foreground-resume-only and destructive.
     // `TaskResult` has no start time and the package wrapper exposes no
     // before/after hook, so `durationMs` is omitted.
+    const errorMessage = errorMessageFromSwapPollData(result.data);
     await recordBgTaskRun(SWAP_BACKGROUND_TASK_NAME, {
       status: result.status,
       occurredAt: result.executedAt,
       summary: summaryFromSwapPollData(result.data),
-      errorMessage: errorMessageFromSwapPollData(result.data),
+      errorMessage,
     });
+    if (result.status === "failed") {
+      const msg = errorMessage ?? "swap poll task failed";
+      await recordPersistedError(
+        "lightning",
+        `bg_swap_poll_failed: ${msg}`,
+      );
+    }
   }
 }
 

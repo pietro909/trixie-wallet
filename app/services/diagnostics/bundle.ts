@@ -11,7 +11,12 @@ import {
 import { discoverPendingTxs } from "../arkade/pending-tx-recovery";
 import { fetchRawServerInfo, getWallet } from "../arkade/runtime";
 import { getAllSwapMetadata } from "../arkade/swap-storage";
+import { SWAP_BACKGROUND_TASK_NAME } from "../arkade/swap-background";
 import { loadVtxos, type VtxoStatus } from "../arkade/vtxo-listing";
+import {
+  type BgTaskMetrics,
+  readBgTaskMetrics,
+} from "./bg-task-metrics";
 import {
   type ErrorEntry,
   getRecentErrors,
@@ -140,6 +145,9 @@ export type SupportBundle = {
       websocketConnected: boolean;
       usePollingFallback: boolean;
     } | null;
+  };
+  backgroundTasks: {
+    swapPoll: BgTaskMetrics;
   };
   errors: ErrorEntry[];
 };
@@ -360,6 +368,8 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
     }
   }
 
+  const swapPollMetrics = await readBgTaskMetrics(SWAP_BACKGROUND_TASK_NAME);
+
   let vtxoSummary: SupportBundle["vtxos"] = null;
   if (wallet) {
     try {
@@ -494,6 +504,9 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
       pendingFinalizeCount,
       recoveryScanErrors,
       swapManager: swapManagerStats,
+    },
+    backgroundTasks: {
+      swapPoll: swapPollMetrics,
     },
     errors: getRecentErrors(),
   };

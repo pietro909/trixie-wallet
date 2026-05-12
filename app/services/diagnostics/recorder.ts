@@ -37,7 +37,7 @@ export type ErrorEntry = {
   details?: Record<string, ErrorDetailValue>;
 };
 
-const MAX_ENTRIES = 100;
+const MAX_ENTRIES = 200;
 const MAX_FIELD_LEN = 500;
 const buffer: ErrorEntry[] = [];
 
