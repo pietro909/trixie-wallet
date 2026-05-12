@@ -3,6 +3,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  ChevronDown,
   ChevronRight,
   Clock,
   Inbox,
@@ -48,15 +49,27 @@ function AssetSectionHeader({
   textColor,
   onMint,
   onImport,
+  collapsed,
+  onToggle,
+  assetCount,
 }: {
   primaryColor: string;
   textColor: string;
   onMint: () => void;
   onImport: () => void;
+  collapsed: boolean;
+  onToggle: () => void;
+  assetCount: number;
 }): React.ReactElement {
+  const ChevronIcon = collapsed ? ChevronRight : ChevronDown;
   return (
     <View style={styles.sectionHeader}>
-      <Text style={[styles.sectionTitle, { color: textColor }]}>Assets</Text>
+      <Pressable onPress={onToggle} style={styles.assetTitleRow}>
+        <ChevronIcon color={textColor} size={16} />
+        <Text style={[styles.sectionTitle, { color: textColor }]}>
+          Assets ({assetCount})
+        </Text>
+      </Pressable>
       <View style={styles.assetActions}>
         <Pressable
           onPress={onMint}
@@ -91,6 +104,7 @@ export default function WalletScreen() {
   const importedAssetIds = useAppStore((s) => s.assets.importedAssetIds);
   const { format: formatSats, label: unitLabel } = useFormatSats();
   const [refreshing, setRefreshing] = React.useState(false);
+  const [assetsCollapsed, setAssetsCollapsed] = React.useState(true);
 
   const walletId = wallet?.id;
   React.useEffect(() => {
@@ -195,45 +209,6 @@ export default function WalletScreen() {
         />
       </View>
 
-      {/* Assets */}
-      <View style={styles.section}>
-        <AssetSectionHeader
-          primaryColor={theme.colors.primary}
-          textColor={theme.colors.text}
-          onMint={() => nav.navigate("AssetMint")}
-          onImport={() => nav.navigate("AssetImport")}
-        />
-        {assetIds.length > 0 ? (
-          <View style={styles.assetList}>
-            {assetIds.map((id) => {
-              const entry = assetBalances.find((b) => b.assetId === id);
-              let amount = 0n;
-              try {
-                amount = entry ? BigInt(entry.amount) : 0n;
-              } catch {
-                amount = 0n;
-              }
-              return (
-                <AssetCard
-                  key={id}
-                  assetId={id}
-                  amount={amount}
-                  details={assetMetadata.get(id)}
-                  approvedIcon={iconApprovals[id] === true}
-                  onPress={() => nav.navigate("AssetDetail", { assetId: id })}
-                />
-              );
-            })}
-          </View>
-        ) : (
-          <Text
-            style={[styles.assetsEmpty, { color: theme.colors.textSubtle }]}
-          >
-            No assets yet. Mint or import to track Arkade-native assets here.
-          </Text>
-        )}
-      </View>
-
       {/* Recent Activity */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
@@ -275,6 +250,49 @@ export default function WalletScreen() {
             />
           ))
         )}
+      </View>
+
+      {/* Assets */}
+      <View style={styles.section}>
+        <AssetSectionHeader
+          primaryColor={theme.colors.primary}
+          textColor={theme.colors.text}
+          onMint={() => nav.navigate("AssetMint")}
+          onImport={() => nav.navigate("AssetImport")}
+          collapsed={assetsCollapsed}
+          onToggle={() => setAssetsCollapsed((c) => !c)}
+          assetCount={assetIds.length}
+        />
+        {!assetsCollapsed &&
+          (assetIds.length > 0 ? (
+            <View style={styles.assetList}>
+              {assetIds.map((id) => {
+                const entry = assetBalances.find((b) => b.assetId === id);
+                let amount = 0n;
+                try {
+                  amount = entry ? BigInt(entry.amount) : 0n;
+                } catch {
+                  amount = 0n;
+                }
+                return (
+                  <AssetCard
+                    key={id}
+                    assetId={id}
+                    amount={amount}
+                    details={assetMetadata.get(id)}
+                    approvedIcon={iconApprovals[id] === true}
+                    onPress={() => nav.navigate("AssetDetail", { assetId: id })}
+                  />
+                );
+              })}
+            </View>
+          ) : (
+            <Text
+              style={[styles.assetsEmpty, { color: theme.colors.textSubtle }]}
+            >
+              No assets yet. Mint or import to track Arkade-native assets here.
+            </Text>
+          ))}
       </View>
 
       {/* Balance Breakdown */}
@@ -432,6 +450,11 @@ const styles = StyleSheet.create({
     marginTop: spacing[2],
   },
   assetList: {
+    gap: spacing[2],
+  },
+  assetTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: spacing[2],
   },
   assetActions: {
