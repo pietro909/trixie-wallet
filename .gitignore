@@ -47,3 +47,5 @@ app-example
 .claude
 
 *.trixiebackup
+
+coverage/
