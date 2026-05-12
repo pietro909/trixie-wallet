@@ -241,6 +241,9 @@ function buildAssetActivity(args: {
   anchorSats: bigint;
   assetDelta: Asset[];
   network: string | null;
+  // Asset semantics carry no fast-finality promise (unlike BTC off-chain
+  // receives, see commit 94b4a34), so the row reflects the real flag.
+  settled: boolean;
 }): Activity {
   const cls = classifyAssetActivity({
     direction: args.direction,
@@ -265,7 +268,7 @@ function buildAssetActivity(args: {
     direction: assetDirection(cls),
     timestamp: args.timestamp,
     title: assetTitle(cls),
-    status: "confirmed",
+    status: args.settled ? "confirmed" : "pending",
     rail: "arkade",
     source: { type: "wallet_event", eventId: id },
     metadata,
@@ -387,10 +390,14 @@ export async function buildActivityHistory(
 
   for (const commitmentTxid of commitmentIds) {
     const spent = sorted.filter((v) => v.settledBy === commitmentTxid);
+    // First-commitment attribution mirrors the SDK
+    // (transactionHistory.ts uses commitmentTxIds![0]). A leaf with
+    // multiple commitments still surfaces under one group instead of
+    // being silently dropped.
     const created = sorted.filter(
       (v) =>
         v.status.isLeaf &&
-        v.virtualStatus.commitmentTxIds?.every((id) => id === commitmentTxid),
+        v.virtualStatus.commitmentTxIds?.[0] === commitmentTxid,
     );
     const isBoardingMixed = commitmentsToIgnore.has(commitmentTxid);
     const decomp = decomposeCommitmentGroup({
@@ -667,6 +674,7 @@ export async function buildActivityHistory(
               anchorSats: BigInt(v.value),
               assetDelta: assets,
               network,
+              settled: v.status.isLeaf || v.isSpent === true,
             }),
           );
         } else {
@@ -714,6 +722,7 @@ export async function buildActivityHistory(
             anchorSats: txAmount,
             assetDelta: assets,
             network,
+            settled: true,
           }),
         );
       } else {
