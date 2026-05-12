@@ -302,24 +302,38 @@ export async function getActivityHistory(
 ): Promise<Activity[]> {
   const cm = await wallet.getContractManager();
   const contracts = await cm.getContractsWithVtxos();
-  const allVtxos: VirtualCoin[] = contracts.flatMap((c) => c.vtxos);
-  const sorted = [...allVtxos].sort(
-    (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
-  );
-
+  const vtxos: VirtualCoin[] = contracts.flatMap((c) => c.vtxos);
   const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
-
   const indexer = new ExpoIndexerProvider(arkServerUrl);
   const getTxCreatedAt = (txid: string): Promise<number | undefined> =>
     indexer
       .getVtxos({ outpoints: [{ txid, vout: 0 }] })
       .then((res) => res.vtxos[0]?.createdAt.getTime())
       .catch(() => undefined);
+  return buildActivityHistory(
+    vtxos,
+    boardingTxs,
+    commitmentsToIgnore,
+    getTxCreatedAt,
+    options,
+  );
+}
+
+export async function buildActivityHistory(
+  vtxos: VirtualCoin[],
+  allBoardingTxs: ArkTransaction[],
+  commitmentsToIgnore: Set<string>,
+  getTxCreatedAt?: (txid: string) => Promise<number | undefined>,
+  options: GetActivityHistoryOptions = { network: null },
+): Promise<Activity[]> {
+  const sorted = [...vtxos].sort(
+    (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+  );
 
   const activities: Activity[] = [];
   const { network, boardingAddress, arkadeAddress } = options;
 
-  for (const tx of boardingTxs) {
+  for (const tx of allBoardingTxs) {
     const boardingTxid = tx.key.boardingTxid;
     if (!boardingTxid) continue;
     const boardingMeta: NonNullable<Activity["metadata"]> = { boardingTxid };
@@ -361,7 +375,7 @@ export async function getActivityHistory(
     amount: bigint,
     requireUnsettled: boolean,
   ): ArkTransaction | null => {
-    for (const tx of boardingTxs) {
+    for (const tx of allBoardingTxs) {
       const boardingTxid = tx.key.boardingTxid;
       if (!boardingTxid) continue;
       if (usedBoardingTxids.has(boardingTxid)) continue;
@@ -687,7 +701,8 @@ export async function getActivityHistory(
       const tsTx =
         changes.length > 0
           ? changes[0].createdAt.getTime()
-          : ((await getTxCreatedAt(arkTxId)) ?? v.createdAt.getTime() + 1);
+          : ((getTxCreatedAt ? await getTxCreatedAt(arkTxId) : undefined) ??
+            v.createdAt.getTime() + 1);
       const assets = subtractAssets(allSpent, changes);
 
       if (assets.length > 0) {
