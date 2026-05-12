@@ -109,6 +109,7 @@ export default function ActivityScreen() {
 const styles = StyleSheet.create({
   list: {
     paddingHorizontal: spacing[5],
+    paddingBottom: spacing[8],
   },
   emptyContainer: {
     flex: 1,

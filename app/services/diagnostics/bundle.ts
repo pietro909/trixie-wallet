@@ -13,10 +13,7 @@ import { fetchRawServerInfo, getWallet } from "../arkade/runtime";
 import { getAllSwapMetadata } from "../arkade/swap-storage";
 import { SWAP_BACKGROUND_TASK_NAME } from "../arkade/swap-background";
 import { loadVtxos, type VtxoStatus } from "../arkade/vtxo-listing";
-import {
-  type BgTaskMetrics,
-  readBgTaskMetrics,
-} from "./bg-task-metrics";
+import { type BgTaskMetrics, readBgTaskMetrics } from "./bg-task-metrics";
 import {
   type ErrorEntry,
   getRecentErrors,

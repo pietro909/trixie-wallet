@@ -63,7 +63,7 @@ export function prettyAssetNumber(
   try {
     if (typeof num === "bigint") {
       const sign = num < BigInt(0) ? "-" : "";
-      const absStr = (num < BigInt(0) ? (-num).toString() : num.toString());
+      const absStr = num < BigInt(0) ? (-num).toString() : num.toString();
       // Compute how many fractional zeroes to append for the fallback. If
       // caller requested a minimum, append that many zeros (but don't exceed
       // the maximumFractionDigits if provided).

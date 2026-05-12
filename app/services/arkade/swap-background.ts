@@ -114,10 +114,7 @@ class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
     });
     if (result.status === "failed") {
       const msg = errorMessage ?? "swap poll task failed";
-      await recordPersistedError(
-        "lightning",
-        `bg_swap_poll_failed: ${msg}`,
-      );
+      await recordPersistedError("lightning", `bg_swap_poll_failed: ${msg}`);
     }
   }
 }
