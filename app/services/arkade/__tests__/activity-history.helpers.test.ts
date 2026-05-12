@@ -213,14 +213,42 @@ describe("decomposeCommitmentGroup", () => {
     expect((r as { reason: string }).reason).toBe("boarding_mixed_unresolved");
   });
 
-  it("branch 4 — non-boarding with asset delta → asset_bearing_settlement", () => {
+  it("branch 4a — non-boarding asset_batch_receive (btcDelta>0, assets)", () => {
+    const r = decomposeCommitmentGroup({
+      spent: [vtxo({ value: 500 })],
+      created: [vtxo({ value: 800, assets: [{ assetId: "A", amount: 10n }] })],
+      isBoardingMixed: false,
+    });
+    expect(r.kind).toBe("asset_batch_receive");
+    expect((r as { receiveAmount: bigint }).receiveAmount).toBe(300n);
+    expect(
+      (r as { assetDelta: { assetId: string; amount: bigint }[] }).assetDelta,
+    ).toStrictEqual([{ assetId: "A", amount: 10n }]);
+  });
+
+  it("branch 4b — non-boarding asset_exit (btcDelta<0, assets)", () => {
+    const r = decomposeCommitmentGroup({
+      spent: [vtxo({ value: 1000, assets: [{ assetId: "A", amount: 50n }] })],
+      created: [vtxo({ value: 300 })],
+      isBoardingMixed: false,
+    });
+    expect(r.kind).toBe("asset_exit");
+    expect((r as { exitAmount: bigint }).exitAmount).toBe(700n);
+    expect(
+      (r as { assetDelta: { assetId: string; amount: bigint }[] }).assetDelta,
+    ).toStrictEqual([{ assetId: "A", amount: -50n }]);
+  });
+
+  it("branch 4c — non-boarding asset_settlement (btcDelta=0, assets)", () => {
     const r = decomposeCommitmentGroup({
       spent: [vtxo({ value: 1000, assets: [{ assetId: "A", amount: 5n }] })],
       created: [vtxo({ value: 1000 })],
       isBoardingMixed: false,
     });
-    expect(r.kind).toBe("settlement");
-    expect((r as { reason: string }).reason).toBe("asset_bearing_settlement");
+    expect(r.kind).toBe("asset_settlement");
+    expect(
+      (r as { assetDelta: { assetId: string; amount: bigint }[] }).assetDelta,
+    ).toStrictEqual([{ assetId: "A", amount: -5n }]);
   });
 
   it("branch 5 — non-boarding batch_receive (spent=0, created>0)", () => {
@@ -329,10 +357,26 @@ describe("isRenewalGroup", () => {
       },
     ],
     [
-      "asset_bearing_settlement",
+      "asset_settlement",
       {
         spent: [vtxo({ value: 1000, assets: [{ assetId: "A", amount: 5n }] })],
         created: [vtxo({ value: 1000 })],
+        isBoardingMixed: false,
+      },
+    ],
+    [
+      "asset_batch_receive",
+      {
+        spent: [vtxo({ value: 500 })],
+        created: [vtxo({ value: 800, assets: [{ assetId: "A", amount: 5n }] })],
+        isBoardingMixed: false,
+      },
+    ],
+    [
+      "asset_exit",
+      {
+        spent: [vtxo({ value: 1000, assets: [{ assetId: "A", amount: 5n }] })],
+        created: [vtxo({ value: 300 })],
         isBoardingMixed: false,
       },
     ],

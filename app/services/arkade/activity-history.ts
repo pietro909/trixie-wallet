@@ -102,11 +102,18 @@ export type CommitmentDecomposition =
       kind: "settlement";
       spentAmount: bigint;
       createdAmount: bigint;
-      reason:
-        | "boarding_mixed_unresolved"
-        | "asset_bearing_settlement"
-        | "empty_group";
-    };
+      reason: "boarding_mixed_unresolved" | "empty_group";
+    }
+  // Asset-bearing commitments split the row pair: a BTC payment row
+  // matching the BTC delta sign, plus an asset row carrying the
+  // signed per-asset delta.
+  | {
+      kind: "asset_batch_receive";
+      receiveAmount: bigint;
+      assetDelta: Asset[];
+    }
+  | { kind: "asset_exit"; exitAmount: bigint; assetDelta: Asset[] }
+  | { kind: "asset_settlement"; assetDelta: Asset[] };
 
 export function decomposeCommitmentGroup(args: {
   spent: VirtualCoin[];
@@ -147,13 +154,21 @@ export function decomposeCommitmentGroup(args: {
   }
 
   if (hasAssetDelta) {
-    // Conservative: do not classify asset-bearing commitments as renewal/exit.
-    return {
-      kind: "settlement",
-      spentAmount,
-      createdAmount,
-      reason: "asset_bearing_settlement",
-    };
+    // Split by BTC delta sign so the user sees both the value movement
+    // (batch/exit/settlement) and the asset movement (asset row) — the
+    // catch-all settlement row would hide the asset delta.
+    const btcDelta = createdAmount - spentAmount;
+    if (btcDelta > 0n) {
+      return {
+        kind: "asset_batch_receive",
+        receiveAmount: btcDelta,
+        assetDelta,
+      };
+    }
+    if (btcDelta < 0n) {
+      return { kind: "asset_exit", exitAmount: -btcDelta, assetDelta };
+    }
+    return { kind: "asset_settlement", assetDelta };
   }
 
   if (spentAmount === 0n && createdAmount > 0n) {
@@ -311,9 +326,7 @@ export async function getActivityHistory(
   const contracts = await cm.getContractsWithVtxos();
   const vtxos: VirtualCoin[] = contracts.flatMap((c) => c.vtxos);
   const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
-  const { ExpoIndexerProvider } = await import(
-    "@arkade-os/sdk/adapters/expo"
-  );
+  const { ExpoIndexerProvider } = await import("@arkade-os/sdk/adapters/expo");
   const indexer = new ExpoIndexerProvider(arkServerUrl);
   const getTxCreatedAt = (txid: string): Promise<number | undefined> =>
     indexer
@@ -626,6 +639,78 @@ export async function buildActivityHistory(
           ),
         });
         break;
+      case "asset_batch_receive": {
+        const batchMeta: NonNullable<Activity["metadata"]> = {
+          commitmentTxid,
+        };
+        if (arkadeAddress) batchMeta.arkadeAddress = arkadeAddress;
+        activities.push({
+          id: activityId("batch", commitmentTxid),
+          kind: "payment",
+          direction: "in",
+          amountSats: Number(decomp.receiveAmount),
+          timestamp: tsCreated,
+          title: "Arkade received",
+          status: "confirmed",
+          rail: "arkade",
+          source: { type: "arkade_tx", walletTxId: commitmentTxid },
+          metadata: withNetwork(batchMeta, network),
+        });
+        activities.push(
+          buildAssetActivity({
+            arkTxid: commitmentTxid,
+            timestamp: tsCreated,
+            direction: "receive",
+            anchorSats: decomp.receiveAmount,
+            assetDelta: decomp.assetDelta,
+            network,
+            settled: true,
+          }),
+        );
+        break;
+      }
+      case "asset_exit": {
+        activities.push({
+          id: activityId("exit", commitmentTxid),
+          kind: "payment",
+          direction: "out",
+          amountSats: Number(decomp.exitAmount),
+          timestamp: tsAnchor,
+          title: "Collaborative exit",
+          status: "confirmed",
+          rail: "arkade",
+          source: { type: "arkade_tx", walletTxId: commitmentTxid },
+          metadata: withNetwork({ commitmentTxid }, network),
+        });
+        activities.push(
+          buildAssetActivity({
+            arkTxid: commitmentTxid,
+            timestamp: tsAnchor,
+            direction: "send",
+            anchorSats: decomp.exitAmount,
+            assetDelta: decomp.assetDelta,
+            network,
+            settled: true,
+          }),
+        );
+        break;
+      }
+      case "asset_settlement": {
+        // BTC-neutral commitment with non-zero asset delta. No payment
+        // row; the asset row carries the full signal.
+        activities.push(
+          buildAssetActivity({
+            arkTxid: commitmentTxid,
+            timestamp: tsAnchor,
+            direction: "send",
+            anchorSats: 0n,
+            assetDelta: decomp.assetDelta,
+            network,
+            settled: true,
+          }),
+        );
+        break;
+      }
       case "settlement": {
         if (decomp.reason === "empty_group") break;
         const unresolved =

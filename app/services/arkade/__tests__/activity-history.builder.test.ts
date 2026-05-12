@@ -226,7 +226,7 @@ describe("buildActivityHistory — synthetic builder cases (mirrors SDK)", () =>
   // D-8 — DIV-8: exit with change + assets should emit `exit` plus an
   // asset row. Currently routes to the `settlement` fallback. Marked
   // .failing — flips green when Phase G lands.
-  it.failing("D-8: exit with change + assets should produce an exit row (DIV-8)", async () => {
+  it("D-8: exit with change + assets produces exit + asset rows", async () => {
     const commitmentTxId = "exit-cmt-with-change";
     const forfeit = vtxo({
       txid: "forfeit-1",
@@ -263,7 +263,7 @@ describe("buildActivityHistory — synthetic builder cases (mirrors SDK)", () =>
   });
 
   // D-9 — DIV-8: exit without change + assets. Same routing bug as D-8.
-  it.failing("D-9: exit without change + assets should produce an exit row (DIV-8)", async () => {
+  it("D-9: exit without change + assets produces exit + asset rows", async () => {
     const commitmentTxId = "exit-cmt-no-change";
     const forfeit = vtxo({
       txid: "forfeit-2",
