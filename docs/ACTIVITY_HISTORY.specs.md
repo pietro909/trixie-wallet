@@ -1348,14 +1348,21 @@ Per fixture case, the test:
    `[...activities].sort((a,b) => b.timestamp - a.timestamp || a.id.localeCompare(b.id))`,
    filtered to payment IDs, equals `expected` order.
 
-**Expected per-case outcomes** (use these as the assertion targets):
+**Observed per-case outcomes** (measured against the current builder
+after Phase B.5; pin these counts in tests):
 
-| Case | SDK rows | Min Activity rows | Activity-only kinds present                |
-| ---- | -------- | ----------------- | ------------------------------------------ |
-| 0    | 25       | 25 + 7 + ≥1 renewal | `boarding_settled` (7), `renewal` (≥13)   |
-| 1    | 34       | 34 + 1 + ≥1       | `boarding_settled` (1), `renewal`         |
-| 2    | 2        | 2                 | none                                       |
-| 3    | 4        | 4 + 1             | `boarding_settled` (1)                     |
+| Case | SDK rows | Our rows | Breakdown                                                                     |
+| ---- | -------- | -------- | ----------------------------------------------------------------------------- |
+| 0    | 25       | 37       | 8 boarding + 7 boarding_settled + 5 renewal + 2 exit + 15 offchain            |
+| 1    | 34       | 37       | 1 boarding + 1 boarding_settled + 2 renewal + 33 offchain                     |
+| 2    | 2        | 3        | 1 exit + 1 renewal + 1 offchain (case is renewal_plus_exit, two rows)         |
+| 3    | 4        | 5        | 1 boarding + 1 boarding_settled + 3 offchain                                  |
+
+Renewal counts are lower than a naive prediction because many spent
+vtxos in the fixtures share commitments — the renewal row is per
+commitment, not per vtxo. Case 2 emits a `renewal` alongside the SDK's
+`exit` because the commitment is `renewal_plus_exit` (forfeit >
+settled by some delta) rather than a pure exit.
 
 **Acceptance**: all four cases pass P-1..P-5, or are documented as
 expected-failures with a specific DIV reference.
