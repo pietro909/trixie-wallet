@@ -49,6 +49,7 @@ const STATUS_KEY: VtxoStatus[] = [
   "preconfirmed",
   "swept",
   "subdust",
+  "spent",
 ];
 
 export default function VtxoListScreen(): React.ReactElement {

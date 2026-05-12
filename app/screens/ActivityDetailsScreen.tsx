@@ -6,7 +6,7 @@ import {
   Repeat,
 } from "lucide-react-native";
 import type * as React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import Button from "../components/Button";
 import CopyableField from "../components/CopyableField";
@@ -134,7 +134,7 @@ export default function ActivityDetailsScreen() {
       activity?.assets && activity.assets.length > 0
         ? activity.assets.map((a) => a.assetId)
         : typeof activity?.metadata?.assetId === "string"
-          ? [activity.metadata.assetId as string]
+          ? [activity.metadata.assetId]
           : [],
     [activity],
   );
@@ -171,6 +171,46 @@ export default function ActivityDetailsScreen() {
         : [],
     [activity, network, assetMetadata],
   );
+
+  // Chain-swap refund derivations — computed unconditionally so the
+  // `useCallback` below stays above the `!activity` early return and obeys
+  // rules-of-hooks.
+  const chainSwapId =
+    activity?.source.type === "boltz_swap" ? activity.source.swapId : null;
+  // Mirror the row id format used by `recovery.ts` so the refund button on
+  // this screen and the row in ProfileRecovery share spinner / error state.
+  const recoveryRowId = chainSwapId ? `chain:${chainSwapId}` : null;
+  const activityTitle = activity?.title ?? "";
+  const activityTimestamp = activity?.timestamp ?? 0;
+  const performRefund = useCallback(async () => {
+    if (!chainSwapId || !recoveryRowId) return;
+    const result = await runRecoveryAction("refund_chain_ark", recoveryRowId, {
+      id: recoveryRowId,
+      swapId: chainSwapId,
+      type: "chain",
+      title: activityTitle,
+      status: "refundable",
+      severity: "actionable",
+      createdAt: activityTimestamp,
+      linkState: "linked",
+      actions: ["refund_chain_ark"],
+      detail: chainSwapId,
+    });
+    const stillActionable = result.items.some(
+      (i) => i.id === recoveryRowId && i.severity === "actionable",
+    );
+    if (!stillActionable && !rowErrors[recoveryRowId]) {
+      showToast("Refund submitted", "success");
+    }
+  }, [
+    chainSwapId,
+    recoveryRowId,
+    runRecoveryAction,
+    activityTitle,
+    activityTimestamp,
+    rowErrors,
+    showToast,
+  ]);
 
   if (!activity) {
     return (
@@ -212,38 +252,9 @@ export default function ActivityDetailsScreen() {
     activity.source.type === "boltz_swap" &&
     activity.source.swapType === "chain" &&
     activity.metadata?.refundAvailable === true;
-  const chainSwapId =
-    activity.source.type === "boltz_swap" ? activity.source.swapId : null;
-  // Mirror the row id format used by `recovery.ts` so the refund button on
-  // this screen and the row in ProfileRecovery share spinner / error state.
-  const recoveryRowId = chainSwapId ? `chain:${chainSwapId}` : null;
   const refunding = recoveryRowId != null && recoveringIds.has(recoveryRowId);
   const refundError =
     recoveryRowId != null ? rowErrors[recoveryRowId] : undefined;
-
-  const activityTitle = activity.title;
-  const activityTimestamp = activity.timestamp;
-  async function performRefund() {
-    if (!chainSwapId || !recoveryRowId) return;
-    const result = await runRecoveryAction("refund_chain_ark", recoveryRowId, {
-      id: recoveryRowId,
-      swapId: chainSwapId,
-      type: "chain",
-      title: activityTitle,
-      status: "refundable",
-      severity: "actionable",
-      createdAt: activityTimestamp,
-      linkState: "linked",
-      actions: ["refund_chain_ark"],
-      detail: chainSwapId,
-    });
-    const stillActionable = result.items.some(
-      (i) => i.id === recoveryRowId && i.severity === "actionable",
-    );
-    if (!stillActionable && !rowErrors[recoveryRowId]) {
-      showToast("Refund submitted", "success");
-    }
-  }
   function handleRefund() {
     if (!chainSwapId) return;
     Alert.alert(

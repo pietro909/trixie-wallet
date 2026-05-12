@@ -55,7 +55,7 @@ export default function ActivityRow(
     ? activity.assets?.[0]
     : typeof activity.metadata?.assetId === "string"
       ? {
-          assetId: activity.metadata.assetId as string,
+          assetId: activity.metadata.assetId,
           amount:
             typeof activity.metadata.assetAmount === "number"
               ? String(activity.metadata.assetAmount)

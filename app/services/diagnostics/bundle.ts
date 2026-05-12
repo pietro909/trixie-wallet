@@ -30,7 +30,10 @@ export type SupportBundle = {
     sdkVersion: string | null;
     boltzSwapVersion: string | null;
     commit: string | null;
+    /** Release tag from git, if HEAD is on a tagged commit. */
     tag: string | null;
+    /** `git describe` output, when the build is not on a clean release tag. */
+    describe: string | null;
   };
   storeSchemaVersion: number;
   network: {
@@ -277,34 +280,42 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
   let pendingFinalizeCount = 0;
   if (lightningSupported) {
     let submarineRecovery: SubmarineRecoveryInfo[] = [];
+    let lightning: Awaited<ReturnType<typeof getLightning>> | null = null;
     try {
-      const lightning = await getLightning();
-      submarineRecovery = await lightning.scanRecoverableSubmarineSwaps();
-      for (const info of submarineRecovery) {
-        const key = `submarine.${info.status}`;
-        recoveryCounts[key] = (recoveryCounts[key] ?? 0) + 1;
-      }
+      lightning = await getLightning();
     } catch (e) {
-      recoveryScanErrors.submarine = redactString(
-        e instanceof Error ? e.message : "submarine scan failed",
+      recoveryScanErrors.lightning = redactString(
+        e instanceof Error ? e.message : "lightning unavailable",
       );
     }
-    try {
-      const lightning = await getLightning();
-      const manager = lightning.getSwapManager();
-      if (manager) {
-        const stats = await manager.getStats();
-        swapManagerStats = {
-          isRunning: stats.isRunning,
-          monitoredSwaps: stats.monitoredSwaps,
-          websocketConnected: stats.websocketConnected,
-          usePollingFallback: stats.usePollingFallback,
-        };
+    if (lightning) {
+      try {
+        submarineRecovery = await lightning.scanRecoverableSubmarineSwaps();
+        for (const info of submarineRecovery) {
+          const key = `submarine.${info.status}`;
+          recoveryCounts[key] = (recoveryCounts[key] ?? 0) + 1;
+        }
+      } catch (e) {
+        recoveryScanErrors.submarine = redactString(
+          e instanceof Error ? e.message : "submarine scan failed",
+        );
       }
-    } catch (e) {
-      recoveryScanErrors.swapManager = redactString(
-        e instanceof Error ? e.message : "swap manager stats unavailable",
-      );
+      try {
+        const manager = lightning.getSwapManager();
+        if (manager) {
+          const stats = await manager.getStats();
+          swapManagerStats = {
+            isRunning: stats.isRunning,
+            monitoredSwaps: stats.monitoredSwaps,
+            websocketConnected: stats.websocketConnected,
+            usePollingFallback: stats.usePollingFallback,
+          };
+        }
+      } catch (e) {
+        recoveryScanErrors.swapManager = redactString(
+          e instanceof Error ? e.message : "swap manager stats unavailable",
+        );
+      }
     }
   }
   try {
@@ -402,7 +413,8 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
       sdkVersion,
       boltzSwapVersion,
       commit,
-      tag: tag ?? describe,
+      tag,
+      describe,
     },
     storeSchemaVersion: state.schemaVersion,
     network: {

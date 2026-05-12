@@ -177,8 +177,7 @@ export default function VtxoDetailScreen(): React.ReactElement {
 
   const visuals = vtxoStatusVisuals(vtxo.status, theme);
   const expiry = vtxo.virtualStatus.batchExpiry;
-  const [txid] = vtxo.outpoint.split(":");
-  const txExplorer = txid ? explorerUrl("ark_tx", txid, network) : null;
+  const txExplorer = explorerUrl("ark_tx", vtxo.txid, network);
 
   return (
     <ScrollView

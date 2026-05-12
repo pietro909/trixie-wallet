@@ -63,13 +63,17 @@ export function statusVisuals(
  * everything else defaults to plain text. The "loud green even when
  * pending" bug we're fixing in M11 lives in callers that ignored direction
  * here — every consumer must route through this helper.
+ *
+ * `direction === "none"` is treated as neutral: rows without a clear
+ * direction (e.g. metadata-only wallet events) shouldn't borrow the
+ * outbound color by default.
  */
 export function statusAmountColor(
   status: ActivityStatus,
   direction: ActivityDirection | undefined,
   theme: AppTheme,
 ): string {
-  if (direction === "self") return theme.colors.text;
+  if (direction === "self" || direction === "none") return theme.colors.text;
   const isIn = direction === "in";
   if (status === "pending") {
     return isIn ? theme.colors.pending : theme.colors.text;
