@@ -415,6 +415,7 @@ export function buildActivityDetailSections(
   const renewedAmountSats =
     readNumber(md, "renewedAmountSats") ?? readNumber(md, "amountSats");
   const unresolvedAmountSats = readNumber(md, "unresolvedAmountSats");
+  const settledAmountSats = readNumber(md, "settledAmountSats");
   const settlementReason =
     readString(md, "settlementReason") ?? readString(md, "reason");
   const automatic = readBoolean(md, "automatic");
@@ -439,6 +440,13 @@ export function buildActivityDetailSections(
       kind: "text",
       label: "Renewed amount",
       value: `${renewedAmountSats.toLocaleString()} sats`,
+    });
+  }
+  if (settledAmountSats != null) {
+    renewalRows.push({
+      kind: "text",
+      label: "Settled amount",
+      value: `${settledAmountSats.toLocaleString()} sats`,
     });
   }
   if (unresolvedAmountSats != null) {
@@ -471,9 +479,15 @@ export function buildActivityDetailSections(
     });
   }
   if (renewalRows.length > 0) {
+    const sectionTitle =
+      activity.title === "Arkade settlement"
+        ? "Settlement"
+        : activity.title === "Boarding settled"
+          ? "Boarding"
+          : "Renewal";
     sections.push({
       id: "renewal",
-      title: activity.title === "Arkade settlement" ? "Settlement" : "Renewal",
+      title: sectionTitle,
       rows: renewalRows,
     });
   }
@@ -650,6 +664,7 @@ export function buildActivityDetailSections(
     "renewedAmountSats",
     "amountSats",
     "unresolvedAmountSats",
+    "settledAmountSats",
     "settlementReason",
     "reason",
     "automatic",

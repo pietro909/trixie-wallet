@@ -1,4 +1,9 @@
-import type { Asset, VirtualCoin, Wallet } from "@arkade-os/sdk";
+import type {
+  ArkTransaction,
+  Asset,
+  VirtualCoin,
+  Wallet,
+} from "@arkade-os/sdk";
 import { ExpoIndexerProvider } from "@arkade-os/sdk/adapters/expo";
 import type { Activity, ActivityDirection } from "../../store/types";
 
@@ -6,6 +11,7 @@ import type { Activity, ActivityDirection } from "../../store/types";
 
 export type ActivityIdKind =
   | "boarding"
+  | "boarding_settled"
   | "offchain"
   | "batch"
   | "exit"
@@ -344,6 +350,28 @@ export async function getActivityHistory(
     }
   }
 
+  // The SDK marks commitments that consumed on-chain boarding outputs via
+  // `commitmentsToIgnore`, but the underlying outspend lookup can lag — when
+  // a boarding output is consumed off-chain before the outspend cache
+  // refreshes, the commitment slips through as a plain batch_receive and we
+  // end up emitting "Arkade received" next to "Boarding deposit" for the
+  // same funds. Match by amount as a fallback, claiming each boarding tx at
+  // most once so multi-deposit wallets stay deterministic.
+  const usedBoardingTxids = new Set<string>();
+  const findBoardingMatch = (
+    amount: bigint,
+    requireUnsettled: boolean,
+  ): ArkTransaction | null => {
+    for (const tx of boardingTxs) {
+      const boardingTxid = tx.key.boardingTxid;
+      if (!boardingTxid) continue;
+      if (usedBoardingTxids.has(boardingTxid)) continue;
+      if (requireUnsettled && tx.settled) continue;
+      if (BigInt(tx.amount) === amount) return tx;
+    }
+    return null;
+  };
+
   for (const commitmentTxid of commitmentIds) {
     const spent = sorted.filter((v) => v.settledBy === commitmentTxid);
     const created = sorted.filter(
@@ -367,6 +395,65 @@ export async function getActivityHistory(
         ? Math.min(...spent.map((v) => v.createdAt.getTime()))
         : 0;
     const tsAnchor = tsCreated > 0 ? tsCreated : tsSpent + 1;
+
+    // Reclassify pure boarding settlements before the default switch:
+    //  - SDK-marked + no VTXO inputs → definitely a boarding settlement;
+    //    find the boarding tx by amount for the explorer link.
+    //  - Plain batch_receive that matches an unsettled boarding deposit by
+    //    amount → outspend cache lag; treat as a boarding settlement.
+    // In both cases we emit a single "Boarding settled" wallet_event and
+    // suppress the "Arkade received" / "Arkade settlement" duplicate.
+    let boardingSettlement: {
+      settledAmount: bigint;
+      boardingTxid: string | null;
+    } | null = null;
+    if (decomp.kind === "batch_receive") {
+      const match = findBoardingMatch(decomp.createdAmount, true);
+      if (match) {
+        usedBoardingTxids.add(match.key.boardingTxid);
+        boardingSettlement = {
+          settledAmount: decomp.createdAmount,
+          boardingTxid: match.key.boardingTxid,
+        };
+      }
+    } else if (
+      decomp.kind === "settlement" &&
+      decomp.reason === "boarding_mixed_unresolved" &&
+      spent.length === 0 &&
+      created.length > 0
+    ) {
+      const match = findBoardingMatch(decomp.createdAmount, false);
+      if (match) usedBoardingTxids.add(match.key.boardingTxid);
+      boardingSettlement = {
+        settledAmount: decomp.createdAmount,
+        boardingTxid: match?.key.boardingTxid ?? null,
+      };
+    }
+
+    if (boardingSettlement) {
+      const meta: NonNullable<Activity["metadata"]> = {
+        commitmentTxid,
+        settledAmountSats: Number(boardingSettlement.settledAmount),
+      };
+      if (boardingSettlement.boardingTxid) {
+        meta.boardingTxid = boardingSettlement.boardingTxid;
+      }
+      activities.push({
+        id: activityId("boarding_settled", commitmentTxid),
+        kind: "wallet_event",
+        direction: "self",
+        timestamp: tsCreated > 0 ? tsCreated : tsAnchor,
+        title: "Boarding settled",
+        status: "confirmed",
+        rail: "arkade",
+        source: {
+          type: "wallet_event",
+          eventId: activityId("boarding_settled", commitmentTxid),
+        },
+        metadata: withNetwork(meta, network),
+      });
+      continue;
+    }
 
     switch (decomp.kind) {
       case "batch_receive": {
