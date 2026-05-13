@@ -35,9 +35,9 @@ Last updated: 2026-05-11 (Milestones 16–18 added; 11–18 reordered)
   - Surface pending swap state accurately in all views and add a paginated VTXO detail screen sourced from the SDK.
 - [x] Milestone 12: In-app push notifications ([docs/MILESTONE_12.agents.md](./docs/MILESTONE_12.agents.md))
   - Implement in-app and push notifications for wallet activities and swap status updates.
-- [ ] Milestone 13: Activity Caching ([docs/MILESTONE_13.agents.md](./docs/MILESTONE_13.agents.md))
+- [x] Milestone 13: Activity Caching ([docs/MILESTONE_13.agents.md](./docs/MILESTONE_13.agents.md))
   - Introduce an append-friendly cache for derived Activity rows with boring, explicit invalidation.
-- [ ] Milestone 14: LNURL ([docs/MILESTONE_14.agents.md](./docs/MILESTONE_14.agents.md))
+- [x] Milestone 14: LNURL ([docs/MILESTONE_14.agents.md](./docs/MILESTONE_14.agents.md))
   - Add LNURL and Lightning Address parsing + invoice fetching, distinct from BOLT11 handling.
 - [ ] Milestone 15: Multiple Wallets and Labels ([docs/MILESTONE_15.agents.md](./docs/MILESTONE_15.agents.md))
   - Move from a single-wallet store model to multiple wallets with labels and isolated state.
