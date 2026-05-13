@@ -30,6 +30,13 @@ export function isPayableInThisMilestone(option: ParsedPaymentOption): boolean {
     const network = useAppStore.getState().wallet?.network;
     return isLightningSupportedForNetwork(network);
   }
+  if (option.type === "lnurl") {
+    // LNURL pay is resolved into a `lightning` option in SendAmount before the
+    // executor runs, so reachability depends on whether Lightning is wired up
+    // for this network.
+    const network = useAppStore.getState().wallet?.network;
+    return isLightningSupportedForNetwork(network);
+  }
   return false;
 }
 
@@ -45,10 +52,18 @@ export function unsupportedReasonFor(
     }
     return null;
   }
-  switch (option.type) {
-    case "lnurl":
-      return "LNURL pay is not available yet.";
+  if (option.type === "lnurl") {
+    const network = useAppStore.getState().wallet?.network;
+    if (!isLightningSupportedForNetwork(network)) {
+      return `Lightning is not configured for ${network ?? "this network"}.`;
+    }
+    // The SendAmount screen resolves LNURL → BOLT11 invoice before review.
+    // If we still see an `lnurl` option in the executor, the resolution
+    // step was bypassed — surface that explicitly rather than silently
+    // failing inside `sendLightning`.
+    return "LNURL invoice was not fetched. Open the Send flow again.";
   }
+  return null;
 }
 
 export async function executeSend(

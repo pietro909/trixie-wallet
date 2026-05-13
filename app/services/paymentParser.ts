@@ -80,6 +80,10 @@ const BTC_ADDRESS_RE =
   /^(bc1|tb1|bcrt1)[02-9ac-hj-np-z]{6,87}$|^[13mn2][a-km-zA-HJ-NP-Z1-9]{25,39}$/;
 const LN_INVOICE_RE = /^ln(bc|tb|sb|bcrt)[0-9a-z]+$/i;
 const LNURL_RE = /^lnurl1[02-9ac-hj-np-z]+$/i;
+// Lightning Address (LUD-16): same shape as a simple email, resolves to a
+// `.well-known/lnurlp/<name>` LNURL-pay endpoint. Kept tighter than RFC-5322
+// to match what users practically paste in.
+const LN_ADDRESS_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 // Mainnet uses the `ark` HRP; testnet, signet, mutinynet, and regtest all use `tark`.
 const ARKADE_RE = /^t?ark1[02-9ac-hj-np-z]{20,}$/i;
 
@@ -114,6 +118,9 @@ function detectBareType(value: string): PaymentType | null {
   const v = value.trim();
   if (LN_INVOICE_RE.test(v)) return "lightning";
   if (LNURL_RE.test(v)) return "lnurl";
+  // Lightning Addresses are LNURL-pay underneath — resolved to a bech32
+  // endpoint by `services/arkade/lnurl.ts` later in the Send flow.
+  if (LN_ADDRESS_RE.test(v)) return "lnurl";
   if (ARKADE_RE.test(v)) return "arkade";
   if (BTC_ADDRESS_RE.test(v)) return "bitcoin";
   return null;
@@ -386,7 +393,10 @@ function parseBitcoinBody(
   }
 
   const lnurlParam = query.get("lnurl");
-  if (lnurlParam && LNURL_RE.test(lnurlParam)) {
+  if (
+    lnurlParam &&
+    (LNURL_RE.test(lnurlParam) || LN_ADDRESS_RE.test(lnurlParam))
+  ) {
     parsedOptions.push({
       id: makeId("lnurl", lnurlParam),
       type: "lnurl",

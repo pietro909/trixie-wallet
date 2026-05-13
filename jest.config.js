@@ -6,7 +6,7 @@ module.exports = {
     "^@/(.*)$": "<rootDir>/$1",
   },
   transformIgnorePatterns: [
-    "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-clone-referenced-element|@react-navigation/.*|@unimodules/.*|sentry-expo|native-base|react-native-svg|@arkade-os/.*))",
+    "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-clone-referenced-element|@react-navigation/.*|@unimodules/.*|sentry-expo|native-base|react-native-svg|@arkade-os/.*|@scure/.*|@noble/.*|micro-packed))",
   ],
   collectCoverageFrom: [
     "app/services/arkade/activity-history.ts",

@@ -1,0 +1,104 @@
+import { bech32, utf8 } from "@scure/base";
+import {
+  isLightningAddress,
+  isLnurlIdentifier,
+  lnurlDescriptionFrom,
+  maxSendableSats,
+  minSendableSats,
+  resolveLnurlEndpoint,
+} from "../lnurl";
+
+// Round-trip a fresh bech32 LNURL on each run so the test exercises the same
+// decoder the runtime uses — pinning a hardcoded encoding would just test the
+// fixture, not the resolver.
+const SAMPLE_URL = "https://pay.example.com/lnurl/pay";
+const SAMPLE_LNURL = bech32.encodeFromBytes("lnurl", utf8.decode(SAMPLE_URL));
+
+describe("isLightningAddress", () => {
+  it("accepts user@host.tld shapes", () => {
+    expect(isLightningAddress("alice@example.com")).toBe(true);
+    expect(isLightningAddress("a.b+tag@sub.example.co")).toBe(true);
+  });
+  it("rejects obvious non-addresses", () => {
+    expect(isLightningAddress("alice")).toBe(false);
+    expect(isLightningAddress("alice@")).toBe(false);
+    expect(isLightningAddress("@example.com")).toBe(false);
+    expect(isLightningAddress("alice@example")).toBe(false);
+    expect(isLightningAddress("alice@example.c")).toBe(false);
+  });
+});
+
+describe("isLnurlIdentifier", () => {
+  it("accepts Lightning Addresses", () => {
+    expect(isLnurlIdentifier("alice@example.com")).toBe(true);
+  });
+  it("accepts bech32 LNURL strings (case-insensitive)", () => {
+    expect(isLnurlIdentifier(SAMPLE_LNURL)).toBe(true);
+    expect(isLnurlIdentifier(SAMPLE_LNURL.toLowerCase())).toBe(true);
+  });
+  it("rejects random strings", () => {
+    expect(isLnurlIdentifier("hello world")).toBe(false);
+    expect(isLnurlIdentifier("lnurl1notvalidbech32")).toBe(false);
+  });
+});
+
+describe("resolveLnurlEndpoint", () => {
+  it("maps a Lightning Address to its .well-known URL", () => {
+    const r = resolveLnurlEndpoint("alice@example.com");
+    expect(r?.url).toBe("https://example.com/.well-known/lnurlp/alice");
+    expect(r?.domain).toBe("example.com");
+    expect(r?.identifier).toBe("alice@example.com");
+  });
+  it("preserves the last `@` so `+tag` aliases work", () => {
+    const r = resolveLnurlEndpoint("alice+tag@example.com");
+    expect(r?.url).toBe("https://example.com/.well-known/lnurlp/alice+tag");
+  });
+  it("decodes a bech32 LNURL into its encoded URL", () => {
+    const r = resolveLnurlEndpoint(SAMPLE_LNURL);
+    expect(r?.url).toBe(SAMPLE_URL);
+    expect(r?.domain).toBe("pay.example.com");
+    expect(r?.identifier).toBe(SAMPLE_LNURL);
+  });
+  it("returns null for unrecognized inputs", () => {
+    expect(resolveLnurlEndpoint("nope")).toBeNull();
+  });
+});
+
+describe("lnurlDescriptionFrom", () => {
+  it("returns text/plain when present", () => {
+    const md = JSON.stringify([
+      ["text/plain", "Pay alice"],
+      ["text/long-desc", "Send sats to alice"],
+    ]);
+    expect(lnurlDescriptionFrom(md)).toBe("Pay alice");
+  });
+  it("falls back to text/long-desc", () => {
+    const md = JSON.stringify([
+      ["image/png;base64", "abc"],
+      ["text/long-desc", "Tip jar"],
+    ]);
+    expect(lnurlDescriptionFrom(md)).toBe("Tip jar");
+  });
+  it("handles empty/malformed metadata", () => {
+    expect(lnurlDescriptionFrom("")).toBeUndefined();
+    expect(lnurlDescriptionFrom("not json")).toBeUndefined();
+    expect(lnurlDescriptionFrom("{}")).toBeUndefined();
+  });
+});
+
+describe("minSendableSats / maxSendableSats", () => {
+  const params = {
+    callback: "https://x/y",
+    minSendable: 1000,
+    maxSendable: 100_000_000,
+    metadata: "",
+    domain: "x",
+    identifier: "x",
+  };
+  it("rounds min UP and max DOWN so we never offer to send an amount the endpoint will reject", () => {
+    expect(minSendableSats({ ...params, minSendable: 1500 })).toBe(2);
+    expect(maxSendableSats({ ...params, maxSendable: 1999 })).toBe(1);
+    expect(minSendableSats(params)).toBe(1);
+    expect(maxSendableSats(params)).toBe(100_000);
+  });
+});

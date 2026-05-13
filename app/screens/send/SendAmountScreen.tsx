@@ -33,8 +33,19 @@ import {
   fetchAssetDetailsCached,
   readAssetMetadataMap,
 } from "../../services/arkade/asset-metadata";
+import {
+  fetchLnurlInvoice,
+  fetchLnurlParams,
+  type LnurlPayParams,
+  lnurlDescriptionFrom,
+  maxSendableSats,
+  minSendableSats,
+} from "../../services/arkade/lnurl";
 import { formatSatsAs } from "../../services/format";
-import { paymentTypeLabel } from "../../services/paymentParser";
+import {
+  type ParsedPaymentOption,
+  paymentTypeLabel,
+} from "../../services/paymentParser";
 import { satsToFiat } from "../../store/mock";
 import { useAppStore } from "../../store/useAppStore";
 import { radius, spacing, typography } from "../../theme/theme";
@@ -173,6 +184,48 @@ export default function SendAmountScreen() {
   const [userTouched, setUserTouched] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  // LNURL-pay state. Params are fetched once on mount; the comment + invoice
+  // fetch happens on Review. We keep this state separate from the BTC sats
+  // flow so that switching between LNURL/lightning options on the same screen
+  // wouldn't be tripped up by stale values.
+  const [lnurlParams, setLnurlParams] = React.useState<LnurlPayParams | null>(
+    null,
+  );
+  const [lnurlLoading, setLnurlLoading] = React.useState(false);
+  const [lnurlError, setLnurlError] = React.useState<string | null>(null);
+  const [comment, setComment] = React.useState("");
+  const [fetchingInvoice, setFetchingInvoice] = React.useState(false);
+  const isLnurl = option.type === "lnurl";
+
+  React.useEffect(() => {
+    if (!isLnurl) return;
+    let cancelled = false;
+    setLnurlLoading(true);
+    setLnurlError(null);
+    fetchLnurlParams(option.raw)
+      .then((p) => {
+        if (!cancelled) setLnurlParams(p);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setLnurlError(
+          e instanceof Error ? e.message : "Could not resolve LNURL",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLnurlLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLnurl, option.raw]);
+
+  const lnurlMinSats = lnurlParams ? minSendableSats(lnurlParams) : undefined;
+  const lnurlMaxSats = lnurlParams ? maxSendableSats(lnurlParams) : undefined;
+  const lnurlDescription = lnurlParams
+    ? lnurlDescriptionFrom(lnurlParams.metadata)
+    : undefined;
+
   // Reset the value when the user switches asset selection so we don't carry
   // a stale sats string into an asset context with different precision.
   const lastSelectionKey = React.useRef<string>("");
@@ -251,9 +304,31 @@ export default function SendAmountScreen() {
     insufficient = valid && sats > balance;
   }
 
-  function handleContinue() {
+  // LNURL adds a min/max range gate on top of the regular sats validation.
+  // Reuse `valid` so the existing UI affordances (button enable, error copy)
+  // stay consistent; the specific reason is surfaced via `lnurlRangeError`.
+  let lnurlRangeError: string | null = null;
+  if (
+    isLnurl &&
+    valid &&
+    lnurlMinSats != null &&
+    lnurlMaxSats != null &&
+    (sats < lnurlMinSats || sats > lnurlMaxSats)
+  ) {
+    lnurlRangeError = `Amount must be between ${formatSatsAs(
+      lnurlMinSats,
+      "sats",
+    )} and ${formatSatsAs(lnurlMaxSats, "sats")} sats.`;
+    valid = false;
+  }
+
+  async function handleContinue() {
     if (arkadeOnlyViolation) {
       setError("Assets can only be sent to Arkade addresses");
+      return;
+    }
+    if (lnurlRangeError) {
+      setError(lnurlRangeError);
       return;
     }
     if (!valid) {
@@ -290,6 +365,43 @@ export default function SendAmountScreen() {
         assetDecimals: selectedAssetDecimals,
         assetTicker: selectedAssetDetails.metadata?.ticker,
       });
+      return;
+    }
+    if (isLnurl) {
+      if (!lnurlParams) {
+        setError(lnurlError ?? "Resolving LNURL — please wait.");
+        return;
+      }
+      setFetchingInvoice(true);
+      setError(null);
+      try {
+        const trimmedComment = comment.trim();
+        const invoice = await fetchLnurlInvoice(
+          lnurlParams,
+          sats,
+          trimmedComment.length > 0 ? trimmedComment : undefined,
+        );
+        // Synthesize a lightning option so the rest of the Send flow
+        // (Review, executor, success) is unchanged. We keep the LNURL
+        // identifier as the destination so the user still sees who they
+        // paid rather than the raw BOLT11 stub.
+        const lightningOption: ParsedPaymentOption = {
+          id: `lightning:${invoice.slice(0, 24)}:${invoice.length}`,
+          type: "lightning",
+          raw: invoice,
+          destination: lnurlParams.identifier,
+          memo: lnurlDescription ?? option.memo,
+          isPayable: true,
+        };
+        nav.navigate("SendReview", {
+          option: lightningOption,
+          amountSats: sats,
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not fetch invoice");
+      } finally {
+        setFetchingInvoice(false);
+      }
       return;
     }
     nav.navigate("SendReview", { option, amountSats: sats });
@@ -399,6 +511,65 @@ export default function SendAmountScreen() {
                 Asset sends are Arkade-only. Switch back to Bitcoin or pick an
                 Arkade destination.
               </Text>
+            </View>
+          ) : null}
+
+          {isLnurl ? (
+            <View
+              style={[
+                styles.lnurlCard,
+                {
+                  backgroundColor: theme.colors.card,
+                  borderColor: lnurlError
+                    ? theme.colors.danger
+                    : theme.colors.border,
+                },
+              ]}
+            >
+              {lnurlLoading ? (
+                <Text
+                  style={[styles.lnurlMuted, { color: theme.colors.textMuted }]}
+                >
+                  Resolving LNURL…
+                </Text>
+              ) : lnurlError ? (
+                <Text
+                  style={[styles.lnurlError, { color: theme.colors.danger }]}
+                >
+                  {lnurlError}
+                </Text>
+              ) : lnurlParams ? (
+                <>
+                  <Text
+                    style={[styles.lnurlDomain, { color: theme.colors.text }]}
+                    numberOfLines={1}
+                  >
+                    {lnurlParams.domain}
+                  </Text>
+                  {lnurlDescription ? (
+                    <Text
+                      style={[
+                        styles.lnurlDescription,
+                        { color: theme.colors.textSubtle },
+                      ]}
+                      numberOfLines={3}
+                    >
+                      {lnurlDescription}
+                    </Text>
+                  ) : null}
+                  {lnurlMinSats != null && lnurlMaxSats != null ? (
+                    <Text
+                      style={[
+                        styles.lnurlRange,
+                        { color: theme.colors.textMuted },
+                      ]}
+                    >
+                      Send {formatSatsAs(lnurlMinSats, "sats")}–
+                      {formatSatsAs(lnurlMaxSats, "sats")} sats
+                    </Text>
+                  ) : null}
+                </>
+              ) : null}
             </View>
           ) : null}
 
@@ -600,6 +771,39 @@ export default function SendAmountScreen() {
               </View>
             ) : null}
 
+            {isLnurl &&
+            lnurlParams?.commentAllowed &&
+            lnurlParams.commentAllowed > 0 ? (
+              <View style={styles.commentSection}>
+                <Text
+                  style={[
+                    styles.commentLabel,
+                    { color: theme.colors.textMuted },
+                  ]}
+                >
+                  Comment (optional, max {lnurlParams.commentAllowed} chars)
+                </Text>
+                <TextInput
+                  value={comment}
+                  onChangeText={(t) =>
+                    setComment(t.slice(0, lnurlParams.commentAllowed))
+                  }
+                  placeholder="Note to recipient"
+                  placeholderTextColor={theme.colors.placeholder}
+                  multiline
+                  style={[
+                    styles.commentInput,
+                    {
+                      backgroundColor: theme.colors.surfaceSubtle,
+                      borderColor: theme.colors.border,
+                      color: theme.colors.text,
+                    },
+                  ]}
+                  accessibilityLabel="LNURL comment"
+                />
+              </View>
+            ) : null}
+
             {error ? (
               <Text style={[styles.error, { color: theme.colors.danger }]}>
                 {error}
@@ -610,9 +814,16 @@ export default function SendAmountScreen() {
 
         <View style={styles.footer}>
           <Button
-            label="Review"
+            label={fetchingInvoice ? "Fetching invoice…" : "Review"}
             theme={theme}
-            disabled={!valid || insufficient || arkadeOnlyViolation}
+            loading={fetchingInvoice}
+            disabled={
+              !valid ||
+              insufficient ||
+              arkadeOnlyViolation ||
+              fetchingInvoice ||
+              (isLnurl && (lnurlLoading || !lnurlParams))
+            }
             onPress={handleContinue}
           />
         </View>
@@ -784,6 +995,50 @@ const styles = StyleSheet.create({
   },
   bannerText: {
     fontSize: typography.size.sm,
+  },
+  lnurlCard: {
+    marginTop: spacing[4],
+    padding: spacing[4],
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: spacing[1],
+  },
+  lnurlDomain: {
+    fontSize: typography.size.md,
+    fontWeight: typography.weight.semibold,
+  },
+  lnurlDescription: {
+    fontSize: typography.size.sm,
+    marginTop: spacing[1],
+  },
+  lnurlRange: {
+    fontSize: typography.size.xs,
+    marginTop: spacing[1],
+    fontVariant: ["tabular-nums"],
+  },
+  lnurlMuted: {
+    fontSize: typography.size.sm,
+  },
+  lnurlError: {
+    fontSize: typography.size.sm,
+  },
+  commentSection: {
+    marginTop: spacing[4],
+    gap: spacing[2],
+  },
+  commentLabel: {
+    fontSize: typography.size.xs,
+    fontWeight: typography.weight.semibold,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  commentInput: {
+    minHeight: 60,
+    padding: spacing[3],
+    borderRadius: radius.md,
+    borderWidth: 1,
+    fontSize: typography.size.sm,
+    textAlignVertical: "top",
   },
   selector: {
     marginTop: spacing[4],
