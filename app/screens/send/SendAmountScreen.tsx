@@ -43,6 +43,7 @@ import {
 } from "../../services/arkade/lnurl";
 import { formatSatsAs } from "../../services/format";
 import {
+  buildLightningOption,
   type ParsedPaymentOption,
   paymentTypeLabel,
 } from "../../services/paymentParser";
@@ -199,10 +200,13 @@ export default function SendAmountScreen() {
 
   React.useEffect(() => {
     if (!isLnurl) return;
+    // AbortController so an unmount during the LNURL params fetch cancels
+    // the in-flight request rather than just discarding the result.
+    const controller = new AbortController();
     let cancelled = false;
     setLnurlLoading(true);
     setLnurlError(null);
-    fetchLnurlParams(option.raw)
+    fetchLnurlParams(option.raw, controller.signal)
       .then((p) => {
         if (!cancelled) setLnurlParams(p);
       })
@@ -217,6 +221,7 @@ export default function SendAmountScreen() {
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [isLnurl, option.raw]);
 
@@ -381,17 +386,20 @@ export default function SendAmountScreen() {
           sats,
           trimmedComment.length > 0 ? trimmedComment : undefined,
         );
-        // Synthesize a lightning option so the rest of the Send flow
-        // (Review, executor, success) is unchanged. We keep the LNURL
-        // identifier as the destination so the user still sees who they
-        // paid rather than the raw BOLT11 stub.
+        // Decode the fetched BOLT11 through the same builder the parser
+        // uses so `expiresAt`/`paymentHash` are populated and the executor's
+        // expiry check (`sendExecutor.ts:89`) can fire at Review time rather
+        // than failing inside `sendLightning`. Override `destination`/`memo`
+        // with LNURL-side context so the user still sees who they paid.
+        const decoded = buildLightningOption(invoice, invoice);
+        if (!decoded.isPayable) {
+          setError(decoded.warning ?? "LNURL returned an unusable invoice");
+          return;
+        }
         const lightningOption: ParsedPaymentOption = {
-          id: `lightning:${invoice.slice(0, 24)}:${invoice.length}`,
-          type: "lightning",
-          raw: invoice,
+          ...decoded,
           destination: lnurlParams.identifier,
-          memo: lnurlDescription ?? option.memo,
-          isPayable: true,
+          memo: lnurlDescription ?? decoded.memo ?? option.memo,
         };
         nav.navigate("SendReview", {
           option: lightningOption,

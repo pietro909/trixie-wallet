@@ -206,7 +206,7 @@ function decodeLightning(invoice: string): LightningDecodeResult {
   }
 }
 
-function buildLightningOption(
+export function buildLightningOption(
   rawInput: string,
   invoice: string,
 ): ParsedPaymentOption {

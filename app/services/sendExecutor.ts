@@ -43,27 +43,36 @@ export function isPayableInThisMilestone(option: ParsedPaymentOption): boolean {
 export function unsupportedReasonFor(
   option: ParsedPaymentOption,
 ): string | null {
-  if (option.type === "arkade") return null;
-  if (option.type === "bitcoin") return null;
-  if (option.type === "lightning") {
-    const network = useAppStore.getState().wallet?.network;
-    if (!isLightningSupportedForNetwork(network)) {
-      return `Lightning is not configured for ${network ?? "this network"}.`;
+  // `switch` rather than an if-chain so the `default` arm's `never`
+  // assignment fails compilation if a new PaymentType is added without
+  // a handler here.
+  switch (option.type) {
+    case "arkade":
+    case "bitcoin":
+      return null;
+    case "lightning": {
+      const network = useAppStore.getState().wallet?.network;
+      if (!isLightningSupportedForNetwork(network)) {
+        return `Lightning is not configured for ${network ?? "this network"}.`;
+      }
+      return null;
     }
-    return null;
-  }
-  if (option.type === "lnurl") {
-    const network = useAppStore.getState().wallet?.network;
-    if (!isLightningSupportedForNetwork(network)) {
-      return `Lightning is not configured for ${network ?? "this network"}.`;
+    case "lnurl": {
+      const network = useAppStore.getState().wallet?.network;
+      if (!isLightningSupportedForNetwork(network)) {
+        return `Lightning is not configured for ${network ?? "this network"}.`;
+      }
+      // The SendAmount screen resolves LNURL → BOLT11 invoice before review.
+      // If we still see an `lnurl` option in the executor, the resolution
+      // step was bypassed — surface that explicitly rather than silently
+      // failing inside `sendLightning`.
+      return "LNURL invoice was not fetched. Open the Send flow again.";
     }
-    // The SendAmount screen resolves LNURL → BOLT11 invoice before review.
-    // If we still see an `lnurl` option in the executor, the resolution
-    // step was bypassed — surface that explicitly rather than silently
-    // failing inside `sendLightning`.
-    return "LNURL invoice was not fetched. Open the Send flow again.";
+    default: {
+      const _exhaustive: never = option.type;
+      return _exhaustive;
+    }
   }
-  return null;
 }
 
 export async function executeSend(

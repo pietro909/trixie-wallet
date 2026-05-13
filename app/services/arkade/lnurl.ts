@@ -88,15 +88,27 @@ export function resolveLnurlEndpoint(input: string): LnurlEndpoint | null {
 async function timedFetchJson<T>(
   url: string,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  externalSignal?: AbortSignal,
 ): Promise<T> {
+  if (externalSignal?.aborted) {
+    throw new Error("LNURL request aborted");
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // Forward external aborts (e.g. caller unmounts) to the internal
+  // controller so the in-flight fetch is actually cancelled rather than
+  // just having its result discarded.
+  const onExternalAbort = () => controller.abort();
+  externalSignal?.addEventListener("abort", onExternalAbort);
   try {
     let res: Response;
     try {
       res = await fetch(url, { signal: controller.signal });
     } catch (e) {
       if (e instanceof Error && e.name === "AbortError") {
+        if (externalSignal?.aborted) {
+          throw new Error("LNURL request aborted");
+        }
         throw new Error("LNURL endpoint timed out");
       }
       throw new Error("LNURL endpoint unreachable");
@@ -111,6 +123,7 @@ async function timedFetchJson<T>(
     }
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
   }
 }
 
@@ -125,10 +138,17 @@ type LnurlPayResponse = {
   reason?: unknown;
 };
 
-export async function fetchLnurlParams(input: string): Promise<LnurlPayParams> {
+export async function fetchLnurlParams(
+  input: string,
+  signal?: AbortSignal,
+): Promise<LnurlPayParams> {
   const endpoint = resolveLnurlEndpoint(input);
   if (!endpoint) throw new Error("Not a valid LNURL identifier");
-  const data = await timedFetchJson<LnurlPayResponse>(endpoint.url);
+  const data = await timedFetchJson<LnurlPayResponse>(
+    endpoint.url,
+    undefined,
+    signal,
+  );
   if (data.status === "ERROR") {
     const reason = typeof data.reason === "string" ? data.reason : "Unknown";
     throw new Error(`LNURL endpoint error: ${reason}`);
@@ -172,6 +192,7 @@ export async function fetchLnurlInvoice(
   params: LnurlPayParams,
   amountSats: number,
   comment?: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const amountMsat = Math.round(amountSats * 1000);
   if (amountMsat < params.minSendable || amountMsat > params.maxSendable) {
@@ -191,7 +212,11 @@ export async function fetchLnurlInvoice(
   ) {
     url.searchParams.set("comment", comment.slice(0, params.commentAllowed));
   }
-  const data = await timedFetchJson<LnurlCallbackResponse>(url.toString());
+  const data = await timedFetchJson<LnurlCallbackResponse>(
+    url.toString(),
+    undefined,
+    signal,
+  );
   if (data.status === "ERROR") {
     const reason = typeof data.reason === "string" ? data.reason : "Unknown";
     throw new Error(`LNURL callback error: ${reason}`);
