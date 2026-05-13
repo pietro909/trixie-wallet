@@ -307,6 +307,14 @@ export type GetActivityHistoryOptions = {
   boardingAddress?: string | null;
   /** Our own Arkade address — stamped onto inbound rows so the details view can show "received at <our address>". */
   arkadeAddress?: string | null;
+  /**
+   * Previously built Activity rows (typically `wallet.activities` from the store).
+   * When a row being built has a matching id AND the prior row is `confirmed`,
+   * the prior row is reused verbatim — skipping per-row derivation and any
+   * network-bound timestamp lookup. Pending/info rows are always recomputed
+   * so they can transition.
+   */
+  previousActivities?: Activity[];
 };
 
 function withNetwork(
@@ -327,12 +335,21 @@ export async function getActivityHistory(
   const vtxos: VirtualCoin[] = contracts.flatMap((c) => c.vtxos);
   const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
   const { ExpoIndexerProvider } = await import("@arkade-os/sdk/adapters/expo");
+  // Lazy-loaded with the Expo adapter so the pure helpers/builder remain
+  // jest-loadable without pulling in `storage.ts` (which transitively imports
+  // ESM-only SDK modules not transformed by jest-expo).
+  const { getTimestamp, saveTimestamp } = await import("./tx-cache");
   const indexer = new ExpoIndexerProvider(arkServerUrl);
-  const getTxCreatedAt = (txid: string): Promise<number | undefined> =>
-    indexer
+  const getTxCreatedAt = async (txid: string): Promise<number | undefined> => {
+    const cached = await getTimestamp(txid);
+    if (cached !== undefined) return cached;
+    const ts = await indexer
       .getVtxos({ outpoints: [{ txid, vout: 0 }] })
       .then((res) => res.vtxos[0]?.createdAt.getTime())
       .catch(() => undefined);
+    if (ts !== undefined) await saveTimestamp(txid, ts);
+    return ts;
+  };
   return buildActivityHistory(
     vtxos,
     boardingTxs,
@@ -354,7 +371,20 @@ export async function buildActivityHistory(
   );
 
   const activities: Activity[] = [];
-  const { network, boardingAddress, arkadeAddress } = options;
+  const { network, boardingAddress, arkadeAddress, previousActivities } =
+    options;
+
+  // Confirmed Arkade rows are terminal — their derivation is settled. Look
+  // them up by id to skip the build (and any network-bound timestamp fetch)
+  // when the store already has the row. Pending/info rows are intentionally
+  // excluded so they can transition on a refresh.
+  const reusableById = new Map<string, Activity>();
+  if (previousActivities) {
+    for (const a of previousActivities) {
+      if (a.status === "confirmed") reusableById.set(a.id, a);
+    }
+  }
+  const tryReuse = (id: string): Activity | undefined => reusableById.get(id);
 
   for (const tx of allBoardingTxs) {
     const boardingTxid = tx.key.boardingTxid;
@@ -781,34 +811,45 @@ export async function buildActivityHistory(
         const assets = collectAssets([v]);
         const ts = v.createdAt.getTime();
         if (assets.length > 0) {
-          activities.push(
-            buildAssetActivity({
-              arkTxid: v.txid,
-              timestamp: ts,
-              direction: "receive",
-              anchorSats: BigInt(v.value),
-              assetDelta: assets,
-              network,
-              settled: v.status.isLeaf || v.isSpent === true,
-            }),
-          );
+          // Asset rows reuse the `arkade:asset:<txid>` id.
+          const reuse = tryReuse(activityId("asset", v.txid));
+          if (reuse) {
+            activities.push(reuse);
+          } else {
+            activities.push(
+              buildAssetActivity({
+                arkTxid: v.txid,
+                timestamp: ts,
+                direction: "receive",
+                anchorSats: BigInt(v.value),
+                assetDelta: assets,
+                network,
+                settled: v.status.isLeaf || v.isSpent === true,
+              }),
+            );
+          }
         } else {
-          const receiveMeta: NonNullable<Activity["metadata"]> = {
-            arkTxid: v.txid,
-          };
-          if (arkadeAddress) receiveMeta.arkadeAddress = arkadeAddress;
-          activities.push({
-            id: activityId("offchain", v.txid),
-            kind: "payment",
-            direction: "in",
-            amountSats: v.value,
-            timestamp: ts,
-            title: "Arkade received",
-            status: "confirmed",
-            rail: "arkade",
-            source: { type: "arkade_tx", walletTxId: v.txid },
-            metadata: withNetwork(receiveMeta, network),
-          });
+          const reuse = tryReuse(activityId("offchain", v.txid));
+          if (reuse) {
+            activities.push(reuse);
+          } else {
+            const receiveMeta: NonNullable<Activity["metadata"]> = {
+              arkTxid: v.txid,
+            };
+            if (arkadeAddress) receiveMeta.arkadeAddress = arkadeAddress;
+            activities.push({
+              id: activityId("offchain", v.txid),
+              kind: "payment",
+              direction: "in",
+              amountSats: v.value,
+              timestamp: ts,
+              title: "Arkade received",
+              status: "confirmed",
+              rail: "arkade",
+              source: { type: "arkade_tx", walletTxId: v.txid },
+              metadata: withNetwork(receiveMeta, network),
+            });
+          }
         }
       }
     }
@@ -818,6 +859,17 @@ export async function buildActivityHistory(
       const arkTxId = v.arkTxId;
       const allSpent = sorted.filter((u) => u.arkTxId === arkTxId);
       const changes = sorted.filter((u) => u.txid === arkTxId);
+      const hasAssets = subtractAssets(allSpent, changes).length > 0;
+
+      // No-change BTC sends are the hottest cache target: their timestamp
+      // requires a network call. Reuse before computing anything else.
+      const reuseId = activityId(hasAssets ? "asset" : "offchain", arkTxId);
+      const reuse = tryReuse(reuseId);
+      if (reuse) {
+        activities.push(reuse);
+        continue;
+      }
+
       const spentBtc = sumValue(allSpent);
       const changeBtc = sumValue(changes);
       const txAmount = changes.length > 0 ? spentBtc - changeBtc : spentBtc;

@@ -27,6 +27,7 @@ import {
 } from "./network";
 import { readSecret, type StoredSecret } from "./secret-store";
 import { clearWalletData, createRepositories } from "./storage";
+import { clearAllTimestamps } from "./tx-cache";
 
 export type WalletSnapshot = {
   publicKeyHex: string;
@@ -229,6 +230,12 @@ async function buildWallet(
 export type SnapshotWalletOptions = {
   /** Active network — stamped onto every emitted Activity for offline detail rendering. */
   network?: string | null;
+  /**
+   * Previously built Activity rows. Confirmed rows with matching ids are
+   * reused verbatim by the activity builder, skipping the per-row derivation
+   * and any network-bound timestamp fetches.
+   */
+  previousActivities?: Activity[];
 };
 
 export async function snapshotWallet(
@@ -248,6 +255,7 @@ export async function snapshotWallet(
       network: options.network ?? null,
       arkadeAddress: arkAddress,
       boardingAddress,
+      previousActivities: options.previousActivities,
     });
     const assetEntries = (balance.assets ?? [])
       .filter((a) => a.amount !== 0n)
@@ -376,6 +384,10 @@ export async function refreshWalletSnapshot(
   const wallet = await ensureWallet({ behavior, metadata });
   return snapshotWallet(wallet, metadata.arkServerUrl, {
     network: metadata.network,
+    // Hand the stored Arkade rows to the builder so confirmed history is
+    // reused verbatim instead of being rederived (and re-fetching no-change
+    // off-chain send timestamps from the indexer).
+    previousActivities: metadata.activities,
   });
 }
 
@@ -406,4 +418,7 @@ export async function clearAllWalletData(walletId: string): Promise<void> {
       e,
     );
   }
+  // Shared (non-wallet-prefixed) caches must also be wiped on reset so a
+  // fresh wallet doesn't inherit timestamps from the previous identity.
+  await clearAllTimestamps();
 }
