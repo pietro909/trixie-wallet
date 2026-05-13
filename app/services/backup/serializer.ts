@@ -15,6 +15,14 @@ const SUPPORTED_VERSIONS = new Set<number>([1, 2]);
 /** Hard cap on imported asset ids carried in the backup envelope. */
 const MAX_IMPORTED_ASSET_IDS = 200;
 
+/**
+ * Subset of `AppState["preferences"]` carried by the backup envelope.
+ * `notifications` is intentionally excluded — it is a device-local
+ * preference, parallel to `backgroundTasks`, and must not flow across
+ * restores onto a new device.
+ */
+export type BackupPreferences = Omit<AppState["preferences"], "notifications">;
+
 export type BackupPayloadV1 = {
   version: 1;
   createdAt: number;
@@ -27,7 +35,7 @@ export type BackupPayloadV1 = {
     network: string;
   };
   walletBehavior: WalletBehavior;
-  preferences: AppState["preferences"];
+  preferences: BackupPreferences;
   secret: StoredSecret;
   swapMetadata: LocalSwapMetadata[];
   boltzSwaps: BoltzSwap[];
@@ -51,6 +59,7 @@ export type BuildPayloadInput = {
 };
 
 export function buildBackupPayload(input: BuildPayloadInput): BackupPayload {
+  const { notifications: _notifications, ...portablePrefs } = input.preferences;
   return {
     version: PAYLOAD_VERSION,
     createdAt: Date.now(),
@@ -63,7 +72,7 @@ export function buildBackupPayload(input: BuildPayloadInput): BackupPayload {
       network: input.wallet.network,
     },
     walletBehavior: input.walletBehavior,
-    preferences: input.preferences,
+    preferences: portablePrefs,
     secret: input.secret,
     swapMetadata: input.swapMetadata,
     boltzSwaps: input.boltzSwaps,
@@ -223,7 +232,7 @@ function parseWalletBehavior(raw: unknown): WalletBehavior {
   };
 }
 
-function parsePreferences(raw: unknown): AppState["preferences"] {
+function parsePreferences(raw: unknown): BackupPreferences {
   if (typeof raw !== "object" || raw === null) {
     throw new PayloadParseError(
       "malformed_payload",

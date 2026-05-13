@@ -33,7 +33,7 @@ Last updated: 2026-05-11 (Milestones 16–18 added; 11–18 reordered)
   - Implementation complete: activity rendering carries asset deltas, wallet screen lists asset balances, send/receive flows handle assets via BIP21 `assetid`, mint/reissue/burn screens implemented, asset metadata caching with TTL, icon approval gate, backup payload bumped to v2 to carry imported asset ids, recovery filter skips expected asset-bearing settlement rows.
 - [x] Milestone 11: Transaction Visibility ([docs/MILESTONE_11.agents.md](./docs/MILESTONE_11.agents.md))
   - Surface pending swap state accurately in all views and add a paginated VTXO detail screen sourced from the SDK.
-- [ ] Milestone 12: In-app push notifications ([docs/MILESTONE_12.agents.md](./docs/MILESTONE_12.agents.md))
+- [x] Milestone 12: In-app push notifications ([docs/MILESTONE_12.agents.md](./docs/MILESTONE_12.agents.md))
   - Implement in-app and push notifications for wallet activities and swap status updates.
 - [ ] Milestone 13: Activity Caching ([docs/MILESTONE_13.agents.md](./docs/MILESTONE_13.agents.md))
   - Introduce an append-friendly cache for derived Activity rows with boring, explicit invalidation.

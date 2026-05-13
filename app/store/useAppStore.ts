@@ -121,10 +121,12 @@ import {
   isBitcoinAddressForNetwork,
   networkNameOrNull,
 } from "../services/paymentParser";
+import { toastEmitter } from "../services/toast-emitter";
 import {
   auditBalanceIntegrity,
   computePendingTotals,
 } from "../services/wallet-balance";
+import { LEGACY_STORAGE_KEYS, STORAGE_KEY } from "./storage-keys";
 import type {
   Activity,
   AppState,
@@ -136,17 +138,12 @@ import type {
   FiatCurrency,
   LightningResumeState,
   LightningResumeTrigger,
+  NotificationPreferences,
   ThemePref,
   WalletBehavior,
 } from "./types";
 
-const STORAGE_KEY = "app_state_v4";
 const CURRENT_SCHEMA_VERSION: AppState["schemaVersion"] = 4;
-const LEGACY_STORAGE_KEYS = [
-  "app_state_v1",
-  "app_state_v2",
-  "app_state_v3",
-] as const;
 
 async function clearLegacyStorage(): Promise<void> {
   await Promise.all(
@@ -221,6 +218,27 @@ const DEFAULT_ASSETS_SLICE: AssetsSlice = {
   importedAssetIds: [],
 };
 
+const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  enabled: true,
+  swaps: true,
+  payments: true,
+};
+
+function normalizePreferences(
+  raw: Partial<AppState["preferences"]> | null | undefined,
+): AppState["preferences"] {
+  return {
+    theme: raw?.theme ?? "system",
+    fiatCurrency: raw?.fiatCurrency ?? "EUR",
+    bitcoinUnit: raw?.bitcoinUnit ?? "auto",
+    notifications: {
+      enabled: raw?.notifications?.enabled !== false,
+      swaps: raw?.notifications?.swaps !== false,
+      payments: raw?.notifications?.payments !== false,
+    },
+  };
+}
+
 /**
  * Coerce a persisted `assets` slice into a fully-populated value, tolerating
  * missing fields and bad entries. No schemaVersion bump — same hydrate-time
@@ -274,6 +292,7 @@ const DEFAULT_STATE: AppState = {
     theme: "system",
     fiatCurrency: "EUR",
     bitcoinUnit: "auto",
+    notifications: DEFAULT_NOTIFICATION_PREFERENCES,
   },
   security: {
     isLocked: false,
@@ -397,6 +416,9 @@ type StoreState = AppState & {
   setTheme: (theme: ThemePref) => Promise<void>;
   setFiatCurrency: (currency: FiatCurrency) => Promise<void>;
   setBitcoinUnit: (unit: BitcoinUnit) => Promise<void>;
+  setNotificationPreferences: (
+    prefs: Partial<NotificationPreferences>,
+  ) => Promise<void>;
   setPassword: (password: string) => Promise<void>;
   toggleBiometrics: (enabled: boolean) => Promise<void>;
 };
@@ -784,10 +806,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
         ...parsed,
         schemaVersion: CURRENT_SCHEMA_VERSION,
         network: { ...DEFAULT_STATE.network, ...(parsed.network ?? {}) },
-        preferences: {
-          ...DEFAULT_STATE.preferences,
-          ...(parsed.preferences ?? {}),
-        },
+        preferences: normalizePreferences(parsed.preferences),
         security: {
           ...DEFAULT_STATE.security,
           ...(parsed.security ?? {}),
@@ -1887,7 +1906,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
         serverInfo: null,
       },
       walletBehavior: payload.walletBehavior,
-      preferences: payload.preferences,
+      preferences: normalizePreferences(payload.preferences),
     }));
 
     let probed: Awaited<ReturnType<typeof probeServer>>;
@@ -2266,6 +2285,16 @@ export const useAppStore = create<StoreState>((set, get) => ({
     await persist(get());
   },
 
+  setNotificationPreferences: async (prefs) => {
+    set((s) => ({
+      preferences: {
+        ...s.preferences,
+        notifications: { ...s.preferences.notifications, ...prefs },
+      },
+    }));
+    await persist(get());
+  },
+
   setPassword: async (password) => {
     set((s) => ({
       security: { ...s.security, passwordHash: simpleHash(password) },
@@ -2332,6 +2361,10 @@ setSwapEventListener(() => {
 let incomingFundsRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 setIncomingFundsListener(() => {
   if (incomingFundsRefreshTimer) return;
+
+  // Notify the user in the foreground
+  toastEmitter.show("Payment received", "success");
+
   incomingFundsRefreshTimer = setTimeout(() => {
     incomingFundsRefreshTimer = null;
     useAppStore

@@ -27,6 +27,7 @@ import type {
   WalletBehavior,
 } from "../../store/types";
 import { recordError } from "../diagnostics/recorder";
+import { toastEmitter } from "../toast-emitter";
 import { ArkadeError, toArkadeError } from "./errors";
 import { ensureWallet, getWallet } from "./runtime";
 import { getSharedSqlExecutor } from "./storage";
@@ -899,10 +900,26 @@ async function drainBackgroundSwapPollResults(): Promise<
   let refundedCount = 0;
   let errorCount = 0;
   for (const result of results) {
+    const claimed = readMetric(result.data, "claimed");
+    const refunded = readMetric(result.data, "refunded");
+
+    if (claimed > 0) {
+      toastEmitter.show(
+        `Received ${claimed} payment${claimed > 1 ? "s" : ""} in background`,
+        "success",
+      );
+    }
+    if (refunded > 0) {
+      toastEmitter.show(
+        `${refunded} swap${refunded > 1 ? "s" : ""} refunded in background`,
+        "info",
+      );
+    }
+
     polledCount += readMetric(result.data, "polled");
     updatedCount += readMetric(result.data, "updated");
-    claimedCount += readMetric(result.data, "claimed");
-    refundedCount += readMetric(result.data, "refunded");
+    claimedCount += claimed;
+    refundedCount += refunded;
     errorCount += readMetric(result.data, "errors");
     if (result.status === "failed") errorCount += 1;
   }

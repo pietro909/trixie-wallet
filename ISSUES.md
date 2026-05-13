@@ -27,17 +27,52 @@ With `edgeToEdgeEnabled: true` (Android 15+ requirement), `@react-navigation/nat
 
 `@arkade-os/sdk@0.4.20` declares peerDeps `expo-background-task@~1.0.10` and `expo-task-manager@~14.0.9`. These got renumbered to 55.x in Expo SDK 55, so pnpm warns on every install. Functionally fine; the SDK author needs to widen its peerDeps. Suppress via `pnpm.peerDependencyRules.allowedVersions` if it becomes annoying.
 
-## 6. Activity history issues
-
-**Status: OPEN**
-
-**Where:** Activity Screen (and recent activity)
-
-
-## 7. Assets selector backdrop animation
+## 4. Assets selector backdrop animation
 
 **Status: OPEN**
 
 **Where:** `app/screens/send/SendAmountScreen.tsx`
 
 If I tap on `Send -> Paste Ark address -> Continue -> Tap on "Bitcoin"` selector the assets picker slides up from the bottom together with the dark backdrop. The backdrop should slide though, just appear
+
+## 5. Assets selector backdrop animation
+
+**Status: OPEN**
+
+**Where:** Background Tasks logs and error reporting
+
+The "Support Bundle" contains a `backgroundTasks` section like the following:
+
+```json
+  "backgroundTasks": {
+    "swapPoll": {
+      "taskName": "trixie-boltz-swap-poll",
+      "totalRuns": 64,
+      "totalSuccesses": 58,
+      "totalFailures": 6,
+      "lastSuccessAt": 1778658707035,
+      "lastSuccessDurationMs": null,
+      "lastSuccessSummary": {
+        "polled": 1,
+        "updated": 0,
+        "claimed": 0,
+        "refunded": 0,
+        "errors": 1
+      },
+      "lastFailureAt": 1778621235211,
+      "lastFailureMessage": "Background task failed"
+    }
+  },
+```
+
+The failure message is too generic: is it possible to get a stacktrace or something more specific? What that a network failure? A marhsalling issue? A business-logic inconsistency? DB-related? ...
+
+## 6. Swap notifications cannot deep-link to a specific Activity row
+
+**Status: OPEN**
+
+**Where:** `app/services/arkade/swap-background.ts` (`RecordingSwapTaskQueue.pushResult`)
+
+The OS-scheduled swap-poll task (`@arkade-os/boltz-swap/expo/background`) emits `TaskResult.data` shaped as `{ polled, updated, claimed, refunded, errors }` — counts only, no claimed/refunded swap IDs. As a result, the local notification fired on claim/refund cannot include an `activityId`; tapping the notification falls back to the Activity list rather than opening the specific Activity Detail screen.
+
+To deep-link properly, the upstream task would need to expose the list of swap IDs whose status transitioned during the run (e.g. `{ claimedIds: string[], refundedIds: string[] }`), or the foreground "drain" path would need to reconcile claimed swap IDs out of the SQLite swap repository before the user sees the notification. Either approach is more invasive than appropriate for Milestone 12; tracking here.

@@ -48,6 +48,7 @@
       "expo-background-task",
       "expo-font",
       "expo-image",
+      "expo-notifications",
       "expo-router",
       "expo-web-browser"
     ],

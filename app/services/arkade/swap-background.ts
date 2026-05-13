@@ -18,6 +18,7 @@ import {
   recordBgTaskRun,
 } from "../diagnostics/bg-task-metrics";
 import { recordPersistedError } from "../diagnostics/persisted";
+import { scheduleLocalNotification, shouldNotify } from "../notifications";
 import { buildIdentityFromSecret } from "./identity";
 import { isMainnetForNetworkName } from "./network";
 import { readSecret } from "./secret-store";
@@ -106,15 +107,43 @@ class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
     // `TaskResult` has no start time and the package wrapper exposes no
     // before/after hook, so `durationMs` is omitted.
     const errorMessage = errorMessageFromSwapPollData(result.data);
+    const summary = summaryFromSwapPollData(result.data);
     await recordBgTaskRun(SWAP_BACKGROUND_TASK_NAME, {
       status: result.status,
       occurredAt: result.executedAt,
-      summary: summaryFromSwapPollData(result.data),
+      summary,
       errorMessage,
     });
     if (result.status === "failed") {
       const msg = errorMessage ?? "swap poll task failed";
       await recordPersistedError("lightning", `bg_swap_poll_failed: ${msg}`);
+    }
+
+    // Trigger local notifications for successful claims or refunds discovered
+    // in the background. The upstream task data only carries counts, not swap
+    // IDs, so we cannot deep-link to a specific Activity row from here — the
+    // tap handler falls back to the Activity list. Tracked in ISSUES.md.
+    if (summary && (summary.claimed || summary.refunded)) {
+      if (await shouldNotify("swaps")) {
+        const title = summary.claimed ? "Payment Received" : "Swap Refunded";
+        const body = summary.claimed
+          ? `Successfully claimed ${summary.claimed} swap${summary.claimed > 1 ? "s" : ""}.`
+          : `Refunded ${summary.refunded} swap${summary.refunded > 1 ? "s" : ""}.`;
+
+        try {
+          await scheduleLocalNotification({
+            title,
+            body,
+            channelId: "swaps",
+          });
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          await recordPersistedError(
+            "lightning",
+            `bg_swap_notification_failed: ${message}`,
+          );
+        }
+      }
     }
   }
 }

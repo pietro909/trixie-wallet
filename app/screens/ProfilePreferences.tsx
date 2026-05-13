@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { BitcoinUnit, FiatCurrency, ThemePref } from "../store/types";
@@ -28,9 +28,11 @@ export default function ProfilePreferences() {
   const currentTheme = useAppStore((s) => s.preferences.theme);
   const currentCurrency = useAppStore((s) => s.preferences.fiatCurrency);
   const currentBitcoinUnit = useAppStore((s) => s.preferences.bitcoinUnit);
+  const notificationPrefs = useAppStore((s) => s.preferences.notifications);
   const setThemePref = useAppStore((s) => s.setTheme);
   const setFiatCurrency = useAppStore((s) => s.setFiatCurrency);
   const setBitcoinUnit = useAppStore((s) => s.setBitcoinUnit);
+  const setNotificationPrefs = useAppStore((s) => s.setNotificationPreferences);
 
   return (
     <SafeAreaView
@@ -165,6 +167,72 @@ export default function ProfilePreferences() {
           ))}
         </View>
       </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
+          Notifications
+        </Text>
+        <View
+          style={[
+            styles.optionGroup,
+            { backgroundColor: theme.colors.card, ...theme.shadow("card") },
+          ]}
+        >
+          <View style={styles.switchRow}>
+            <Text style={[styles.optionLabel, { color: theme.colors.text }]}>
+              Enable Notifications
+            </Text>
+            <Switch
+              value={notificationPrefs.enabled}
+              onValueChange={(enabled) => setNotificationPrefs({ enabled })}
+              trackColor={{ true: theme.colors.primary }}
+            />
+          </View>
+
+          {notificationPrefs.enabled && (
+            <>
+              <View
+                style={[
+                  styles.divider,
+                  { backgroundColor: theme.colors.border },
+                ]}
+              />
+              <View style={styles.switchRow}>
+                <Text
+                  style={[styles.optionLabel, { color: theme.colors.text }]}
+                >
+                  Swaps
+                </Text>
+                <Switch
+                  value={notificationPrefs.swaps}
+                  onValueChange={(swaps) => setNotificationPrefs({ swaps })}
+                  trackColor={{ true: theme.colors.primary }}
+                />
+              </View>
+              <View
+                style={[
+                  styles.divider,
+                  { backgroundColor: theme.colors.border },
+                ]}
+              />
+              <View style={styles.switchRow}>
+                <Text
+                  style={[styles.optionLabel, { color: theme.colors.text }]}
+                >
+                  Payments
+                </Text>
+                <Switch
+                  value={notificationPrefs.payments}
+                  onValueChange={(payments) =>
+                    setNotificationPrefs({ payments })
+                  }
+                  trackColor={{ true: theme.colors.primary }}
+                />
+              </View>
+            </>
+          )}
+        </View>
+      </View>
     </SafeAreaView>
   );
 }
@@ -195,5 +263,16 @@ const styles = StyleSheet.create({
   },
   optionLabel: {
     fontSize: typography.size.md,
+  },
+  switchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: spacing[3],
+    paddingHorizontal: spacing[4],
+  },
+  divider: {
+    height: 1,
+    marginHorizontal: spacing[4],
   },
 });

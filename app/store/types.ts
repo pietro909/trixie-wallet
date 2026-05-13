@@ -176,6 +176,12 @@ export type AssetsSlice = {
   importedAssetIds: string[];
 };
 
+export type NotificationPreferences = {
+  enabled: boolean;
+  swaps: boolean;
+  payments: boolean;
+};
+
 export type AppState = {
   schemaVersion: 4;
   wallet: ArkadeWalletMetadata | null;
@@ -193,6 +199,7 @@ export type AppState = {
     theme: ThemePref;
     fiatCurrency: FiatCurrency;
     bitcoinUnit: BitcoinUnit;
+    notifications: NotificationPreferences;
   };
   security: {
     isLocked: boolean;

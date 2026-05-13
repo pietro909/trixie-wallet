@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Animated, StyleSheet, Text } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { toastEmitter } from "../services/toast-emitter";
 import { radius, spacing, typography, useAppTheme } from "../theme/theme";
 
 type ToastType = "success" | "error" | "info";
@@ -69,6 +70,12 @@ export default function ToastProvider({
     },
     [translateY, opacity],
   );
+
+  React.useEffect(() => {
+    return toastEmitter.addListener((message, type) => {
+      showToast(message, type);
+    });
+  }, [showToast]);
 
   const bgColor =
     toast?.type === "success"
