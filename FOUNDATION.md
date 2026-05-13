@@ -13,9 +13,12 @@ pnpm lint               # Run Biome (lint only)
 pnpm lint:fix           # Apply safe Biome fixes (use --unsafe via biome CLI for the rest)
 pnpm format             # Format with Biome
 pnpm check              # Biome lint + formatter check
+pnpm test               # Run Jest test suite
+pnpm test:watch         # Re-run Jest on change
+pnpm test:coverage      # Jest with coverage (scoped — see docs/TESTING.md)
 ```
 
-No test framework is currently configured.
+Tests live under `app/services/arkade/__tests__/` (Jest via `jest-expo`). Service-level coverage only — no UI tests. See [docs/TESTING.md](./docs/TESTING.md) for layout, patterns, and coverage policy.
 
 **Tooling:** pnpm 10.x with `node-linker=hoisted` in `.npmrc` (required for Metro to resolve npm-style aliases like `@babel/traverse--for-generate-function-map`), Biome 2.x for linting, TypeScript 6.x.
 

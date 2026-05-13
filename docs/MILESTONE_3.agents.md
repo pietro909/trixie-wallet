@@ -440,8 +440,11 @@ For asset rows:
 
 ## Testing Notes
 
-No test framework is currently configured for the app, but the builder should
-be structured so fixture tests can be added later without React Native.
+> Jest landed in Phase C of the Activity History work (commit `ee73d93`+).
+> The fixture list below is preserved as historical record of what M3 set
+> out to cover; the test suite that grew from it lives under
+> `app/services/arkade/__tests__/activity-history.*.test.ts`. See
+> [docs/TESTING.md](./TESTING.md) for current practice.
 
 Minimum fixture cases to preserve:
 

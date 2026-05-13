@@ -536,8 +536,11 @@ no leaked secrets.
 
 ## Testing Notes
 
-No test framework is currently configured, but the section builder should be
-testable without React Native.
+> Jest is now wired up; see [docs/TESTING.md](./TESTING.md). The fixture
+> list below is preserved as the M4 historical record — the detail-view
+> section builders it describes are still untested at the time of
+> writing, so the cases remain a useful starting point if/when that
+> module gets a suite.
 
 Minimum fixture cases:
 
