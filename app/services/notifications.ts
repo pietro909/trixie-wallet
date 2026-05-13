@@ -32,25 +32,42 @@ export async function checkNotificationPermissions() {
   return status === "granted";
 }
 
+// Brand pink, kept in sync with `brand[500]` in `app/theme/theme.tsx`.
+// Hardcoded here rather than imported to keep this service free of the
+// theme module's React/Reanimated transitive deps (it runs in the
+// OS-scheduled headless JS context too).
+const BRAND_COLOR = "#ff007f";
+
+// Distinct vibration patterns per channel so that users who customize one
+// channel in system Settings don't have to disambiguate by tray icon
+// alone. Format: [wait, vibrate, wait, vibrate, ...] in ms. Patterns are
+// only set at channel creation; user customizations win once a channel
+// exists, so changing these values does not affect existing installs.
+const VIBRATION_DEFAULT = [0, 250];
+const VIBRATION_SWAPS = [0, 200, 100, 200];
+const VIBRATION_PAYMENTS = [0, 250, 100, 250, 100, 250];
+
 async function setupNotificationChannels() {
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("default", {
       name: "default",
       importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: "#FF231F7C",
+      vibrationPattern: VIBRATION_DEFAULT,
+      lightColor: BRAND_COLOR,
     });
 
     await Notifications.setNotificationChannelAsync("swaps", {
       name: "Swaps",
       importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 250, 250, 250],
+      vibrationPattern: VIBRATION_SWAPS,
+      lightColor: BRAND_COLOR,
     });
 
     await Notifications.setNotificationChannelAsync("payments", {
       name: "Payments",
       importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 250, 250, 250],
+      vibrationPattern: VIBRATION_PAYMENTS,
+      lightColor: BRAND_COLOR,
     });
   }
 }

@@ -1,10 +1,8 @@
 import * as React from "react";
 import { Animated, StyleSheet, Text } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { toastEmitter } from "../services/toast-emitter";
+import { type ToastType, toastEmitter } from "../services/toast-emitter";
 import { radius, spacing, typography, useAppTheme } from "../theme/theme";
-
-type ToastType = "success" | "error" | "info";
 
 type ToastState = {
   message: string;
@@ -12,16 +10,20 @@ type ToastState = {
   key: number;
 } | null;
 
-type ToastContextValue = {
-  showToast: (message: string, type?: ToastType) => void;
-};
-
-const ToastContext = React.createContext<ToastContextValue>({
-  showToast: () => {},
-});
+/**
+ * Single-path toast hook: returns a `showToast` bound to the global
+ * `toastEmitter`. Component callers use this for ergonomics; non-component
+ * services (e.g. the swap-poll resume drain in `lightning.ts`) call
+ * `toastEmitter.show` directly. Both routes converge on the same listener
+ * attached by `ToastProvider`, so there is one visible toast surface.
+ */
+const TOAST_API = {
+  showToast: (message: string, type: ToastType = "info") =>
+    toastEmitter.show(message, type),
+} as const;
 
 export function useToast() {
-  return React.useContext(ToastContext);
+  return TOAST_API;
 }
 
 export default function ToastProvider({
@@ -36,8 +38,8 @@ export default function ToastProvider({
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
 
-  const showToast = React.useCallback(
-    (message: string, type: ToastType = "info") => {
+  React.useEffect(() => {
+    return toastEmitter.addListener((message, type) => {
       if (timerRef.current) clearTimeout(timerRef.current);
       setToast({ message, type, key: Date.now() });
       Animated.parallel([
@@ -67,15 +69,8 @@ export default function ToastProvider({
           }),
         ]).start(() => setToast(null));
       }, 3000);
-    },
-    [translateY, opacity],
-  );
-
-  React.useEffect(() => {
-    return toastEmitter.addListener((message, type) => {
-      showToast(message, type);
     });
-  }, [showToast]);
+  }, [translateY, opacity]);
 
   const bgColor =
     toast?.type === "success"
@@ -85,7 +80,7 @@ export default function ToastProvider({
         : theme.colors.primary;
 
   return (
-    <ToastContext.Provider value={{ showToast }}>
+    <>
       {children}
       {toast ? (
         <Animated.View
@@ -103,7 +98,7 @@ export default function ToastProvider({
           <Text style={styles.text}>{toast.message}</Text>
         </Animated.View>
       ) : null}
-    </ToastContext.Provider>
+    </>
   );
 }
 

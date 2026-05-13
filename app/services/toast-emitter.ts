@@ -1,4 +1,4 @@
-type ToastType = "success" | "error" | "info";
+export type ToastType = "success" | "error" | "info";
 
 type ToastListener = (message: string, type: ToastType) => void;
 

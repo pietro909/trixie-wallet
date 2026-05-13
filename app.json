@@ -48,7 +48,13 @@
       "expo-background-task",
       "expo-font",
       "expo-image",
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/android-icon-monochrome.png",
+          "color": "#ff007f"
+        }
+      ],
       "expo-router",
       "expo-web-browser"
     ],
