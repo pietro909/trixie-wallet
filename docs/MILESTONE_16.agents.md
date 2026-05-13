@@ -1,44 +1,38 @@
-# Milestone 16: Security & Reliability
+# Milestone 16: Mainnet Support
 
-Goal: harden the password gate and persistence layer before any public release.
+Goal: let users choose between mutinynet and Bitcoin mainnet when creating or
+restoring a wallet.
 
 This milestone should prove:
 
-- The unlock password is hashed with SHA-256 and a per-wallet random salt, not
-  the current 32-bit non-cryptographic hash.
-- State writes are fully durable: lock, unlock, theme change, fiat change,
-  password change, and biometrics toggle all `await persist()`.
-- The store cannot silently load persisted state from a mismatched schema
-  version without an explicit migration.
-- Every screen that gates on the locked state reads `security.isLocked`, not
-  the presence of `walletContainer`.
+- A user creating a new wallet sees a network selector (mutinynet / mainnet)
+  and the choice is persisted with the wallet.
+- A user restoring from a seed phrase sees the same selector.
+- A user restoring from a backup file has the network pre-selected from the
+  backup and the selector is disabled.
+- The correct server URLs are used for each network at runtime.
 
 ## Current State
 
-- `simpleHash` in `app/store/useAppStore.ts:10-18` is a 32-bit Java-style
-  hash with no salt — trivially collidable and not suitable as a password gate.
-- Six store actions (`lockWallet`, `unlockWithPassword`, `setTheme`,
-  `setFiatCurrency`, `setPassword`, `toggleBiometrics`) call `set(...)` then
-  `persist(get())` without `await`. A fast lock-then-quit can lose the write.
-- `hydrate()` casts parsed JSON straight to `AppState` with no schema version
-  check. Fine for v1; breaks silently the moment `schemaVersion` is bumped.
-- `lockWallet` only flips `security.isLocked`; `walletContainer` stays in the
-  Zustand store. Screens that read `walletContainer` directly bypass the lock.
+- The app is hardcoded to mutinynet.
+- The sister app `../wallet` already holds the mainnet and mutinynet server
+  URLs; they should be imported or mirrored here.
+- The backup format (v2, from Milestone 10) does not carry a `network` field.
+- The Restore Wallet screen has no network selector.
 
 ## Product Rules
 
-- Never store or compare a password using a reversible or non-cryptographic
-  encoding.
-- Every state mutation must be fully persisted before the action returns.
-- Reject or migrate persisted state whose `schemaVersion` does not match the
-  current schema; never silently coerce.
-- Locking must make wallet data inaccessible without re-entering credentials,
-  regardless of which screen the user is on.
+- Never connect a mainnet seed to a mutinynet node, or vice versa.
+- The chosen network must survive app restarts and full backup/restore cycles.
+- When a backup encodes a network, that value is authoritative — the selector
+  must be pre-filled and read-only.
+- Mainnet and mutinynet wallets must be visually distinguished in the UI so a
+  user cannot mistake which network they are on.
 
 ## Selected Direction
 
-Replace `simpleHash` with `expo-crypto` SHA-256 hashing and a stored random
-salt. Make the six async-unsafe actions `async` and `await persist(get())`.
-Add a `schemaVersion` guard in `hydrate()` with a clear migration stub for
-future bumps. Audit screen-level lock guards and update any that read
-`walletContainer` directly rather than `security.isLocked`.
+Add a `network` field (`'mutinynet' | 'mainnet'`) to the wallet store and to
+the backup payload (bump `schemaVersion`). Surface a network selector in the
+Create and Restore-from-seed flows. When restoring from a backup file, read
+the `network` field and lock the selector. Pull server URLs from the sister
+app's constants rather than duplicating them.

@@ -4,7 +4,7 @@ This repository is an Expo-only, iOS/Android self-custodial Arkade wallet app. T
 
 This is a living document: tick items off as they land.
 
-Last updated: 2026-05-11 (Milestones 16–18 added; 11–18 reordered)
+Last updated: 2026-05-13 (Milestones 16–18 added; 11–18 reordered; pending milestones resequenced 16→17→15→18)
 
 ## Milestones
 
@@ -39,12 +39,12 @@ Last updated: 2026-05-11 (Milestones 16–18 added; 11–18 reordered)
   - Introduce an append-friendly cache for derived Activity rows with boring, explicit invalidation.
 - [x] Milestone 14: LNURL ([docs/MILESTONE_14.agents.md](./docs/MILESTONE_14.agents.md))
   - Add LNURL and Lightning Address parsing + invoice fetching, distinct from BOLT11 handling.
-- [ ] Milestone 15: Multiple Wallets and Labels ([docs/MILESTONE_15.agents.md](./docs/MILESTONE_15.agents.md))
-  - Move from a single-wallet store model to multiple wallets with labels and isolated state.
-- [ ] Milestone 16: Security & Reliability ([docs/MILESTONE_16.agents.md](./docs/MILESTONE_16.agents.md))
+- [ ] Milestone 15: Security & Reliability ([docs/MILESTONE_15.agents.md](./docs/MILESTONE_15.agents.md))
   - Harden the password gate (SHA-256 + salt), make all state mutations await persist, add a schema-version guard in hydrate(), and audit screen-level lock guards.
-- [ ] Milestone 17: Mainnet Support ([docs/MILESTONE_17.agents.md](./docs/MILESTONE_17.agents.md))
+- [ ] Milestone 16: Mainnet Support ([docs/MILESTONE_16.agents.md](./docs/MILESTONE_16.agents.md))
   - Add a network selector (mutinynet / mainnet) to create and restore flows; encode the chosen network in the backup format.
+- [ ] Milestone 17: Multiple Wallets and Labels ([docs/MILESTONE_17.agents.md](./docs/MILESTONE_17.agents.md))
+  - Move from a single-wallet store model to multiple wallets with labels and isolated state.
 - [ ] Milestone 18: Cloud Backup ([docs/MILESTONE_18.agents.md](./docs/MILESTONE_18.agents.md))
   - Add optional cloud transport for the encrypted backup bundle (transport only; format remains local-first).
 

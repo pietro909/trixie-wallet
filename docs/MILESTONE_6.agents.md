@@ -498,7 +498,7 @@ Cross-platform sanity:
 
 ## Out of Scope (deferred to later milestones)
 
-- Cloud transport for the bundle — Milestone 15.
+- Cloud transport for the bundle — Milestone 18.
 - Auto-export on schedule, or auto-export reminders — not committed; would
   build on `lastBackupAt` once wired.
 - Migration between payload versions — first migration triggers when

@@ -1,36 +1,44 @@
-# Milestone 15: Multiple Wallets and Labels
+# Milestone 15: Security & Reliability
 
-Goal: move from a single-wallet app model to a real wallet list with labels and
-account naming.
+Goal: harden the password gate and persistence layer before any public release.
 
 This milestone should prove:
 
-- A user can create and switch between multiple wallets.
-- Each wallet has its own secrets, backup state, and Activity history.
-- The active wallet can be renamed with a user-visible label.
-- Reset and restore only affect the selected wallet.
+- The unlock password is hashed with SHA-256 and a per-wallet random salt, not
+  the current 32-bit non-cryptographic hash.
+- State writes are fully durable: lock, unlock, theme change, fiat change,
+  password change, and biometrics toggle all `await persist()`.
+- The store cannot silently load persisted state from a mismatched schema
+  version without an explicit migration.
+- Every screen that gates on the locked state reads `security.isLocked`, not
+  the presence of `walletContainer`.
 
 ## Current State
 
-- `app/store/types.ts` still models one `wallet` at a time.
-- `app/store/useAppStore.ts` persists a single wallet record and its metadata.
-- The current backup and recovery work is scoped to that single record.
+- `simpleHash` in `app/store/useAppStore.ts:10-18` is a 32-bit Java-style
+  hash with no salt — trivially collidable and not suitable as a password gate.
+- Six store actions (`lockWallet`, `unlockWithPassword`, `setTheme`,
+  `setFiatCurrency`, `setPassword`, `toggleBiometrics`) call `set(...)` then
+  `persist(get())` without `await`. A fast lock-then-quit can lose the write.
+- `hydrate()` casts parsed JSON straight to `AppState` with no schema version
+  check. Fine for v1; breaks silently the moment `schemaVersion` is bumped.
+- `lockWallet` only flips `security.isLocked`; `walletContainer` stays in the
+  Zustand store. Screens that read `walletContainer` directly bypass the lock.
 
 ## Product Rules
 
-- Wallet data must be isolated by wallet id.
-- Labels are user-owned metadata, not part of the secret material.
-- Switching wallets must not leak Activity, backup state, or pending work
-  across accounts.
-- The unlock flow should remain predictable even when more than one wallet is
-  stored.
+- Never store or compare a password using a reversible or non-cryptographic
+  encoding.
+- Every state mutation must be fully persisted before the action returns.
+- Reject or migrate persisted state whose `schemaVersion` does not match the
+  current schema; never silently coerce.
+- Locking must make wallet data inaccessible without re-entering credentials,
+  regardless of which screen the user is on.
 
 ## Selected Direction
 
-Introduce a wallet collection in the store, then layer on:
-
-- wallet picker / switcher UI;
-- per-wallet secret storage namespaces;
-- per-wallet Activity and backup state;
-- rename / label actions for account naming.
-
+Replace `simpleHash` with `expo-crypto` SHA-256 hashing and a stored random
+salt. Make the six async-unsafe actions `async` and `await persist(get())`.
+Add a `schemaVersion` guard in `hydrate()` with a clear migration stub for
+future bumps. Audit screen-level lock guards and update any that read
+`walletContainer` directly rather than `security.isLocked`.
