@@ -8,11 +8,12 @@ import { useAppStore } from "../store/useAppStore";
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
+// Permission requesting deliberately lives in `ProfilePreferences` (gated on
+// the user toggling the master switch on), not here. Auto-prompting on app
+// launch produces an iOS system dialog with no context, and a denied
+// response cannot be re-prompted in-app.
 export function useNotifications() {
   const navigation = useNavigation<NavigationProp>();
-  const notificationsEnabled = useAppStore(
-    (s) => s.preferences.notifications.enabled,
-  );
   const hydrated = useAppStore((s) => s._hydrated);
 
   useEffect(() => {
@@ -36,18 +37,4 @@ export function useNotifications() {
       responseSubscription.remove();
     };
   }, [hydrated, navigation]);
-
-  useEffect(() => {
-    if (!hydrated || !notificationsEnabled) return;
-
-    const checkAndRequest = async () => {
-      const { status: existingStatus } =
-        await Notifications.getPermissionsAsync();
-      if (existingStatus !== "granted") {
-        await Notifications.requestPermissionsAsync();
-      }
-    };
-
-    checkAndRequest();
-  }, [hydrated, notificationsEnabled]);
 }

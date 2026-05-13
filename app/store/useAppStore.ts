@@ -219,7 +219,10 @@ const DEFAULT_ASSETS_SLICE: AssetsSlice = {
 };
 
 const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
-  enabled: true,
+  // Opt-in: the user explicitly enables notifications from the Profile
+  // toggle. Avoids the iOS "permission dialog on first launch" anti-pattern
+  // where a denied response can never be re-prompted in-app.
+  enabled: false,
   swaps: true,
   payments: true,
 };
@@ -232,7 +235,9 @@ function normalizePreferences(
     fiatCurrency: raw?.fiatCurrency ?? "EUR",
     bitcoinUnit: raw?.bitcoinUnit ?? "auto",
     notifications: {
-      enabled: raw?.notifications?.enabled !== false,
+      enabled: raw?.notifications?.enabled === true,
+      // Per-category toggles default to true so that turning the master
+      // toggle on yields the full notification set without an extra step.
       swaps: raw?.notifications?.swaps !== false,
       payments: raw?.notifications?.payments !== false,
     },
@@ -1138,6 +1143,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
           behavior: get().walletBehavior,
           trigger,
           swapBackgroundEnabled: get().backgroundTasks.swapPoll,
+          notificationPrefs: get().preferences.notifications,
         });
         resumeState = lightningResumeStateFromSummary(summary);
         shouldMarkDirty =
@@ -2362,8 +2368,10 @@ let incomingFundsRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 setIncomingFundsListener(() => {
   if (incomingFundsRefreshTimer) return;
 
-  // Notify the user in the foreground
-  toastEmitter.show("Payment received", "success");
+  const prefs = useAppStore.getState().preferences.notifications;
+  if (prefs.enabled && prefs.payments) {
+    toastEmitter.show("Payment received", "success");
+  }
 
   incomingFundsRefreshTimer = setTimeout(() => {
     incomingFundsRefreshTimer = null;

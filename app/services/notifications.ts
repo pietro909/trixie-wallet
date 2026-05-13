@@ -76,15 +76,18 @@ export async function scheduleLocalNotification(opts: {
 }
 
 export async function shouldNotify(category: "swaps" | "payments") {
+  // Match the store-side opt-in default: only notify when the user has
+  // explicitly enabled notifications AND the category is on. Missing prefs,
+  // missing storage, or a parse error all collapse to "no", because we
+  // never want to surface notifications the user did not consent to.
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (!raw) return true; // default enabled
+    if (!raw) return false;
     const parsed = JSON.parse(raw);
     const prefs = parsed?.preferences?.notifications;
-    if (!prefs) return true;
-    if (prefs.enabled === false) return false;
+    if (!prefs || prefs.enabled !== true) return false;
     return prefs[category] !== false;
   } catch {
-    return true; // fail safe to notify
+    return false;
   }
 }

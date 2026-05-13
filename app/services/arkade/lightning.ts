@@ -24,6 +24,7 @@ import { type ArkTransaction, type NetworkName, TxType } from "@arkade-os/sdk";
 import type {
   ArkadeWalletMetadata,
   LightningResumeTrigger,
+  NotificationPreferences,
   WalletBehavior,
 } from "../../store/types";
 import { recordError } from "../diagnostics/recorder";
@@ -883,7 +884,9 @@ function appendError(current: string | undefined, message: string): string {
  * re-seed the task for the next OS wake. No `runTasks` here means no race
  * with a concurrently-firing background task on the shared queue.
  */
-async function drainBackgroundSwapPollResults(): Promise<
+async function drainBackgroundSwapPollResults(
+  notificationPrefs: NotificationPreferences,
+): Promise<
   Pick<
     LightningResumeSummary,
     | "polledCount"
@@ -899,30 +902,43 @@ async function drainBackgroundSwapPollResults(): Promise<
   let claimedCount = 0;
   let refundedCount = 0;
   let errorCount = 0;
+  // Sum only the results we still owe the user a toast for. An entry already
+  // surfaced via OS notification (`notified === true`) carries a "user has
+  // seen this" guarantee, so we exclude it here to avoid the double-buzz
+  // when the user opens the app after a background claim.
+  let toastClaimed = 0;
+  let toastRefunded = 0;
   for (const result of results) {
     const claimed = readMetric(result.data, "claimed");
     const refunded = readMetric(result.data, "refunded");
-
-    if (claimed > 0) {
-      toastEmitter.show(
-        `Received ${claimed} payment${claimed > 1 ? "s" : ""} in background`,
-        "success",
-      );
-    }
-    if (refunded > 0) {
-      toastEmitter.show(
-        `${refunded} swap${refunded > 1 ? "s" : ""} refunded in background`,
-        "info",
-      );
-    }
-
     polledCount += readMetric(result.data, "polled");
     updatedCount += readMetric(result.data, "updated");
     claimedCount += claimed;
     refundedCount += refunded;
     errorCount += readMetric(result.data, "errors");
     if (result.status === "failed") errorCount += 1;
+    if (!result.notified) {
+      toastClaimed += claimed;
+      toastRefunded += refunded;
+    }
   }
+
+  const allowToast = notificationPrefs.enabled && notificationPrefs.swaps;
+  if (allowToast) {
+    if (toastClaimed > 0) {
+      toastEmitter.show(
+        `Received ${toastClaimed} payment${toastClaimed > 1 ? "s" : ""} in background`,
+        "success",
+      );
+    }
+    if (toastRefunded > 0) {
+      toastEmitter.show(
+        `${toastRefunded} swap${toastRefunded > 1 ? "s" : ""} refunded in background`,
+        "info",
+      );
+    }
+  }
+
   return {
     polledCount,
     updatedCount,
@@ -937,6 +953,12 @@ export async function resumeLightningSwaps(args: {
   behavior: WalletBehavior;
   trigger: LightningResumeTrigger;
   swapBackgroundEnabled: boolean;
+  /**
+   * Current notification preferences. Threaded through (rather than read
+   * from the store) for the same reason as `swapBackgroundEnabled` — see
+   * `EnsureLightningInput` for the import-cycle rationale.
+   */
+  notificationPrefs: NotificationPreferences;
 }): Promise<LightningResumeSummary> {
   const startedAt = Date.now();
   let reverseCount = 0;
@@ -995,7 +1017,7 @@ export async function resumeLightningSwaps(args: {
   }
 
   try {
-    const poll = await drainBackgroundSwapPollResults();
+    const poll = await drainBackgroundSwapPollResults(args.notificationPrefs);
     polledCount = poll.polledCount;
     updatedCount = poll.updatedCount;
     claimedCount = poll.claimedCount;

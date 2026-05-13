@@ -48,6 +48,13 @@ type ActiveSwapWallet = {
 
 export type RecordedSwapTaskResult = TaskResult & {
   recordedAt: number;
+  /**
+   * True if `pushResult` scheduled an OS-level notification for this result.
+   * The foreground drain uses this to avoid re-toasting events the user has
+   * already seen in the system tray. Missing on results recorded before this
+   * field existed; treat as `false`.
+   */
+  notified?: boolean;
 };
 
 function parseRecentResults(raw: string): RecordedSwapTaskResult[] {
@@ -93,21 +100,45 @@ function errorMessageFromSwapPollData(
 class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
   async pushResult(result: TaskResult): Promise<void> {
     await super.pushResult(result);
+
+    const errorMessage = errorMessageFromSwapPollData(result.data);
+    const summary = summaryFromSwapPollData(result.data);
+    const claimed = summary?.claimed ?? 0;
+    const refunded = summary?.refunded ?? 0;
+
+    // Decide whether to fire an OS notification before persisting the
+    // recorded entry, so the foreground drain can read `notified` and skip
+    // a redundant toast for events the user has already seen in the tray.
+    let notified = false;
+    if ((claimed > 0 || refunded > 0) && (await shouldNotify("swaps"))) {
+      const { title, body } = composeSwapNotificationCopy(claimed, refunded);
+      try {
+        await scheduleLocalNotification({ title, body, channelId: "swaps" });
+        notified = true;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        await recordPersistedError(
+          "lightning",
+          `bg_swap_notification_failed: ${message}`,
+        );
+      }
+    }
+
     const recorded: RecordedSwapTaskResult = {
       ...result,
       recordedAt: Date.now(),
+      notified,
     };
     const raw = await AsyncStorage.getItem(RECENT_RESULTS_KEY);
     const list = raw ? parseRecentResults(raw) : [];
     list.push(recorded);
     while (list.length > RECENT_RESULTS_CAP) list.shift();
     await AsyncStorage.setItem(RECENT_RESULTS_KEY, JSON.stringify(list));
+
     // Persist durable per-task metrics for the Advanced UI. Separate from the
     // shadow log above, which is foreground-resume-only and destructive.
     // `TaskResult` has no start time and the package wrapper exposes no
     // before/after hook, so `durationMs` is omitted.
-    const errorMessage = errorMessageFromSwapPollData(result.data);
-    const summary = summaryFromSwapPollData(result.data);
     await recordBgTaskRun(SWAP_BACKGROUND_TASK_NAME, {
       status: result.status,
       occurredAt: result.executedAt,
@@ -118,34 +149,31 @@ class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
       const msg = errorMessage ?? "swap poll task failed";
       await recordPersistedError("lightning", `bg_swap_poll_failed: ${msg}`);
     }
-
-    // Trigger local notifications for successful claims or refunds discovered
-    // in the background. The upstream task data only carries counts, not swap
-    // IDs, so we cannot deep-link to a specific Activity row from here — the
-    // tap handler falls back to the Activity list. Tracked in ISSUES.md.
-    if (summary && (summary.claimed || summary.refunded)) {
-      if (await shouldNotify("swaps")) {
-        const title = summary.claimed ? "Payment Received" : "Swap Refunded";
-        const body = summary.claimed
-          ? `Successfully claimed ${summary.claimed} swap${summary.claimed > 1 ? "s" : ""}.`
-          : `Refunded ${summary.refunded} swap${summary.refunded > 1 ? "s" : ""}.`;
-
-        try {
-          await scheduleLocalNotification({
-            title,
-            body,
-            channelId: "swaps",
-          });
-        } catch (e) {
-          const message = e instanceof Error ? e.message : String(e);
-          await recordPersistedError(
-            "lightning",
-            `bg_swap_notification_failed: ${message}`,
-          );
-        }
-      }
-    }
   }
+}
+
+function composeSwapNotificationCopy(
+  claimed: number,
+  refunded: number,
+): { title: string; body: string } {
+  if (claimed > 0 && refunded > 0) {
+    return {
+      title: "Swap activity",
+      body:
+        `Claimed ${claimed} swap${claimed > 1 ? "s" : ""}, ` +
+        `refunded ${refunded} swap${refunded > 1 ? "s" : ""}.`,
+    };
+  }
+  if (claimed > 0) {
+    return {
+      title: "Payment Received",
+      body: `Successfully claimed ${claimed} swap${claimed > 1 ? "s" : ""}.`,
+    };
+  }
+  return {
+    title: "Swap Refunded",
+    body: `Refunded ${refunded} swap${refunded > 1 ? "s" : ""}.`,
+  };
 }
 
 export const swapTaskQueue = new RecordingSwapTaskQueue(

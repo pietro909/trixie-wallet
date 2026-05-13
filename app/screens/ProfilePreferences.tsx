@@ -1,9 +1,21 @@
-import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
+import * as Notifications from "expo-notifications";
+import { useCallback, useState } from "react";
+import {
+  Linking,
+  Pressable,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { BitcoinUnit, FiatCurrency, ThemePref } from "../store/types";
 import { useAppStore } from "../store/useAppStore";
 import { radius, spacing, typography } from "../theme/theme";
+
+type PermissionStatus = "granted" | "denied" | "undetermined" | "unknown";
 
 const THEME_OPTIONS: { label: string; value: ThemePref }[] = [
   { label: "System", value: "system" },
@@ -33,6 +45,50 @@ export default function ProfilePreferences() {
   const setFiatCurrency = useAppStore((s) => s.setFiatCurrency);
   const setBitcoinUnit = useAppStore((s) => s.setBitcoinUnit);
   const setNotificationPrefs = useAppStore((s) => s.setNotificationPreferences);
+
+  const [permissionStatus, setPermissionStatus] =
+    useState<PermissionStatus>("unknown");
+
+  // Re-check OS permission status whenever the screen regains focus, so that
+  // returning from system Settings (where the user may have flipped the
+  // permission) immediately updates the warning banner.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      Notifications.getPermissionsAsync()
+        .then((res) => {
+          if (!cancelled) setPermissionStatus(res.status as PermissionStatus);
+        })
+        .catch(() => {
+          if (!cancelled) setPermissionStatus("unknown");
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
+
+  const handleToggleNotifications = async (enabled: boolean) => {
+    if (!enabled) {
+      await setNotificationPrefs({ enabled: false });
+      return;
+    }
+    // Persist the user's intent immediately so the toggle stays where they
+    // put it, regardless of how the OS responds. The runtime permission may
+    // already be denied (in which case `requestPermissionsAsync` resolves
+    // without showing a prompt) — the inline warning row will reflect that.
+    await setNotificationPrefs({ enabled: true });
+    try {
+      const result = await Notifications.requestPermissionsAsync();
+      setPermissionStatus(result.status as PermissionStatus);
+    } catch {
+      setPermissionStatus("unknown");
+    }
+  };
+
+  const notificationsEnabled = notificationPrefs.enabled;
+  const showPermissionWarning =
+    notificationsEnabled && permissionStatus === "denied";
 
   return (
     <SafeAreaView
@@ -183,13 +239,46 @@ export default function ProfilePreferences() {
               Enable Notifications
             </Text>
             <Switch
-              value={notificationPrefs.enabled}
-              onValueChange={(enabled) => setNotificationPrefs({ enabled })}
+              value={notificationsEnabled}
+              onValueChange={handleToggleNotifications}
               trackColor={{ true: theme.colors.primary }}
             />
           </View>
 
-          {notificationPrefs.enabled && (
+          {showPermissionWarning && (
+            <>
+              <View
+                style={[
+                  styles.divider,
+                  { backgroundColor: theme.colors.border },
+                ]}
+              />
+              <Pressable
+                onPress={() => Linking.openSettings()}
+                style={styles.permissionWarning}
+              >
+                <Text
+                  style={[
+                    styles.permissionWarningText,
+                    { color: theme.colors.textMuted },
+                  ]}
+                >
+                  System permission is denied. Notifications won't be delivered
+                  until you allow them in Settings.
+                </Text>
+                <Text
+                  style={[
+                    styles.permissionWarningAction,
+                    { color: theme.colors.primary },
+                  ]}
+                >
+                  Open Settings →
+                </Text>
+              </Pressable>
+            </>
+          )}
+
+          {notificationsEnabled && (
             <>
               <View
                 style={[
@@ -274,5 +363,17 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     marginHorizontal: spacing[4],
+  },
+  permissionWarning: {
+    paddingVertical: spacing[3],
+    paddingHorizontal: spacing[4],
+    gap: spacing[1],
+  },
+  permissionWarningText: {
+    fontSize: typography.size.sm,
+  },
+  permissionWarningAction: {
+    fontSize: typography.size.sm,
+    fontWeight: typography.weight.semibold,
   },
 });
