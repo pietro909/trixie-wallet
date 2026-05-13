@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { STORAGE_KEY } from "../store/storage-keys";
+import { recordPersistedError } from "./diagnostics/persisted";
 
 // expo-notifications suppresses foreground-scheduled notifications on iOS
 // unless a handler is registered. Set at module scope so it applies in both
@@ -31,7 +32,7 @@ export async function checkNotificationPermissions() {
   return status === "granted";
 }
 
-export async function setupNotificationChannels() {
+async function setupNotificationChannels() {
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("default", {
       name: "default",
@@ -54,12 +55,34 @@ export async function setupNotificationChannels() {
   }
 }
 
+// Lazy, memoized channel setup. Lives in the same module as
+// `scheduleLocalNotification` so callers — including the OS-scheduled
+// headless JS context — get the contract "if you can schedule, channels
+// are ready" without having to remember to wire setup themselves. The
+// promise resolves even on failure (rejection caught + logged) so we never
+// cache a permanently-rejected promise that blocks all future scheduling;
+// Android falls back to the default channel if a named one is missing.
+let channelSetupPromise: Promise<void> | null = null;
+
+async function ensureChannelsReady(): Promise<void> {
+  if (channelSetupPromise) return channelSetupPromise;
+  channelSetupPromise = setupNotificationChannels().catch((e) => {
+    const message = e instanceof Error ? e.message : String(e);
+    return recordPersistedError(
+      "lightning",
+      `notification_channel_setup_failed: ${message}`,
+    );
+  });
+  return channelSetupPromise;
+}
+
 export async function scheduleLocalNotification(opts: {
   title: string;
   body: string;
   data?: Record<string, string | number | boolean>;
   channelId?: "default" | "swaps" | "payments";
 }) {
+  await ensureChannelsReady();
   // For immediate delivery on Android with a specific channel, the channelId
   // must be carried on the trigger (ChannelAwareTriggerInput), not on the
   // notification content. `null` is also a valid trigger but does not route

@@ -53,3 +53,35 @@ This milestone should prove:
 - [ ] **Throttling**: Ensure we don't spam notifications if multiple swaps update simultaneously.
 - [ ] **Android 13+**: Explicitly handle the POST_NOTIFICATIONS permission request flow.
 - [ ] **Documentation**: Update `ROADMAP.md` and `ISSUES.md` if any limitations are found.
+
+## Manual QA — Android 13+ (POST_NOTIFICATIONS)
+
+`expo-notifications`' `requestPermissionsAsync` triggers the Android 13+
+runtime prompt automatically, and the plugin auto-injects the
+`POST_NOTIFICATIONS` permission into the manifest. No app-side code path
+is Android-version-specific. These scenarios should be verified on a
+physical Android 13+ device once per release:
+
+1. **Fresh install, no prior permission.** Open the app, complete wallet
+   setup, navigate to Profile → toggle "Enable Notifications" on. Expect
+   the system prompt; whichever button the user taps, the toggle state
+   matches the user's intent (stays on). If denied, the "Open Settings"
+   row appears immediately below the toggle.
+2. **Permission denied → re-prompt suppressed.** With the app already
+   denied once, toggle off then on again. Expect no prompt (Android
+   suppresses re-prompts after a denial); the "Open Settings" row stays
+   visible. Tapping it opens system Settings for the app.
+3. **Re-grant via Settings.** From the Settings notifications page,
+   re-enable notifications, then switch back to the app. The "Open
+   Settings" row disappears on focus (the `useFocusEffect` re-check).
+4. **Channel-level disable.** With app-level notifications granted,
+   disable the "Swaps" channel in system Settings. Trigger a background
+   claim event. Expect: no tray notification (Android silently drops),
+   but the foreground drain still shows a toast on app open because
+   `RecordingSwapTaskQueue.pushResult` only sets `notified=true` when
+   app-level permission is granted *and* leaves it false otherwise.
+   *(Caveat: this branch does not currently detect channel-level disable
+   — only app-level permission state.)*
+5. **OS upgrade preserving denial.** Install on Android <13 (auto-granted),
+   upgrade device to Android 13+. The app-level permission migrates as
+   "granted" and notifications continue to fire.

@@ -11,6 +11,7 @@ import {
   type TaskResult,
 } from "@arkade-os/sdk/worker/expo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Notifications from "expo-notifications";
 import type { ArkadeWalletMetadata } from "../../store/types";
 import {
   type BgTaskSummary,
@@ -109,12 +110,21 @@ class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
     // Decide whether to fire an OS notification before persisting the
     // recorded entry, so the foreground drain can read `notified` and skip
     // a redundant toast for events the user has already seen in the tray.
+    //
+    // `notified=true` is reserved for the case where the OS will actually
+    // surface the notification to the user: `scheduleNotificationAsync`
+    // resolves successfully *even when* the OS will silently drop the
+    // notification (iOS permission denied, Android channel disabled), so
+    // we additionally verify post-schedule that runtime permission is
+    // granted. If it isn't, leave `notified=false` so the foreground
+    // drain still toasts the user — otherwise they get zero feedback.
     let notified = false;
     if ((claimed > 0 || refunded > 0) && (await shouldNotify("swaps"))) {
       const { title, body } = composeSwapNotificationCopy(claimed, refunded);
       try {
         await scheduleLocalNotification({ title, body, channelId: "swaps" });
-        notified = true;
+        const { status } = await Notifications.getPermissionsAsync();
+        notified = status === "granted";
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         await recordPersistedError(
