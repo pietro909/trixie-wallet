@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import {
   Linking,
   Pressable,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -95,233 +96,243 @@ export default function ProfilePreferences() {
       edges={["bottom"]}
       style={[styles.container, { backgroundColor: theme.colors.background }]}
     >
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
-          Theme
-        </Text>
-        <View
-          style={[
-            styles.optionGroup,
-            { backgroundColor: theme.colors.card, ...theme.shadow("card") },
-          ]}
-        >
-          {THEME_OPTIONS.map((opt) => (
-            <Pressable
-              key={opt.value}
-              onPress={() => setThemePref(opt.value)}
-              style={[
-                styles.option,
-                currentTheme === opt.value && {
-                  backgroundColor: theme.colors.primarySoft,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.optionLabel,
-                  {
-                    color:
-                      currentTheme === opt.value
-                        ? theme.colors.primary
-                        : theme.colors.text,
-                    fontWeight:
-                      currentTheme === opt.value
-                        ? typography.weight.semibold
-                        : typography.weight.regular,
-                  },
-                ]}
-              >
-                {opt.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
-          Fiat Currency
-        </Text>
-        <View
-          style={[
-            styles.optionGroup,
-            { backgroundColor: theme.colors.card, ...theme.shadow("card") },
-          ]}
-        >
-          {CURRENCY_OPTIONS.map((opt) => (
-            <Pressable
-              key={opt.value}
-              onPress={() => setFiatCurrency(opt.value)}
-              style={[
-                styles.option,
-                currentCurrency === opt.value && {
-                  backgroundColor: theme.colors.primarySoft,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.optionLabel,
-                  {
-                    color:
-                      currentCurrency === opt.value
-                        ? theme.colors.primary
-                        : theme.colors.text,
-                    fontWeight:
-                      currentCurrency === opt.value
-                        ? typography.weight.semibold
-                        : typography.weight.regular,
-                  },
-                ]}
-              >
-                {opt.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
-          Bitcoin Unit
-        </Text>
-        <View
-          style={[
-            styles.optionGroup,
-            { backgroundColor: theme.colors.card, ...theme.shadow("card") },
-          ]}
-        >
-          {BITCOIN_UNIT_OPTIONS.map((opt) => (
-            <Pressable
-              key={opt.value}
-              onPress={() => setBitcoinUnit(opt.value)}
-              style={[
-                styles.option,
-                currentBitcoinUnit === opt.value && {
-                  backgroundColor: theme.colors.primarySoft,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.optionLabel,
-                  {
-                    color:
-                      currentBitcoinUnit === opt.value
-                        ? theme.colors.primary
-                        : theme.colors.text,
-                    fontWeight:
-                      currentBitcoinUnit === opt.value
-                        ? typography.weight.semibold
-                        : typography.weight.regular,
-                  },
-                ]}
-              >
-                {opt.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.colors.textMuted }]}>
-          Notifications
-        </Text>
-        <View
-          style={[
-            styles.optionGroup,
-            { backgroundColor: theme.colors.card, ...theme.shadow("card") },
-          ]}
-        >
-          <View style={styles.switchRow}>
-            <Text style={[styles.optionLabel, { color: theme.colors.text }]}>
-              Enable Notifications
-            </Text>
-            <Switch
-              value={notificationsEnabled}
-              onValueChange={handleToggleNotifications}
-              trackColor={{ true: theme.colors.primary }}
-            />
-          </View>
-
-          {showPermissionWarning && (
-            <>
-              <View
-                style={[
-                  styles.divider,
-                  { backgroundColor: theme.colors.border },
-                ]}
-              />
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.section}>
+          <Text
+            style={[styles.sectionTitle, { color: theme.colors.textMuted }]}
+          >
+            Theme
+          </Text>
+          <View
+            style={[
+              styles.optionGroup,
+              { backgroundColor: theme.colors.card, ...theme.shadow("card") },
+            ]}
+          >
+            {THEME_OPTIONS.map((opt) => (
               <Pressable
-                onPress={() => Linking.openSettings()}
-                style={styles.permissionWarning}
+                key={opt.value}
+                onPress={() => setThemePref(opt.value)}
+                style={[
+                  styles.option,
+                  currentTheme === opt.value && {
+                    backgroundColor: theme.colors.primarySoft,
+                  },
+                ]}
               >
                 <Text
                   style={[
-                    styles.permissionWarningText,
-                    { color: theme.colors.textMuted },
+                    styles.optionLabel,
+                    {
+                      color:
+                        currentTheme === opt.value
+                          ? theme.colors.primary
+                          : theme.colors.text,
+                      fontWeight:
+                        currentTheme === opt.value
+                          ? typography.weight.semibold
+                          : typography.weight.regular,
+                    },
                   ]}
                 >
-                  System permission is denied. Notifications won't be delivered
-                  until you allow them in Settings.
-                </Text>
-                <Text
-                  style={[
-                    styles.permissionWarningAction,
-                    { color: theme.colors.primary },
-                  ]}
-                >
-                  Open Settings →
+                  {opt.label}
                 </Text>
               </Pressable>
-            </>
-          )}
-
-          {notificationsEnabled && (
-            <>
-              <View
-                style={[
-                  styles.divider,
-                  { backgroundColor: theme.colors.border },
-                ]}
-              />
-              <View style={styles.switchRow}>
-                <Text
-                  style={[styles.optionLabel, { color: theme.colors.text }]}
-                >
-                  Swaps
-                </Text>
-                <Switch
-                  value={notificationPrefs.swaps}
-                  onValueChange={(swaps) => setNotificationPrefs({ swaps })}
-                  trackColor={{ true: theme.colors.primary }}
-                />
-              </View>
-              <View
-                style={[
-                  styles.divider,
-                  { backgroundColor: theme.colors.border },
-                ]}
-              />
-              <View style={styles.switchRow}>
-                <Text
-                  style={[styles.optionLabel, { color: theme.colors.text }]}
-                >
-                  Payments
-                </Text>
-                <Switch
-                  value={notificationPrefs.payments}
-                  onValueChange={(payments) =>
-                    setNotificationPrefs({ payments })
-                  }
-                  trackColor={{ true: theme.colors.primary }}
-                />
-              </View>
-            </>
-          )}
+            ))}
+          </View>
         </View>
-      </View>
+
+        <View style={styles.section}>
+          <Text
+            style={[styles.sectionTitle, { color: theme.colors.textMuted }]}
+          >
+            Fiat Currency
+          </Text>
+          <View
+            style={[
+              styles.optionGroup,
+              { backgroundColor: theme.colors.card, ...theme.shadow("card") },
+            ]}
+          >
+            {CURRENCY_OPTIONS.map((opt) => (
+              <Pressable
+                key={opt.value}
+                onPress={() => setFiatCurrency(opt.value)}
+                style={[
+                  styles.option,
+                  currentCurrency === opt.value && {
+                    backgroundColor: theme.colors.primarySoft,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.optionLabel,
+                    {
+                      color:
+                        currentCurrency === opt.value
+                          ? theme.colors.primary
+                          : theme.colors.text,
+                      fontWeight:
+                        currentCurrency === opt.value
+                          ? typography.weight.semibold
+                          : typography.weight.regular,
+                    },
+                  ]}
+                >
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text
+            style={[styles.sectionTitle, { color: theme.colors.textMuted }]}
+          >
+            Bitcoin Unit
+          </Text>
+          <View
+            style={[
+              styles.optionGroup,
+              { backgroundColor: theme.colors.card, ...theme.shadow("card") },
+            ]}
+          >
+            {BITCOIN_UNIT_OPTIONS.map((opt) => (
+              <Pressable
+                key={opt.value}
+                onPress={() => setBitcoinUnit(opt.value)}
+                style={[
+                  styles.option,
+                  currentBitcoinUnit === opt.value && {
+                    backgroundColor: theme.colors.primarySoft,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.optionLabel,
+                    {
+                      color:
+                        currentBitcoinUnit === opt.value
+                          ? theme.colors.primary
+                          : theme.colors.text,
+                      fontWeight:
+                        currentBitcoinUnit === opt.value
+                          ? typography.weight.semibold
+                          : typography.weight.regular,
+                    },
+                  ]}
+                >
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text
+            style={[styles.sectionTitle, { color: theme.colors.textMuted }]}
+          >
+            Notifications
+          </Text>
+          <View
+            style={[
+              styles.optionGroup,
+              { backgroundColor: theme.colors.card, ...theme.shadow("card") },
+            ]}
+          >
+            <View style={styles.switchRow}>
+              <Text style={[styles.optionLabel, { color: theme.colors.text }]}>
+                Enable Notifications
+              </Text>
+              <Switch
+                value={notificationsEnabled}
+                onValueChange={handleToggleNotifications}
+                trackColor={{ true: theme.colors.primary }}
+              />
+            </View>
+
+            {showPermissionWarning && (
+              <>
+                <View
+                  style={[
+                    styles.divider,
+                    { backgroundColor: theme.colors.border },
+                  ]}
+                />
+                <Pressable
+                  onPress={() => Linking.openSettings()}
+                  style={styles.permissionWarning}
+                >
+                  <Text
+                    style={[
+                      styles.permissionWarningText,
+                      { color: theme.colors.textMuted },
+                    ]}
+                  >
+                    System permission is denied. Notifications won't be
+                    delivered until you allow them in Settings.
+                  </Text>
+                  <Text
+                    style={[
+                      styles.permissionWarningAction,
+                      { color: theme.colors.primary },
+                    ]}
+                  >
+                    Open Settings →
+                  </Text>
+                </Pressable>
+              </>
+            )}
+
+            {notificationsEnabled && (
+              <>
+                <View
+                  style={[
+                    styles.divider,
+                    { backgroundColor: theme.colors.border },
+                  ]}
+                />
+                <View style={styles.switchRow}>
+                  <Text
+                    style={[styles.optionLabel, { color: theme.colors.text }]}
+                  >
+                    Swaps
+                  </Text>
+                  <Switch
+                    value={notificationPrefs.swaps}
+                    onValueChange={(swaps) => setNotificationPrefs({ swaps })}
+                    trackColor={{ true: theme.colors.primary }}
+                  />
+                </View>
+                <View
+                  style={[
+                    styles.divider,
+                    { backgroundColor: theme.colors.border },
+                  ]}
+                />
+                <View style={styles.switchRow}>
+                  <Text
+                    style={[styles.optionLabel, { color: theme.colors.text }]}
+                  >
+                    Payments
+                  </Text>
+                  <Switch
+                    value={notificationPrefs.payments}
+                    onValueChange={(payments) =>
+                      setNotificationPrefs({ payments })
+                    }
+                    trackColor={{ true: theme.colors.primary }}
+                  />
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -329,10 +340,14 @@ export default function ProfilePreferences() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  scrollContent: {
     paddingHorizontal: spacing[5],
+    paddingBottom: spacing[8],
   },
   section: {
     marginTop: spacing[6],
+    paddingBottom: spacing[3],
   },
   sectionTitle: {
     fontSize: typography.size.xs,
