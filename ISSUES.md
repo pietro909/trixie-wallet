@@ -67,7 +67,17 @@ The "Support Bundle" contains a `backgroundTasks` section like the following:
 
 The failure message is too generic: is it possible to get a stacktrace or something more specific? What that a network failure? A marhsalling issue? A business-logic inconsistency? DB-related? ...
 
-## 6. Swap notifications cannot deep-link to a specific Activity row
+## 6. Lightning Address `destination` truncated by `shorten()` in `buildBareLnurl`
+
+**Status: OPEN**
+
+**Where:** `app/services/paymentParser.ts` (`buildBareLnurl`)
+
+`detectBareType` recognises Lightning Addresses as `lnurl` type and routes them through `buildBareLnurl`, which sets `destination: shorten(lnurl, 14, 6)`. `shorten()` was built for opaque bech32 LNURL strings; on a human-readable address it produces middle-elided output like `alice+tag@su…ple.co` for `alice+tag@subdomain.example.co`. Addresses are usually short enough that the threshold (`<= head + tail + 3 = 23` chars) returns them verbatim, but longer ones get mangled.
+
+Worth deciding the truncation rule across all the surfaces that render `destination` (SendInput card, SendAmount summary, SendReview, SendResult, post-fact activity rows) before changing it — naively skipping `shorten()` could overflow narrow Review rows. The fix is probably a separate `shortenAddress`/`shortenLnurl` split, gated on `LN_ADDRESS_RE.test(raw)`.
+
+## 7. Swap notifications cannot deep-link to a specific Activity row
 
 **Status: OPEN**
 
