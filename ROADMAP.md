@@ -47,6 +47,10 @@ Last updated: 2026-05-13 (Milestones 16–18 added; 11–18 reordered; pending m
   - Move from a single-wallet store model to multiple wallets with labels and isolated state.
 - [ ] Milestone 18: Cloud Backup ([docs/MILESTONE_18.agents.md](./docs/MILESTONE_18.agents.md))
   - Add optional cloud transport for the encrypted backup bundle (transport only; format remains local-first).
+- [ ] Milestone 19: Notification Deep-linking ([docs/MILESTONE_19.agents.md](./docs/MILESTONE_19.agents.md))
+  - Enable OS notifications to deep-link directly to specific Activity rows by mapping background task results to activity IDs.
+- [ ] Milestone 20: Non-default Wallet Behavior ([docs/MILESTONE_20.agents.md](./docs/MILESTONE_20.agents.md))
+  - Formalize strategy and testing for disabling VTXO auto-renewal and delegated renewal, ensuring the SDK Settlement Manager respects these toggles safely.
 
 ## Relevant Documentation
 
