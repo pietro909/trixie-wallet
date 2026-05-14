@@ -35,11 +35,11 @@ With `edgeToEdgeEnabled: true` (Android 15+ requirement), `@react-navigation/nat
 
 If I tap on `Send -> Paste Ark address -> Continue -> Tap on "Bitcoin"` selector the assets picker slides up from the bottom together with the dark backdrop. The backdrop should slide though, just appear
 
-## 5. Assets selector backdrop animation
+## 5. Background Tasks logs and error reporting
 
 **Status: OPEN**
 
-**Where:** Background Tasks logs and error reporting
+**Where:** Advanced -> Support Bundle
 
 The "Support Bundle" contains a `backgroundTasks` section like the following:
 
