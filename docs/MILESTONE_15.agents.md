@@ -61,10 +61,17 @@ future bumps. Audit screen-level lock guards and update any that read
   on-disk before the password hash was successfully persisted, preventing
   potential user lockout.
 - **Schema Lifecycle Management**: Bumped `AppState` and `useAppStore` to
-  `schemaVersion: 5`. Introduced a dedicated `migrate()` function in
-  `useAppStore.ts` to handle version transitions. The migration from v4 to v5
-  automatically clears legacy password hashes to prevent lock-outs while
-  enforcing the new security standards.
+  `schemaVersion: 5` as the wipe-vs-load gate consumed by `hydrate()`. The
+  initial implementation included a `migrate()` function with a v4→v5 hash-
+  clearing step; that was dropped in favour of the alpha policy declared in
+  `FOUNDATION.md` (no migrations, no back-compat shims until beta). The
+  current behaviour: `hydrate()` flags `_schemaMismatch` when the stored
+  version does not match `CURRENT_SCHEMA_VERSION` (and on corrupted JSON),
+  leaving the persisted bytes untouched. `AppStartupGate` then renders a
+  confirmation card; only when the user taps "Wipe and continue" does
+  `acknowledgeSchemaMismatchAndWipe()` clear `STORAGE_KEY` and legacy keys.
+  This preserves an off-device recovery affordance instead of silently
+  destroying state.
 - **Gated Access**: Confirmed `RootStack.tsx:233` is the single gate on
   `security.isLocked` — when locked, only the `Unlock` screen is rendered.
   The "audit `walletContainer` reads" sub-goal turned out to be vacuous: that

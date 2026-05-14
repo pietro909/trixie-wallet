@@ -39,7 +39,7 @@ Last updated: 2026-05-13 (Milestones 16–18 added; 11–18 reordered; pending m
   - Introduce an append-friendly cache for derived Activity rows with boring, explicit invalidation.
 - [x] Milestone 14: LNURL ([docs/MILESTONE_14.agents.md](./docs/MILESTONE_14.agents.md))
   - Add LNURL and Lightning Address parsing + invoice fetching, distinct from BOLT11 handling.
-- [ ] Milestone 15: Security & Reliability ([docs/MILESTONE_15.agents.md](./docs/MILESTONE_15.agents.md))
+- [x] Milestone 15: Security & Reliability ([docs/MILESTONE_15.agents.md](./docs/MILESTONE_15.agents.md))
   - Harden the password gate (SHA-256 + salt), make all state mutations await persist, add a schema-version guard in hydrate(), and audit screen-level lock guards.
 - [ ] Milestone 16: Mainnet Support ([docs/MILESTONE_16.agents.md](./docs/MILESTONE_16.agents.md))
   - Add a network selector (mutinynet / mainnet) to create and restore flows; encode the chosen network in the backup format.

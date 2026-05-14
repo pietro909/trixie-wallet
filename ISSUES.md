@@ -103,14 +103,46 @@ A real fix would either (a) disable the control and show a spinner until the per
 
 **Status: OPEN**
 
-**Where:** `app/store/useAppStore.ts` (`hashPassword`) and `app/screens/ProfileLock.tsx` (minimum length)
+**Where:** `app/store/useAppStore.ts` (`hashPassword`) and `app/screens/ProfileLock.tsx` (6-char minimum at line 25)
 
-Milestone 15 specified — and shipped — SHA-256 + per-wallet salt for the unlock password. That's a strict upgrade over the previous 32-bit `simpleHash`, but SHA-256 is a fast hash, not a password-derived KDF. An attacker with read access to the persisted state file has both the hash and the salt, and can brute-force the password offline at GPU speeds. Combined with the 6-character minimum in `ProfileLock.tsx:25`, the gate is weak against any adversary who can exfiltrate `app_state_v1`.
+Milestone 15 specified — and shipped — SHA-256 + per-wallet random salt for the unlock password. That's a strict upgrade over the previous 32-bit `simpleHash`, but SHA-256 is a fast hash, not a password-derived KDF. An attacker with read access to `app_state_v1` (the AsyncStorage blob) has both the hash and the salt and can brute-force the password offline at GPU speeds — order of 10–100 billion SHA-256/sec on consumer hardware. Combined with the 6-character minimum, a stolen `app_state_v1` file is effectively a stolen password for anything in the same character space.
 
-The unlock password is a UI gate, not the encryption key for sensitive material (the seed and Lightning swap state are protected separately — see `app/services/backup/crypto.ts` and `app/services/arkade/secret-store.ts`). So a weak gate doesn't directly expose funds. The risk is more like: an attacker who has the file can determine the password, then use it to impersonate the user inside the running app (toggle settings, trigger unlocks via biometrics fallback, etc.).
+### What it does *not* expose directly
 
-Follow-up work for a future hardening pass:
-- Replace `hashPassword` with PBKDF2 / Argon2id / scrypt via `expo-crypto`'s lower-level APIs or a vetted JS library.
-- Raise the minimum password length (the 6-char floor is a placeholder).
-- Consider whether the password should be required to access locally sensitive UI flows (export, key reveal) on top of biometrics.
+The unlock password is not the encryption key for anything on disk:
+
+- **The seed is in `expo-secure-store`** (iOS Keychain / Android Keystore — see `app/services/arkade/secret-store.ts`). It's gated by the OS-level keystore, not by the unlock hash. Cracking the SHA-256 hash does not let an attacker read the seed from `expo-secure-store`.
+- **The encrypted backup bundle uses its own KDF chain.** `app/services/backup/crypto.ts` derives the AES-256-GCM key with PBKDF2-SHA256 at 200,000 iterations over a fresh 16-byte salt. The export flow (`ProfileBackup.tsx:174`) requires a separately-entered password with an 8-character minimum, distinct from the unlock password.
+
+So the *direct* blast radius of cracking the unlock hash is impersonation inside a running app instance on a device the attacker controls: toggle settings, view balances and addresses, attempt biometrics-fallback unlocks. They cannot decrypt the seed or the backup envelope through this path alone.
+
+### Where it actually matters: password reuse + a stolen backup
+
+The realistic chained-attack scenario is **password reuse between the unlock password and the backup password**:
+
+1. The user picks the same string for the unlock gate and the backup export (likely — both are "wallet password" in the same mental slot).
+2. The attacker gets hold of *both* `app_state_v1` (exfiltrated from the device or a device-level backup) and an exported `.trixie.backup` envelope (recovered from cloud sync, email, AirDrop, file-sharing, etc.).
+3. They use the weak SHA-256+salt hash as the cheap oracle to recover the password — a 6-char ASCII password falls in seconds to minutes.
+4. They apply the recovered password against the backup envelope's PBKDF2-200k+AES-GCM. PBKDF2-200k buys ~200,000× slowdown per guess, which would have made a fresh dictionary attack on the envelope expensive — but only the *first* successful decryption costs that much, because the password came from the cheap side. Funds gone.
+
+The unlock hash effectively shortens the attack on the backup from "exhaust the password space at 200k iterations per guess" to "exhaust the password space at one iteration per guess." Both surfaces share the user's password but not the iteration cost, and that asymmetry is the bug.
+
+### Follow-up work
+
+- Replace `hashPassword` with PBKDF2 / Argon2id / scrypt — same KDF family the backup uses, ideally at comparable cost (or higher, since the unlock hash only needs to be verified once per session). The simplest fix is to reuse `pbkdf2Async` from `@noble/hashes` as already imported by `backup/crypto.ts`.
+- Raise the minimum password length above 6 (the 8-char minimum on the backup export is a reasonable floor; the two should not diverge).
+- Surface the password-reuse risk in the export flow — e.g. a tooltip explaining that the backup password should be different from the unlock password, or a soft check that flags reuse.
+- Consider whether the unlock password should be required to access locally sensitive UI flows (export, key reveal) on top of biometrics.
+
+## 10. `markDirtyForBackup()` fires `persist()` without awaiting
+
+**Status: OPEN**
+
+**Where:** `app/store/useAppStore.ts` (`markDirtyForBackup`)
+
+Milestone 15 made the user-driven store actions `await persist(get())` so they cannot return before the AsyncStorage write lands. `markDirtyForBackup()` is the one remaining exception: it flips `security.dirtyForBackup` and then calls `void persist(useAppStore.getState())`, deliberately not awaiting. It runs as a side-effect of the swap-event listener (`setSwapEventListener`) — not a user action — so there is no call site that could await it without changing the listener contract.
+
+The race window is small (the flag will be re-set on the next swap event anyway), but a swap-event burst that lands moments before app termination could lose the dirty mark, leaving the Reset gate's "needs backup" warning silent until the next mutation.
+
+A real fix would either (a) make the listener async and have the SwapManager await it, or (b) introduce a top-level persist queue that the app-lifecycle handler flushes before suspension (same mechanism that would close [#8](#8-preference-toggle-persistence-is-not-actually-awaited-at-the-call-site)).
 
