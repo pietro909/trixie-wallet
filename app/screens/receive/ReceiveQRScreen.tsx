@@ -16,6 +16,7 @@ import {
 } from "lucide-react-native";
 import * as React from "react";
 import {
+  ActivityIndicator,
   Animated,
   Pressable,
   ScrollView,
@@ -28,6 +29,10 @@ import QRCode from "react-native-qrcode-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useToast } from "../../components/ToastProvider";
 import { useFormatSats } from "../../hooks/useFormatSats";
+import {
+  type LnurlInvoiceRequest,
+  useLnurlSession,
+} from "../../hooks/useLnurlSession";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
 import {
@@ -38,6 +43,13 @@ import {
   type CachedAssetDetails,
   fetchAssetDetailsCached,
 } from "../../services/arkade/asset-metadata";
+import {
+  createLightningInvoice,
+  ensureLightning,
+  isLightningSupportedForNetwork,
+} from "../../services/arkade/lightning";
+import { lnurlServerUrlForNetwork } from "../../services/arkade/network";
+import { recordSwapMetadata } from "../../services/arkade/swap-storage";
 import { paymentTypeLabel } from "../../services/paymentParser";
 import {
   makeAllPayloads,
@@ -133,7 +145,77 @@ export default function ReceiveQRScreen() {
   const network = useAppStore(
     (s) => s.network.detectedNetwork ?? s.wallet?.network ?? null,
   );
+  const walletBehavior = useAppStore((s) => s.walletBehavior);
+  const swapBackgroundEnabled = useAppStore((s) => s.backgroundTasks.swapPoll);
   const { format: formatSats, label: unitLabel } = useFormatSats();
+
+  const lnurlServerUrl = React.useMemo(
+    () => (type === "lnurl" ? lnurlServerUrlForNetwork(network) : null),
+    [type, network],
+  );
+  const lnurlServerAvailable = type === "lnurl" && lnurlServerUrl != null;
+  const lightningSupportedHere = isLightningSupportedForNetwork(network);
+
+  // Capture the most recent swap id created by the LNURL invoice handler so we
+  // can track its settlement just like the fixed-amount Lightning flow does.
+  const [lnurlSwapId, setLnurlSwapId] = React.useState<string | null>(null);
+
+  // Initialize Lightning eagerly when the screen mounts for LNURL receive so
+  // the on-demand invoice handler does not pay for setup latency the first
+  // time a sender requests an invoice. Best-effort — the handler retries
+  // ensureLightning before creating an invoice and surfaces a clean error to
+  // the payer through lnurl-server if it is still unavailable.
+  React.useEffect(() => {
+    if (type !== "lnurl") return;
+    if (!wallet || !lnurlServerAvailable || !lightningSupportedHere) return;
+    void ensureLightning({
+      metadata: wallet,
+      behavior: walletBehavior,
+      swapBackgroundEnabled,
+    }).catch(() => {});
+  }, [
+    type,
+    wallet,
+    lnurlServerAvailable,
+    lightningSupportedHere,
+    walletBehavior,
+    swapBackgroundEnabled,
+  ]);
+
+  const handleLnurlInvoiceRequest = React.useCallback(
+    async ({ amountMsat }: LnurlInvoiceRequest): Promise<string> => {
+      if (!wallet) throw new Error("Wallet not available");
+      const sats = Math.floor(amountMsat / 1000);
+      if (sats <= 0) throw new Error("Invalid amount");
+      await ensureLightning({
+        metadata: wallet,
+        behavior: walletBehavior,
+        swapBackgroundEnabled,
+      });
+      const response = await createLightningInvoice({
+        amount: sats,
+        description: `Trixie ${sats} sats`,
+      });
+      await recordSwapMetadata({
+        swapId: response.pendingSwap.id,
+        walletId: wallet.id,
+        direction: "in",
+        createdForFlow: "receive",
+        invoiceAmountSats: sats,
+        arkadeAmountSats: response.amount,
+        paymentHash: response.paymentHash,
+      });
+      setLnurlSwapId(response.pendingSwap.id);
+      return response.invoice;
+    },
+    [wallet, walletBehavior, swapBackgroundEnabled],
+  );
+
+  const lnurlSession = useLnurlSession(
+    lnurlServerAvailable,
+    lnurlServerUrl,
+    handleLnurlInvoiceRequest,
+  );
 
   const [assetDetails, setAssetDetails] =
     React.useState<CachedAssetDetails | null>(null);
@@ -170,21 +252,31 @@ export default function ReceiveQRScreen() {
   const lightningExpiresAt = route.params.lightningExpiresAt;
   const lightningSwapId = route.params.lightningSwapId;
 
+  // The swap id we listen to depends on the receive type: Lightning supplies
+  // it up-front via route params, LNURL captures it when an on-demand invoice
+  // is created inside the session handler.
+  const trackedSwapId =
+    type === "lightning"
+      ? (lightningSwapId ?? null)
+      : type === "lnurl"
+        ? lnurlSwapId
+        : null;
+
   // Track our swap's status from the store-side activity list. The global swap
   // listener in useAppStore refreshes activities on every SwapManager event,
   // so we just react to its state to surface success/failure on this screen.
   const swapActivity = useAppStore((s) => {
-    if (type !== "lightning" || !lightningSwapId) return null;
+    if (!trackedSwapId) return null;
     return (
       s.wallet?.activities.find(
         (a) =>
-          a.source.type === "boltz_swap" && a.source.swapId === lightningSwapId,
+          a.source.type === "boltz_swap" && a.source.swapId === trackedSwapId,
       ) ?? null
     );
   });
   const swapStatus = swapActivity?.status;
 
-  // For non-Lightning receive flows (arkade onchain/offchain), watch the
+  // For non-Lightning/LNURL receive flows (arkade onchain/offchain), watch the
   // wallet activity list — driven by the global incoming-funds listener — and
   // celebrate the first new incoming payment that arrives after this screen
   // mounted.
@@ -194,7 +286,7 @@ export default function ReceiveQRScreen() {
     baselineRef.current = new Set(arkadeActivities.map((a) => a.id));
   }
   const arkadeReceived = React.useMemo(() => {
-    if (type === "lightning") return null;
+    if (type === "lightning" || type === "lnurl") return null;
     if (!arkadeActivities) return null;
     const baseline = baselineRef.current;
     if (!baseline) return null;
@@ -230,6 +322,27 @@ export default function ReceiveQRScreen() {
       };
       return [main, [main], null];
     }
+    if (type === "lnurl") {
+      if (!lnurlServerAvailable) {
+        return [null, [], "LNURL receive is not available on this network."];
+      }
+      if (lnurlSession.error) {
+        return [null, [], lnurlSession.error];
+      }
+      if (!lnurlSession.lnurl) {
+        // Session has not produced a LNURL yet; surface a loading state by
+        // returning a null primary with no error so the screen can render a
+        // spinner instead of a generated QR.
+        return [null, [], null];
+      }
+      const main: ReceivePayload = {
+        type: "lnurl",
+        label: "LNURL",
+        payload: lnurlSession.lnurl,
+        destination: lnurlSession.lnurl,
+      };
+      return [main, [main], null];
+    }
     try {
       const opts = {
         amountSats,
@@ -249,6 +362,9 @@ export default function ReceiveQRScreen() {
     type,
     amountSats,
     lightningInvoice,
+    lnurlServerAvailable,
+    lnurlSession.error,
+    lnurlSession.lnurl,
     assetId,
     assetAmountBase,
     assetDetails,
@@ -285,6 +401,31 @@ export default function ReceiveQRScreen() {
     } catch {
       showToast("Could not open share sheet", "error");
     }
+  }
+
+  // LNURL: while the session is being established the primary is null but no
+  // error has surfaced yet — render a spinner instead of the generic error
+  // view so the user knows the QR will appear shortly.
+  const lnurlPending =
+    type === "lnurl" && !primary && !error && lnurlServerAvailable;
+
+  if (lnurlPending) {
+    return (
+      <SafeAreaView
+        edges={["bottom"]}
+        style={[styles.container, { backgroundColor: theme.colors.background }]}
+      >
+        <View style={styles.errorWrap}>
+          <ActivityIndicator color={theme.colors.primary} size="large" />
+          <Text style={[styles.errorTitle, { color: theme.colors.text }]}>
+            Opening LNURL session…
+          </Text>
+          <Text style={[styles.errorBody, { color: theme.colors.textMuted }]}>
+            Connecting to the LNURL server to issue a payment request.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   if (error || !primary) {

@@ -15,6 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
 import { isLightningSupportedForNetwork } from "../../services/arkade/lightning";
+import { lnurlServerUrlForNetwork } from "../../services/arkade/network";
 import type { ReceiveType } from "../../services/receive";
 import { useAppStore } from "../../store/useAppStore";
 import { motion, radius, spacing, typography } from "../../theme/theme";
@@ -31,6 +32,7 @@ type Option = {
 
 function buildOptions(network: string | null | undefined): Option[] {
   const lightningAvailable = isLightningSupportedForNetwork(network);
+  const lnurlAvailable = lnurlServerUrlForNetwork(network) != null;
   return [
     {
       type: "arkade",
@@ -56,9 +58,11 @@ function buildOptions(network: string | null | undefined): Option[] {
     {
       type: "lnurl",
       title: "LNURL",
-      helper: "Coming later — LNURL pay not available yet.",
+      helper: lnurlAvailable
+        ? "Share a reusable LNURL — payer chooses the amount."
+        : "LNURL receive is not configured for this network.",
       Icon: Globe,
-      unavailable: true,
+      unavailable: !lnurlAvailable,
     },
   ];
 }

@@ -8,6 +8,10 @@ const DEFAULT_DELEGATOR_URLS: Record<string, string> = {
   regtest: "http://localhost:7012",
 };
 
+const LNURL_SERVER_URLS: Record<string, string> = {
+  mutinynet: "https://lnurl.mutinynet.arkade.sh",
+};
+
 export function isMainnetForNetworkName(network: string): boolean {
   return MAINNET_NETWORK_NAMES.has(network.toLowerCase());
 }
@@ -17,6 +21,13 @@ export function defaultDelegatorUrlForNetwork(
 ): string | null {
   if (!network) return null;
   return DEFAULT_DELEGATOR_URLS[network.toLowerCase()] ?? null;
+}
+
+export function lnurlServerUrlForNetwork(
+  network: string | null | undefined,
+): string | null {
+  if (!network) return null;
+  return LNURL_SERVER_URLS[network.toLowerCase()] ?? null;
 }
 
 const PRIVATE_HOST_RE =

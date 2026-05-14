@@ -95,9 +95,11 @@ export function makeReceivePayload(
     case "bitcoin":
       return makeBitcoinPayload(wallet, options);
     case "lightning":
-      throw new Error("Lightning receive is not available in this milestone");
+      throw new Error(
+        "Lightning receive is not available via makeReceivePayload",
+      );
     case "lnurl":
-      throw new Error("LNURL receive is not available in this milestone");
+      throw new Error("LNURL receive is not available via makeReceivePayload");
   }
 }
 

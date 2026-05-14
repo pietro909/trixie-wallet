@@ -146,3 +146,13 @@ The race window is small (the flag will be re-set on the next swap event anyway)
 
 A real fix would either (a) make the listener async and have the SwapManager await it, or (b) introduce a top-level persist queue that the app-lifecycle handler flushes before suspension (same mechanism that would close [#8](#8-preference-toggle-persistence-is-not-actually-awaited-at-the-call-site)).
 
+
+## 11. Missing strategy and testing for non-default Wallet behavior
+
+**Status: OPEN**
+
+**Where:** `Advanced -> Wallet Behavior`
+
+I haven't verified what happens when `VTXO auto-renewal` and `VTXO delegate` are switched off.
+
+TODO: prepare a testing matrix, verify statically implementation gaps, find testing paths to exercise the scenarios where possible, test manually on a device.
