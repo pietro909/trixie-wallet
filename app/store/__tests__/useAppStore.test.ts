@@ -1,3 +1,4 @@
+import { pbkdf2Async } from "@noble/hashes/pbkdf2.js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Crypto from "expo-crypto";
 
@@ -8,11 +9,27 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 }));
 
 jest.mock("expo-crypto", () => ({
-  digestStringAsync: jest.fn((_alg, str) => Promise.resolve(`hashed-${str}`)),
   getRandomBytes: jest.fn((len) => new Uint8Array(len).fill(1)),
-  CryptoDigestAlgorithm: {
-    SHA256: "SHA256",
-  },
+}));
+
+jest.mock("@noble/hashes/pbkdf2.js", () => ({
+  // Deterministic 32-byte derivation keyed off the inputs so tests can assert
+  // the password+salt round-trip without running 300k real iterations. Each
+  // output byte mixes one password byte with one salt byte (both modulo their
+  // own length), guaranteeing different (password, salt) pairs diverge.
+  pbkdf2Async: jest.fn((_hash, pw, salt, _opts) => {
+    const p = pw as Uint8Array;
+    const s = salt as Uint8Array;
+    const out = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      out[i] = (p[i % p.length] ^ s[i % s.length]) & 0xff;
+    }
+    return Promise.resolve(out);
+  }),
+}));
+
+jest.mock("@noble/hashes/sha2.js", () => ({
+  sha256: { tag: "sha256-mock" },
 }));
 
 jest.mock("expo-constants", () => ({
@@ -58,27 +75,43 @@ import { generateSalt, hashPassword, useAppStore } from "../useAppStore";
 
 describe("useAppStore security utilities", () => {
   describe("hashPassword", () => {
-    it("should generate a SHA-256 hash of password + salt", async () => {
-      const password = "password123";
-      const salt = "somesalt";
-      const hash = await hashPassword(password, salt);
-
-      expect(Crypto.digestStringAsync).toHaveBeenCalledWith(
-        "SHA256",
-        password + salt,
-      );
-      expect(hash).toBe(`hashed-${password}${salt}`);
+    beforeEach(() => {
+      (pbkdf2Async as jest.Mock).mockClear();
     });
 
-    it("should produce different hashes for different salts", async () => {
-      (Crypto.digestStringAsync as jest.Mock).mockImplementation((_alg, str) =>
-        Promise.resolve(`hash-${str}`),
-      );
-
+    it("derives a 32-byte hash via PBKDF2-SHA256 over password + salt bytes", async () => {
       const password = "password123";
-      const hash1 = await hashPassword(password, "salt1");
-      const hash2 = await hashPassword(password, "salt2");
+      // 32-char hex (16 bytes), matches `generateSalt()` shape.
+      const saltHex = "0011223344556677889900aabbccddee";
+      const hash = await hashPassword(password, saltHex);
+
+      expect(pbkdf2Async).toHaveBeenCalledTimes(1);
+      const [hashFn, pwBytes, saltBytes, opts] = (pbkdf2Async as jest.Mock).mock
+        .calls[0];
+      expect(hashFn).toEqual({ tag: "sha256-mock" });
+      // Password is utf8-encoded — `password123` → 11 bytes.
+      expect(pwBytes).toBeInstanceOf(Uint8Array);
+      expect(pwBytes.length).toBe(password.length);
+      // Salt hex (32 chars) → 16 bytes.
+      expect(saltBytes).toBeInstanceOf(Uint8Array);
+      expect(saltBytes.length).toBe(16);
+      expect(opts).toEqual({ c: 300_000, dkLen: 32 });
+      // Output is hex-encoded 32 bytes → 64 chars.
+      expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it("produces different hashes for different salts", async () => {
+      const password = "password123";
+      const hash1 = await hashPassword(password, "01".repeat(16));
+      const hash2 = await hashPassword(password, "02".repeat(16));
       expect(hash1).not.toBe(hash2);
+    });
+
+    it("produces different hashes for different passwords", async () => {
+      const salt = "0011223344556677889900aabbccddee";
+      const h1 = await hashPassword("alpha-pass", salt);
+      const h2 = await hashPassword("beta-pass-x", salt);
+      expect(h1).not.toBe(h2);
     });
   });
 
@@ -116,7 +149,7 @@ describe("useAppStore hydrate / schema mismatch", () => {
 
   it("flags mismatch and leaves storage intact when stored version is older", async () => {
     getItem.mockResolvedValueOnce(
-      JSON.stringify({ schemaVersion: 4, wallet: null }),
+      JSON.stringify({ schemaVersion: 5, wallet: null }),
     );
 
     await useAppStore.getState().hydrate();
@@ -153,7 +186,7 @@ describe("useAppStore hydrate / schema mismatch", () => {
 
   it("hydrates normally when stored version matches", async () => {
     getItem.mockResolvedValueOnce(
-      JSON.stringify({ schemaVersion: 5, wallet: null }),
+      JSON.stringify({ schemaVersion: 6, wallet: null }),
     );
 
     await useAppStore.getState().hydrate();

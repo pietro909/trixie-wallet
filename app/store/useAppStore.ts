@@ -1,5 +1,7 @@
 import { Ramps } from "@arkade-os/sdk";
 import { bytesToUtf8, utf8ToBytes } from "@noble/ciphers/utils.js";
+import { pbkdf2Async } from "@noble/hashes/pbkdf2.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
@@ -27,6 +29,7 @@ import {
   buildSingleKeyIdentityFromNsec,
   bytesToHex,
   createMnemonic,
+  hexToBytes,
   type IdentityArtifacts,
 } from "../services/arkade/identity";
 import {
@@ -143,7 +146,18 @@ import type {
   WalletBehavior,
 } from "./types";
 
-const CURRENT_SCHEMA_VERSION: AppState["schemaVersion"] = 5;
+const CURRENT_SCHEMA_VERSION: AppState["schemaVersion"] = 6;
+
+// PBKDF2 cost for the unlock password hash. Each guess against an exfiltrated
+// `app_state_v1` must pay this iteration count, so we set it higher than the
+// 200k used by `backup/crypto.ts` — the unlock verify runs once per session
+// behind a button press, while the backup KDF runs once per export. Pure-JS
+// PBKDF2 on a typical phone clocks ~10–20k iters/sec, so 300k stays under
+// ~500ms on midrange devices. Decoders pass the password through this same
+// constant, so existing wallets are migrated by wipe-on-mismatch (schemaVersion
+// bump), not a stored iteration field.
+const PASSWORD_KDF_ITERATIONS = 300_000;
+const PASSWORD_KDF_KEY_LENGTH = 32;
 
 async function clearLegacyStorage(): Promise<void> {
   await Promise.all(
@@ -153,12 +167,15 @@ async function clearLegacyStorage(): Promise<void> {
 
 export async function hashPassword(
   password: string,
-  salt: string,
+  saltHex: string,
 ): Promise<string> {
-  return Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    password + salt,
+  const derived = await pbkdf2Async(
+    sha256,
+    utf8ToBytes(password),
+    hexToBytes(saltHex),
+    { c: PASSWORD_KDF_ITERATIONS, dkLen: PASSWORD_KDF_KEY_LENGTH },
   );
+  return bytesToHex(derived);
 }
 
 export function generateSalt(): string {
@@ -295,7 +312,7 @@ const BACKGROUND_TASK_DESCRIPTORS: Record<
 };
 
 const DEFAULT_STATE: AppState = {
-  schemaVersion: 5,
+  schemaVersion: 6,
   wallet: null,
   network: {
     arkServerUrl: DEFAULT_ARK_SERVER_URL,

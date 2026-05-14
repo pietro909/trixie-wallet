@@ -321,7 +321,10 @@ export default function ProfileBackup() {
                 <Text
                   style={[styles.formHelp, { color: theme.colors.textMuted }]}
                 >
-                  Anyone with this file and password can access your funds.
+                  Anyone with this file and password can access your funds. Use
+                  a different password than the one that unlocks the app — if
+                  this file leaks, sharing the password weakens both surfaces at
+                  once.
                 </Text>
                 <View
                   style={[

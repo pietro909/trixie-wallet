@@ -101,7 +101,7 @@ A real fix would either (a) disable the control and show a spinner until the per
 
 ## 9. Password gate hashes with SHA-256 instead of a KDF
 
-**Status: OPEN**
+**Status: RESOLVED** — `hashPassword` now uses PBKDF2-SHA256 at 300k iterations, the unlock minimum was raised to 8 characters, and the backup export form carries a soft warning against password reuse. The remaining follow-up (require the unlock password on top of biometrics for sensitive UI flows) is out of scope for this fix and can be filed separately if wanted.
 
 **Where:** `app/store/useAppStore.ts` (`hashPassword`) and `app/screens/ProfileLock.tsx` (6-char minimum at line 25)
 

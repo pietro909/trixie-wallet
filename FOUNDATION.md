@@ -10,7 +10,7 @@ Concretely:
 
 - **No schema migrations.** If the shape of `app_state_v1` (or any other persisted blob) no longer matches the current types, wipe storage on hydrate and let the user re-onboard. Do not write `migrate()` functions or version-bump ladders. The wipe is gated on a startup-time user confirmation (`acknowledgeSchemaMismatchAndWipe()` in `app/store/useAppStore.ts`) so the bytes can be retrieved off-device first if needed — preserve that affordance rather than silent-wiping.
 - **No backward-compat shims.** Renames, type changes, and structural refactors don't need adapter code or fallback branches for the old shape.
-- **No `schemaVersion` bumps as a forward-looking gesture.** `schemaVersion: 5` in `app/store/useAppStore.ts` is intentionally not a ladder — it's the wipe-vs-load gate consumed by `hydrate()`, nothing else hangs off it. Bump it only when the persisted shape actually changes and you want existing alpha installs to hit the mismatch modal.
+- **No `schemaVersion` bumps as a forward-looking gesture.** `schemaVersion: 6` in `app/store/useAppStore.ts` is intentionally not a ladder — it's the wipe-vs-load gate consumed by `hydrate()`, nothing else hangs off it. Bump it only when the persisted shape actually changes and you want existing alpha installs to hit the mismatch modal.
 - **Deletions are fine.** If a field or feature is removed, drop it from the types and let `hydrate` discard the unknown keys. No `// removed in v6` comments, no soft-deprecation.
 
 This policy will be revisited when the project reaches beta. Until then, prioritize shape clarity and forward velocity over user-data continuity.

@@ -20,10 +20,11 @@ export default function ProfileLock() {
   const [confirm, setConfirm] = React.useState("");
   const [biometrics, setBiometrics] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
 
   async function handleSetAndLock() {
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters");
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters");
       return;
     }
     if (password !== confirm) {
@@ -31,10 +32,18 @@ export default function ProfileLock() {
       return;
     }
     setError("");
-    await setPassword(password);
-    if (biometrics) await toggleBiometrics(true);
-    await lockWallet();
-    showToast("Wallet locked", "info");
+    setSubmitting(true);
+    // Yield one tick so the loading state paints before pbkdf2Async kicks off
+    // its first synchronous chunk.
+    await new Promise((r) => setTimeout(r, 0));
+    try {
+      await setPassword(password);
+      if (biometrics) await toggleBiometrics(true);
+      await lockWallet();
+      showToast("Wallet locked", "info");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function handleLockNow() {
@@ -86,7 +95,7 @@ export default function ProfileLock() {
             setPasswordInput(t);
             setError("");
           }}
-          placeholder="Password (min 6 characters)"
+          placeholder="Password (min 8 characters)"
           placeholderTextColor={theme.colors.placeholder}
           secureTextEntry
           style={[
@@ -143,7 +152,8 @@ export default function ProfileLock() {
           label="Set Password & Lock"
           theme={theme}
           onPress={handleSetAndLock}
-          disabled={!password || !confirm}
+          disabled={!password || !confirm || submitting}
+          loading={submitting}
           style={styles.submitBtn}
         />
       </View>

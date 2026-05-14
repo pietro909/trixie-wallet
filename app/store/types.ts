@@ -183,7 +183,7 @@ export type NotificationPreferences = {
 };
 
 export type AppState = {
-  schemaVersion: 5;
+  schemaVersion: 6;
   wallet: ArkadeWalletMetadata | null;
   network: {
     arkServerUrl: string;

@@ -12,7 +12,8 @@ export default function UnlockScreen() {
   const theme = useResolvedTheme();
   const [password, setPassword] = React.useState("");
   const [error, setError] = React.useState("");
-  const [loading, setLoading] = React.useState(false);
+  const [bioLoading, setBioLoading] = React.useState(false);
+  const [verifying, setVerifying] = React.useState(false);
 
   const unlockWithPassword = useAppStore((s) => s.unlockWithPassword);
   const unlockWithBiometrics = useAppStore((s) => s.unlockWithBiometrics);
@@ -52,18 +53,27 @@ export default function UnlockScreen() {
   }
 
   async function handlePasswordUnlock() {
+    if (verifying || !password) return;
     setError("");
-    const ok = await unlockWithPassword(password);
-    if (!ok) {
-      setError("Incorrect password");
-      shake();
+    setVerifying(true);
+    // Yield one tick so the loading state paints before pbkdf2Async kicks off
+    // its first synchronous chunk (~10ms before its first internal yield).
+    await new Promise((r) => setTimeout(r, 0));
+    try {
+      const ok = await unlockWithPassword(password);
+      if (!ok) {
+        setError("Incorrect password");
+        shake();
+      }
+    } finally {
+      setVerifying(false);
     }
   }
 
   async function handleBiometrics() {
-    setLoading(true);
+    setBioLoading(true);
     const ok = await unlockWithBiometrics();
-    setLoading(false);
+    setBioLoading(false);
     if (!ok) {
       setError("Biometric authentication failed");
       shake();
@@ -112,6 +122,7 @@ export default function UnlockScreen() {
           placeholderTextColor={theme.colors.placeholder}
           secureTextEntry
           autoFocus
+          editable={!verifying}
           onSubmitEditing={handlePasswordUnlock}
           style={[
             styles.input,
@@ -132,7 +143,8 @@ export default function UnlockScreen() {
           label="Unlock"
           theme={theme}
           onPress={handlePasswordUnlock}
-          disabled={!password}
+          disabled={!password || verifying}
+          loading={verifying}
           style={styles.unlockBtn}
         />
 
@@ -142,7 +154,8 @@ export default function UnlockScreen() {
             variant="secondary"
             theme={theme}
             onPress={handleBiometrics}
-            loading={loading}
+            loading={bioLoading}
+            disabled={verifying}
             icon={<Fingerprint color={theme.colors.text} size={20} />}
             style={styles.bioBtn}
           />
