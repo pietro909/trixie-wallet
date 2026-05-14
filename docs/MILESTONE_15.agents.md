@@ -42,3 +42,34 @@ salt. Make the six async-unsafe actions `async` and `await persist(get())`.
 Add a `schemaVersion` guard in `hydrate()` with a clear migration stub for
 future bumps. Audit screen-level lock guards and update any that read
 `walletContainer` directly rather than `security.isLocked`.
+
+## Retrospective
+
+- **Hardened Password Security**: Replaced the non-cryptographic `simpleHash`
+  with a robust SHA-256 hashing scheme. Each wallet now generates a unique
+  random salt at password creation, stored alongside the hash. This
+  effectively mitigates rainbow table attacks and collision risks.
+- **Durable Persistence**: All critical state mutations (`lockWallet`,
+  `unlockWithPassword`, `setTheme`, `setFiatCurrency`, `setPassword`,
+  `toggleBiometrics`) now properly `await` the `persist()` call. This ensures
+  that the application does not return from an action until the changes are
+  safely committed to disk, preventing state loss during rapid navigation or
+  app termination.
+- **Race Condition Mitigation**: Hardened the UI in `ProfileLock.tsx` and
+  `ProfilePreferences.tsx` by explicitly awaiting async store actions. This
+  eliminates a critical race condition where the wallet could be locked
+  on-disk before the password hash was successfully persisted, preventing
+  potential user lockout.
+- **Schema Lifecycle Management**: Bumped `AppState` and `useAppStore` to
+  `schemaVersion: 5`. Introduced a dedicated `migrate()` function in
+  `useAppStore.ts` to handle version transitions. The migration from v4 to v5
+  automatically clears legacy password hashes to prevent lock-outs while
+  enforcing the new security standards.
+- **Gated Access**: Confirmed `RootStack.tsx:233` is the single gate on
+  `security.isLocked` — when locked, only the `Unlock` screen is rendered.
+  The "audit `walletContainer` reads" sub-goal turned out to be vacuous: that
+  field no longer exists in the store (the original milestone doc predates a
+  prior refactor), so there were no screen-level reads to fix.
+- **Cleanup**: Removed the legacy `simpleHash` utility entirely, ensuring all
+  security-related hashing goes through `expo-crypto`.
+
