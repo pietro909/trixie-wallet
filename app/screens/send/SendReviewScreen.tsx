@@ -129,6 +129,7 @@ export default function SendReviewScreen() {
   const {
     option,
     amountSats,
+    flow,
     assetId,
     assetAmountBase,
     assetDecimals: routeAssetDecimals,
@@ -366,6 +367,7 @@ export default function SendReviewScreen() {
     try {
       const result = await executeSend(option, amountSats, {
         bitcoinRail: railForResult,
+        flow,
         asset:
           isAssetSend && assetId && assetAmountBaseParsed != null
             ? { assetId, amountBase: assetAmountBaseParsed }
@@ -380,6 +382,7 @@ export default function SendReviewScreen() {
           paymentType: option.type,
           destination: option.destination,
           bitcoinRail: railForResult,
+          flow,
           assetId,
           assetAmountBase,
           assetDecimals: routeAssetDecimals,
@@ -394,6 +397,7 @@ export default function SendReviewScreen() {
           paymentType: option.type,
           destination: option.destination,
           bitcoinRail: railForResult,
+          flow,
           assetId,
           assetAmountBase,
           assetDecimals: routeAssetDecimals,
@@ -410,6 +414,7 @@ export default function SendReviewScreen() {
         paymentType: option.type,
         destination: option.destination,
         bitcoinRail: railForResult,
+        flow,
         assetId,
         assetAmountBase,
         assetDecimals: routeAssetDecimals,
@@ -419,6 +424,9 @@ export default function SendReviewScreen() {
       setSending(false);
     }
   }
+
+  const paymentTypeDisplay =
+    flow === "lnurl_send" ? "LNURL" : paymentTypeLabel(option.type);
 
   return (
     <SafeAreaView
@@ -481,9 +489,7 @@ export default function SendReviewScreen() {
           <Row
             label="Payment type"
             value={
-              isAssetSend
-                ? `${paymentTypeLabel(option.type)} · Asset`
-                : paymentTypeLabel(option.type)
+              isAssetSend ? `${paymentTypeDisplay} · Asset` : paymentTypeDisplay
             }
           />
           <Row label="Destination" value={option.destination} mono />

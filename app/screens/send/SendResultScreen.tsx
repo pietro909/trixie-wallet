@@ -46,6 +46,10 @@ export default function SendResultScreen() {
   const ok = params.status === "success";
   const isAssetSend =
     typeof params.assetId === "string" && !!params.assetAmountBase;
+  const paymentTypeDisplay =
+    params.flow === "lnurl_send"
+      ? "LNURL"
+      : paymentTypeLabel(params.paymentType);
   let assetAmountBaseParsed: bigint | null = null;
   if (isAssetSend && params.assetAmountBase) {
     try {
@@ -174,7 +178,7 @@ export default function SendResultScreen() {
               </>
             )}
             <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
-              {paymentTypeLabel(params.paymentType)}
+              {paymentTypeDisplay}
               {isAssetSend ? " · Asset" : ""} · {params.destination}
             </Text>
             {!isAssetSend && params.feeSats && params.feeSats > 0 ? (
@@ -231,7 +235,7 @@ export default function SendResultScreen() {
               {params.message ?? "Something went wrong."}
             </Text>
             <Text style={[styles.subtitle, { color: theme.colors.textSubtle }]}>
-              {paymentTypeLabel(params.paymentType)} · {params.destination}
+              {paymentTypeDisplay} · {params.destination}
             </Text>
           </>
         )}

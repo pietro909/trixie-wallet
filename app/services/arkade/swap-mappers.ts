@@ -78,20 +78,24 @@ function submarineSwapStatus(swap: BoltzSubmarineSwap): ActivityStatus {
  * Status (`ActivityStatus`) remains `"pending"` until `invoice.settled` so
  * the user still sees a Pending tag while the on-chain claim settles.
  */
-function reverseTitle(swap: BoltzReverseSwap): string {
+function reverseTitle(
+  swap: BoltzReverseSwap,
+  meta: LocalSwapMetadata | undefined,
+): string {
+  const isLnurl = meta?.createdForFlow === "lnurl_receive";
   if (isReverseFailedStatus(swap.status)) {
     if (swap.status === "transaction.refunded") {
-      return "Lightning invoice refunded";
+      return isLnurl ? "LNURL invoice refunded" : "Lightning invoice refunded";
     }
-    return "Lightning invoice failed";
+    return isLnurl ? "LNURL invoice failed" : "Lightning invoice failed";
   }
   if (
     isReverseSuccessStatus(swap.status) ||
     isReverseClaimableStatus(swap.status)
   ) {
-    return "Lightning received";
+    return isLnurl ? "LNURL received" : "Lightning received";
   }
-  return "Lightning invoice";
+  return isLnurl ? "LNURL invoice" : "Lightning invoice";
 }
 
 /**
@@ -109,17 +113,22 @@ function reverseTitle(swap: BoltzReverseSwap): string {
  * - Refunded: explicit "Lightning refund" title.
  * - Failed: "Lightning send failed".
  */
-function submarineTitle(swap: BoltzSubmarineSwap): string {
-  if (swap.refunded) return "Lightning refund";
-  if (isSubmarineFailedStatus(swap.status)) return "Lightning send failed";
+function submarineTitle(
+  swap: BoltzSubmarineSwap,
+  meta: LocalSwapMetadata | undefined,
+): string {
+  const isLnurl = meta?.createdForFlow === "lnurl_send";
+  if (swap.refunded) return isLnurl ? "LNURL refund" : "Lightning refund";
+  if (isSubmarineFailedStatus(swap.status))
+    return isLnurl ? "LNURL send failed" : "Lightning send failed";
   if (
     isSubmarineSuccessStatus(swap.status) ||
     swap.status === "invoice.paid" ||
     swap.status === "transaction.claim.pending"
   ) {
-    return "Lightning sent";
+    return isLnurl ? "LNURL sent" : "Lightning sent";
   }
-  return "Lightning payment";
+  return isLnurl ? "LNURL payment" : "Lightning payment";
 }
 
 function metadataBySwapId(
@@ -169,6 +178,11 @@ function baseLightningMetadata(
     const apiUrl = boltzApiUrlForNetwork(ctx.network);
     if (apiUrl) out.boltzApiUrl = apiUrl;
   }
+  if (
+    meta?.createdForFlow === "lnurl_receive" ||
+    meta?.createdForFlow === "lnurl_send"
+  )
+    out.createdForFlow = meta.createdForFlow;
   if (meta?.linkSource) out.linkSource = meta.linkSource;
   if (meta?.invoiceAmountSats != null) {
     out.invoiceAmountSats = meta.invoiceAmountSats;
@@ -257,7 +271,7 @@ function mapSwapToActivity(
       direction: "in",
       amountSats: reverseAmountSats(swap, meta),
       timestamp: timestampMs,
-      title: reverseTitle(swap),
+      title: reverseTitle(swap, meta),
       status,
       rail: "lightning",
       source: {
@@ -277,7 +291,7 @@ function mapSwapToActivity(
       direction: status === "refunded" ? "in" : "out",
       amountSats: submarineAmountSats(swap, meta),
       timestamp: timestampMs,
-      title: submarineTitle(swap),
+      title: submarineTitle(swap, meta),
       status,
       rail: "lightning",
       source: {

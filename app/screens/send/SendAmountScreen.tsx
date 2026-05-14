@@ -404,6 +404,7 @@ export default function SendAmountScreen() {
         nav.navigate("SendReview", {
           option: lightningOption,
           amountSats: sats,
+          flow: "lnurl_send",
         });
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not fetch invoice");

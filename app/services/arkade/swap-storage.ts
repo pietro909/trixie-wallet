@@ -3,8 +3,40 @@ import { getSharedSqlExecutor } from "./storage";
 const TABLE = "trixie_swap_meta";
 
 export type LocalSwapDirection = "in" | "out";
-export type LocalSwapFlow = "send" | "receive";
+export type LocalSwapFlow = "send" | "receive" | "lnurl_receive" | "lnurl_send";
 export type LinkSource = "send_result" | "receive_claim" | "history_match";
+
+const LOCAL_SWAP_FLOWS: ReadonlySet<LocalSwapFlow> = new Set([
+  "send",
+  "receive",
+  "lnurl_send",
+  "lnurl_receive",
+]);
+
+export function isLocalSwapFlow(value: unknown): value is LocalSwapFlow {
+  return (
+    typeof value === "string" && LOCAL_SWAP_FLOWS.has(value as LocalSwapFlow)
+  );
+}
+
+function isLnurlFlow(flow: LocalSwapFlow): boolean {
+  return flow === "lnurl_send" || flow === "lnurl_receive";
+}
+
+/**
+ * Resolve `created_for_flow` when a row is being upserted. The LNURL tag is
+ * "sticky": once a swap was created for an LNURL flow, a later generic
+ * `send`/`receive` write (typically from restore) must not clobber it.
+ * Conversely, an incoming `lnurl_*` always upgrades a generic prior row.
+ */
+export function resolveCreatedForFlowOnConflict(
+  existing: LocalSwapFlow | null,
+  incoming: LocalSwapFlow,
+): LocalSwapFlow {
+  if (isLnurlFlow(incoming)) return incoming;
+  if (existing && isLnurlFlow(existing)) return existing;
+  return incoming;
+}
 
 export type LocalSwapMetadata = {
   swapId: string;
@@ -103,6 +135,17 @@ export async function recordSwapMetadata(
   await ensureInit();
   const exec = getSharedSqlExecutor();
   const now = Date.now();
+  // Pre-resolve the flow in JS so a generic restore write can't clobber an
+  // existing lnurl_* tag. Two round-trips on the same local SQLite file are
+  // cheap, and the resolver is unit-tested separately.
+  const existing = await exec.get<{ created_for_flow: LocalSwapFlow }>(
+    `SELECT created_for_flow FROM ${TABLE} WHERE swap_id = ?`,
+    [input.swapId],
+  );
+  const effectiveFlow = resolveCreatedForFlowOnConflict(
+    existing?.created_for_flow ?? null,
+    input.createdForFlow,
+  );
   await exec.run(
     `INSERT INTO ${TABLE} (
       swap_id, wallet_id, direction, created_for_flow,
@@ -122,7 +165,7 @@ export async function recordSwapMetadata(
       input.swapId,
       input.walletId,
       input.direction,
-      input.createdForFlow,
+      effectiveFlow,
       input.invoiceAmountSats ?? null,
       input.arkadeAmountSats ?? null,
       input.paymentHash ?? null,

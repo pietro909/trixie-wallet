@@ -28,7 +28,9 @@ const SESSION_EVENT =
 type FetchCall = { url: string; init: RequestInit | undefined };
 
 type Harness = {
-  sessionFetchCall: () => { url: string; init: RequestInit | undefined } | undefined;
+  sessionFetchCall: () =>
+    | { url: string; init: RequestInit | undefined }
+    | undefined;
   fetchCalls: FetchCall[];
   enqueue: (chunk: string) => Promise<void>;
   closeStream: () => Promise<void>;
@@ -271,7 +273,9 @@ describe("useLnurlSession", () => {
     const { harness } = setupHarness({ handler });
 
     await harness.enqueue(SESSION_EVENT);
-    const signal = harness.sessionFetchCall()?.init?.signal as AbortSignal | undefined;
+    const signal = harness.sessionFetchCall()?.init?.signal as
+      | AbortSignal
+      | undefined;
     expect(signal?.aborted).toBe(false);
 
     await harness.unmount();

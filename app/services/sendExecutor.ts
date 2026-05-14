@@ -1,6 +1,7 @@
 import { useAppStore } from "../store/useAppStore";
 import { ArkadeError } from "./arkade/errors";
 import { isLightningSupportedForNetwork } from "./arkade/lightning";
+import type { LocalSwapFlow } from "./arkade/swap-storage";
 import type { ParsedPaymentOption } from "./paymentParser";
 
 export type SendResult =
@@ -20,6 +21,9 @@ export type ExecuteSendOptions = {
   bitcoinRail?: BitcoinRail;
   /** When set, route through `sendAsset` instead of `sendArkade`. */
   asset?: { assetId: string; amountBase: bigint };
+  /** Override the `createdForFlow` recorded in swap metadata. Used to tag
+   *  LNURL-originated sends separately from raw BOLT11 pastes. */
+  flow?: LocalSwapFlow;
 };
 
 export function isPayableInThisMilestone(option: ParsedPaymentOption): boolean {
@@ -101,7 +105,7 @@ export async function executeSend(
     try {
       const result = await useAppStore
         .getState()
-        .sendLightning(option.raw, amountSats);
+        .sendLightning(option.raw, amountSats, opts.flow);
       return {
         ok: true,
         txId: result.txId,

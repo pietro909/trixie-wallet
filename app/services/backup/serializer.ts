@@ -5,7 +5,10 @@ import type {
   WalletBehavior,
 } from "../../store/types";
 import type { StoredSecret } from "../arkade/secret-store";
-import type { LocalSwapMetadata } from "../arkade/swap-storage";
+import {
+  isLocalSwapFlow,
+  type LocalSwapMetadata,
+} from "../arkade/swap-storage";
 import { recordError } from "../diagnostics/recorder";
 
 export const PAYLOAD_VERSION = 2 as const;
@@ -315,7 +318,7 @@ function parseSwapMetadataRow(raw: unknown, index: number): LocalSwapMetadata {
       `Backup swapMetadata[${index}] direction is invalid`,
     );
   }
-  if (r.createdForFlow !== "send" && r.createdForFlow !== "receive") {
+  if (!isLocalSwapFlow(r.createdForFlow)) {
     throw new PayloadParseError(
       "malformed_payload",
       `Backup swapMetadata[${index}] createdForFlow is invalid`,

@@ -79,6 +79,7 @@ export type RootStackParamList = {
   SendReview: {
     option: ParsedPaymentOption;
     amountSats: number;
+    flow?: "lnurl_send";
     assetId?: string;
     assetAmountBase?: string;
     /**
@@ -103,6 +104,12 @@ export type RootStackParamList = {
     assetTicker?: string;
     /** For Bitcoin rails: which path was taken so the success copy can match. */
     bitcoinRail?: "collab" | "chainswap";
+    /**
+     * Origin flow tag, threaded from SendReview. When `"lnurl_send"`, the
+     * payment type label renders as "LNURL" instead of "Lightning" so the
+     * user sees the rail they actually picked.
+     */
+    flow?: "lnurl_send";
   };
   AssetDetail: { assetId: string };
   AssetMint: undefined;

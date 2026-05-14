@@ -92,6 +92,7 @@ import {
   clearSwapMetadataForWallet,
   getAllSwapMetadata,
   getLatestSwapMetadataWriteAt,
+  type LocalSwapFlow,
   linkSwapToWalletTx,
   recordSwapMetadata,
   restoreSwapMetadataRows,
@@ -395,6 +396,7 @@ type StoreState = AppState & {
   sendLightning: (
     invoice: string,
     amountSats: number,
+    flow?: LocalSwapFlow,
   ) => Promise<{ txId: string; feeSats: number; amountSats: number }>;
   sendOnchain: (
     address: string,
@@ -1281,7 +1283,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
     return txId;
   },
 
-  sendLightning: async (invoice, amountSats) => {
+  sendLightning: async (invoice, amountSats, flow) => {
     const metadata = get().wallet;
     if (!metadata) {
       throw new ArkadeError("wallet_not_ready", "No wallet available");
@@ -1305,7 +1307,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
           swapId,
           walletId: metadata.id,
           direction: "out",
-          createdForFlow: "send",
+          createdForFlow: flow ?? "send",
           invoiceAmountSats: amountSats,
           arkadeAmountSats: response.amount,
         });

@@ -200,7 +200,7 @@ export default function ReceiveQRScreen() {
         swapId: response.pendingSwap.id,
         walletId: wallet.id,
         direction: "in",
-        createdForFlow: "receive",
+        createdForFlow: "lnurl_receive",
         invoiceAmountSats: sats,
         arkadeAmountSats: response.amount,
         paymentHash: response.paymentHash,

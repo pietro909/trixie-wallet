@@ -294,6 +294,10 @@ export function buildActivityDetailSections(
   // Pull from metadata first; fall back to source.swapId / source.swapType
   // when metadata is empty (pre-Phase-3 rows).
   const lightningRows: SectionRow[] = [];
+  const lnurlFlows = new Set(["lnurl_receive", "lnurl_send"]);
+  if (lnurlFlows.has(readString(md, "createdForFlow") ?? "")) {
+    lightningRows.push({ kind: "plain", label: "Source", value: "LNURL" });
+  }
   let swapId = readString(md, "swapId");
   let swapType = readString(md, "swapType");
   if (
