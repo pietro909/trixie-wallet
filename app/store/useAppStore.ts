@@ -349,11 +349,20 @@ export type RecoveryRowError =
 
 type StoreState = AppState & {
   _hydrated: boolean;
+  /**
+   * Set when `hydrate()` finds persisted state it cannot load (schema version
+   * mismatch or corrupted JSON). The persisted bytes are left untouched until
+   * the user confirms via `acknowledgeSchemaMismatchAndWipe()`. `_hydrated`
+   * stays `false` while this flag is set, so consumers gated on hydration do
+   * not run against the empty in-memory defaults.
+   */
+  _schemaMismatch: boolean;
   /** Per-row spinner gate, keyed by `RecoveryItem.id`. */
   recoveringIds: Set<string>;
   /** Per-row error display, keyed by `RecoveryItem.id`. */
   rowErrors: Record<string, RecoveryRowError>;
   hydrate: () => Promise<void>;
+  acknowledgeSchemaMismatchAndWipe: () => Promise<void>;
   refreshServer: () => Promise<void>;
   setArkServerUrl: (url: string) => Promise<void>;
   createWallet: (kind: CreateWalletKind) => Promise<void>;
@@ -784,31 +793,10 @@ const EMPTY_RECOVERY_SCAN: RecoveryScan = {
   counts: {},
 };
 
-export function migrate(
-  data: Record<string, unknown>,
-  fromVersion: number,
-): Record<string, unknown> {
-  const migrated: Record<string, unknown> = { ...data };
-  if (fromVersion < 5) {
-    // v4 -> v5: Hardened password hashing (SHA-256 + salt).
-    // Existing simpleHash values are incompatible; clear them to avoid lock-out.
-    const sec = migrated.security as Record<string, unknown> | undefined;
-    if (sec) {
-      migrated.security = {
-        ...sec,
-        passwordHash: undefined,
-        passwordSalt: undefined,
-        isLocked: false,
-      };
-    }
-    migrated.schemaVersion = 5;
-  }
-  return migrated;
-}
-
 export const useAppStore = create<StoreState>((set, get) => ({
   ...DEFAULT_STATE,
   _hydrated: false,
+  _schemaMismatch: false,
   recoveringIds: new Set<string>(),
   rowErrors: {},
 
@@ -831,21 +819,20 @@ export const useAppStore = create<StoreState>((set, get) => ({
       try {
         parsed = JSON.parse(raw) as Record<string, unknown>;
       } catch {
-        await AsyncStorage.removeItem(STORAGE_KEY);
-        await clearLegacyStorage();
-        set({ _hydrated: true });
+        // Corrupted state — surface to the user instead of silently wiping.
+        // The persisted bytes stay on disk until they confirm via
+        // `acknowledgeSchemaMismatchAndWipe()`.
+        set({ _schemaMismatch: true });
         return;
       }
 
       const storedVersion =
         typeof parsed.schemaVersion === "number" ? parsed.schemaVersion : 0;
-      if (storedVersion < CURRENT_SCHEMA_VERSION) {
-        parsed = migrate(parsed, storedVersion);
-      } else if (storedVersion > CURRENT_SCHEMA_VERSION) {
-        // Future version found; wipe to avoid loading garbage.
-        await AsyncStorage.removeItem(STORAGE_KEY);
-        await clearLegacyStorage();
-        set({ _hydrated: true });
+      if (storedVersion !== CURRENT_SCHEMA_VERSION) {
+        // Schema mismatch (older or future) — alpha policy is wipe-on-mismatch
+        // (no forward migrations), but the wipe is gated on user confirmation
+        // so the persisted bytes can be retrieved off-device first if needed.
+        set({ _schemaMismatch: true });
         return;
       }
 
@@ -884,6 +871,18 @@ export const useAppStore = create<StoreState>((set, get) => ({
     } catch {
       set({ _hydrated: true });
     }
+  },
+
+  acknowledgeSchemaMismatchAndWipe: async () => {
+    await AsyncStorage.removeItem(STORAGE_KEY);
+    await clearLegacyStorage();
+    set({
+      ...DEFAULT_STATE,
+      _hydrated: true,
+      _schemaMismatch: false,
+      recoveringIds: new Set<string>(),
+      rowErrors: {},
+    });
   },
 
   refreshServer: async () => {

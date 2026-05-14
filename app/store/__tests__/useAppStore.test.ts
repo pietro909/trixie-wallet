@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Crypto from "expo-crypto";
 
 jest.mock("@react-native-async-storage/async-storage", () => ({
@@ -52,7 +53,8 @@ jest.mock("../../services/diagnostics/persisted", () => ({
   drainPersistedErrors: jest.fn(() => Promise.resolve([])),
 }));
 
-import { generateSalt, hashPassword, migrate } from "../useAppStore";
+import { LEGACY_STORAGE_KEYS, STORAGE_KEY } from "../storage-keys";
+import { generateSalt, hashPassword, useAppStore } from "../useAppStore";
 
 describe("useAppStore security utilities", () => {
   describe("hashPassword", () => {
@@ -87,57 +89,99 @@ describe("useAppStore security utilities", () => {
       expect(Crypto.getRandomBytes).toHaveBeenCalledWith(16);
     });
   });
+});
 
-  describe("migrate", () => {
-    it("should clear password hash and salt when migrating from v4 to v5", () => {
-      const v4State = {
-        schemaVersion: 4,
-        security: {
-          isLocked: true,
-          passwordHash: "old-simple-hash",
-          biometricsEnabled: true,
-        },
-        preferences: { theme: "dark" },
-      };
+describe("useAppStore hydrate / schema mismatch", () => {
+  const getItem = AsyncStorage.getItem as jest.Mock;
+  const removeItem = AsyncStorage.removeItem as jest.Mock;
 
-      const migrated = migrate(v4State, 4);
-      const sec = migrated.security as Record<string, unknown>;
-      const prefs = migrated.preferences as Record<string, unknown>;
-
-      expect(migrated.schemaVersion).toBe(5);
-      expect(sec.passwordHash).toBeUndefined();
-      expect(sec.passwordSalt).toBeUndefined();
-      expect(sec.isLocked).toBe(false);
-      expect(sec.biometricsEnabled).toBe(true);
-      expect(prefs.theme).toBe("dark");
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useAppStore.setState({
+      _hydrated: false,
+      _schemaMismatch: false,
+      wallet: null,
     });
+  });
 
-    it("should not modify security if version is already 5", () => {
-      const v5State = {
-        schemaVersion: 5,
-        security: {
-          isLocked: true,
-          passwordHash: "secure-hash",
-          passwordSalt: "secure-salt",
-        },
-      };
+  it("marks fresh install as hydrated without flagging mismatch", async () => {
+    getItem.mockResolvedValueOnce(null);
 
-      const migrated = migrate(v5State, 5);
-      expect(migrated).toEqual(v5State);
-    });
+    await useAppStore.getState().hydrate();
 
-    it("should handle missing security object gracefully during migration", () => {
-      const v4State = {
-        schemaVersion: 4,
-        preferences: { theme: "light" },
-      };
+    const state = useAppStore.getState();
+    expect(state._hydrated).toBe(true);
+    expect(state._schemaMismatch).toBe(false);
+  });
 
-      const migrated = migrate(v4State, 4);
-      const prefs = migrated.preferences as Record<string, unknown>;
+  it("flags mismatch and leaves storage intact when stored version is older", async () => {
+    getItem.mockResolvedValueOnce(
+      JSON.stringify({ schemaVersion: 4, wallet: null }),
+    );
 
-      expect(migrated.schemaVersion).toBe(5);
-      expect(prefs.theme).toBe("light");
-      expect(migrated.security).toBeUndefined();
-    });
+    await useAppStore.getState().hydrate();
+
+    const state = useAppStore.getState();
+    expect(state._schemaMismatch).toBe(true);
+    expect(state._hydrated).toBe(false);
+    expect(removeItem).not.toHaveBeenCalledWith(STORAGE_KEY);
+  });
+
+  it("flags mismatch and leaves storage intact when stored version is newer", async () => {
+    getItem.mockResolvedValueOnce(
+      JSON.stringify({ schemaVersion: 999, wallet: null }),
+    );
+
+    await useAppStore.getState().hydrate();
+
+    const state = useAppStore.getState();
+    expect(state._schemaMismatch).toBe(true);
+    expect(state._hydrated).toBe(false);
+    expect(removeItem).not.toHaveBeenCalledWith(STORAGE_KEY);
+  });
+
+  it("flags mismatch and leaves storage intact when stored JSON is corrupted", async () => {
+    getItem.mockResolvedValueOnce("{not valid json");
+
+    await useAppStore.getState().hydrate();
+
+    const state = useAppStore.getState();
+    expect(state._schemaMismatch).toBe(true);
+    expect(state._hydrated).toBe(false);
+    expect(removeItem).not.toHaveBeenCalled();
+  });
+
+  it("hydrates normally when stored version matches", async () => {
+    getItem.mockResolvedValueOnce(
+      JSON.stringify({ schemaVersion: 5, wallet: null }),
+    );
+
+    await useAppStore.getState().hydrate();
+
+    const state = useAppStore.getState();
+    expect(state._hydrated).toBe(true);
+    expect(state._schemaMismatch).toBe(false);
+  });
+});
+
+describe("useAppStore acknowledgeSchemaMismatchAndWipe", () => {
+  const removeItem = AsyncStorage.removeItem as jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useAppStore.setState({ _hydrated: false, _schemaMismatch: true });
+  });
+
+  it("wipes STORAGE_KEY and legacy keys, then marks hydrated", async () => {
+    await useAppStore.getState().acknowledgeSchemaMismatchAndWipe();
+
+    expect(removeItem).toHaveBeenCalledWith(STORAGE_KEY);
+    for (const key of LEGACY_STORAGE_KEYS) {
+      expect(removeItem).toHaveBeenCalledWith(key);
+    }
+    const state = useAppStore.getState();
+    expect(state._hydrated).toBe(true);
+    expect(state._schemaMismatch).toBe(false);
+    expect(state.wallet).toBeNull();
   });
 });
