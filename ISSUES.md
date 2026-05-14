@@ -113,3 +113,19 @@ Follow-up work for a future hardening pass:
 - Replace `hashPassword` with PBKDF2 / Argon2id / scrypt via `expo-crypto`'s lower-level APIs or a vetted JS library.
 - Raise the minimum password length (the 6-char floor is a placeholder).
 - Consider whether the password should be required to access locally sensitive UI flows (export, key reveal) on top of biometrics.
+
+## 10. Simplify `migrate()` to wipe-on-mismatch per alpha policy
+
+**Status: OPEN**
+
+**Where:** `app/store/useAppStore.ts` (`migrate`, `hydrate`) and `app/store/__tests__/useAppStore.test.ts`
+
+Milestone 15 introduced a `schemaVersion` ladder (bumped 4 → 5) and a `migrate()` function in `hydrate()` to translate older persisted states forward. This predates the alpha policy now codified in `FOUNDATION.md` ("Project Status: Alpha"), which calls for wipe-on-mismatch instead of migrations while the project is in alpha.
+
+Concrete cleanup when next touching this area:
+- Drop `migrate()` entirely from `app/store/useAppStore.ts`.
+- In `hydrate()`, replace the `storedVersion < CURRENT_SCHEMA_VERSION` migration branch with the same wipe path already used for `storedVersion > CURRENT_SCHEMA_VERSION` (remove `STORAGE_KEY`, clear legacy storage, set `_hydrated: true`, return).
+- Remove the `migrate()` test cases from `app/store/__tests__/useAppStore.test.ts`. Keep the `hashPassword` and `generateSalt` cases.
+- Leave `schemaVersion: 5` in place on `AppState` / `DEFAULT_STATE` — it still serves as the wipe-vs-load gate, just without a forward-migration ladder hanging off it.
+
+Defer the actual cleanup to whenever the next change in `useAppStore.ts` makes it convenient; no need to schedule it as standalone work.
