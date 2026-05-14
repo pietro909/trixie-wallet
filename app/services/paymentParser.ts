@@ -104,6 +104,24 @@ function shorten(value: string, head = 10, tail = 6): string {
   return `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
 
+/**
+ * Shortening rule for payment destinations. Opaque bech32 LNURLs use the
+ * middle-elided `shorten()` logic. Human-readable Lightning Addresses are
+ * kept verbatim unless they exceed a generous threshold (30 chars), in which
+ * case they are truncated at the domain to keep the username recognizable.
+ */
+function shortenAddress(value: string): string {
+  if (LN_ADDRESS_RE.test(value)) {
+    if (value.length <= 30) return value;
+    const [user, domain] = value.split("@");
+    if (!domain) return shorten(value, 10, 6);
+    // user@domain... -> shorten(user)@shorten(domain)
+    // We use a slightly different head/tail for the user part.
+    return `${shorten(user, 15, 5)}@${shorten(domain, 10, 6)}`;
+  }
+  return shorten(value, 14, 6);
+}
+
 function makeId(type: PaymentType, raw: string): string {
   return `${type}:${raw.slice(0, 24)}:${raw.length}`;
 }
@@ -222,7 +240,7 @@ export function buildLightningOption(
     id: makeId("lightning", invoice),
     type: "lightning",
     raw: rawInput,
-    destination: shorten(invoice, 14, 6),
+    destination: shortenAddress(invoice),
     amountSats: decoded.amountSats,
     memo: decoded.memo,
     isPayable,
@@ -246,7 +264,7 @@ function buildBareLnurl(rawInput: string, lnurl: string): ParseResult {
         id: makeId("lnurl", lnurl),
         type: "lnurl",
         raw: rawInput,
-        destination: shorten(lnurl, 14, 6),
+        destination: shortenAddress(lnurl),
         isPayable: true,
       },
     ],
@@ -383,7 +401,7 @@ function parseBitcoinBody(
         id: makeId("lightning", lightningParam),
         type: "lightning",
         raw: lightningParam,
-        destination: shorten(lightningParam, 14, 6),
+        destination: shortenAddress(lightningParam),
         amountSats,
         memo,
         isPayable: false,
@@ -401,7 +419,7 @@ function parseBitcoinBody(
       id: makeId("lnurl", lnurlParam),
       type: "lnurl",
       raw: lnurlParam,
-      destination: shorten(lnurlParam, 14, 6),
+      destination: shortenAddress(lnurlParam),
       memo,
       isPayable: true,
     });

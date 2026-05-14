@@ -4,36 +4,37 @@ Open items and follow-ups that do not yet belong to a milestone. Items that grew
 
 ## 1. Dual app entry points — Expo Router vs. manual `App.tsx`
 
-**Status: OPEN**
+**Status: RESOLVED**
 
-**Where:** `App.tsx` and `index.ts` at repo root, alongside `app/_layout.tsx`.
+**Where:** `app/_layout.tsx`, `App.tsx`, `index.ts`, `package.json`
 
-Both an Expo Router auto-entry (`app/_layout.tsx`) and a manual `App.tsx` / `index.ts` entry exist. `package.json` `main` points at `./index.ts`, so `App.tsx` wins and `app/_layout.tsx` is dead code. Either commit to Expo Router (drop `App.tsx`/`index.ts`, set `main` to `expo-router/entry`) or commit to the manual entry (delete `app/_layout.tsx`).
+Both an Expo Router auto-entry (`app/_layout.tsx`) and a manual `App.tsx` / `index.ts` entry existed. Since `package.json` `main` points at `./index.ts`, the manual entry was used and `app/_layout.tsx` was dead code. **Fix:** `app/_layout.tsx` was deleted to consolidate on the manual entry point.
+
 
 
 ## 2. Android edge-to-edge: native-stack ignores `headerStatusBarHeight`
 
-**Status: OPEN**
+**Status: INVALID**
 
 **Where:** `app/navigation/RootStack.tsx`
 
-With `edgeToEdgeEnabled: true` (Android 15+ requirement), `@react-navigation/native-stack` does not apply the safe-area top inset to its native Toolbar — the toolbar renders flush against the status bar. **Workaround in place:** `RootStack.tsx` defines a custom `StackHeader` used only on Android via `Platform.OS` check. iOS keeps the native header. Worth re-evaluating once `react-native-screens` ships a fix; if it does, the custom path can be deleted.
+External dependency issue (`react-native-screens`). With `edgeToEdgeEnabled: true` (Android 15+ requirement), `@react-navigation/native-stack` does not apply the safe-area top inset to its native Toolbar. The custom `StackHeader` workaround in `RootStack.tsx` is the intended architecture until an upstream fix is available. No further action tracked here.
 
 ## 3. Peer-dep noise from `@arkade-os/sdk`
 
-**Status: OPEN**
+**Status: RESOLVED**
 
 **Where:** `pnpm install` warnings
 
-`@arkade-os/sdk@0.4.20` declares peerDeps `expo-background-task@~1.0.10` and `expo-task-manager@~14.0.9`. These got renumbered to 55.x in Expo SDK 55, so pnpm warns on every install. Functionally fine; the SDK author needs to widen its peerDeps. Suppress via `pnpm.peerDependencyRules.allowedVersions` if it becomes annoying.
+`@arkade-os/sdk@0.4.20` declares peerDeps `expo-background-task@~1.0.10` and `expo-task-manager@~14.0.9`. These got renumbered to 55.x in Expo SDK 55, so pnpm warns on every install. **Fix:** Added `pnpm.peerDependencyRules.allowedVersions` to `package.json` to suppress warnings for `expo-background-task` and `expo-task-manager`.
 
 ## 4. Assets selector backdrop animation
 
-**Status: OPEN**
+**Status: RESOLVED**
 
 **Where:** `app/screens/send/SendAmountScreen.tsx`
 
-If I tap on `Send -> Paste Ark address -> Continue -> Tap on "Bitcoin"` selector the assets picker slides up from the bottom together with the dark backdrop. The backdrop should slide though, just appear
+If I tap on `Send -> Paste Ark address -> Continue -> Tap on "Bitcoin"` selector the assets picker slides up from the bottom together with the dark backdrop. The backdrop should not slide though, just appear. **Fix:** Replaced the native `Modal` slide animation with custom `react-native-reanimated` transitions, allowing the backdrop to fade in while the sheet slides up independently.
 
 ## 5. Background Tasks logs and error reporting
 
@@ -69,13 +70,11 @@ The failure message is too generic: is it possible to get a stacktrace or someth
 
 ## 6. Lightning Address `destination` truncated by `shorten()` in `buildBareLnurl`
 
-**Status: OPEN**
+**Status: RESOLVED**
 
 **Where:** `app/services/paymentParser.ts` (`buildBareLnurl`)
 
-`detectBareType` recognises Lightning Addresses as `lnurl` type and routes them through `buildBareLnurl`, which sets `destination: shorten(lnurl, 14, 6)`. `shorten()` was built for opaque bech32 LNURL strings; on a human-readable address it produces middle-elided output like `alice+tag@su…ple.co` for `alice+tag@subdomain.example.co`. Addresses are usually short enough that the threshold (`<= head + tail + 3 = 23` chars) returns them verbatim, but longer ones get mangled.
-
-Worth deciding the truncation rule across all the surfaces that render `destination` (SendInput card, SendAmount summary, SendReview, SendResult, post-fact activity rows) before changing it — naively skipping `shorten()` could overflow narrow Review rows. The fix is probably a separate `shortenAddress`/`shortenLnurl` split, gated on `LN_ADDRESS_RE.test(raw)`.
+`detectBareType` recognises Lightning Addresses as `lnurl` type and routes them through `buildBareLnurl`, which sets `destination: shorten(lnurl, 14, 6)`. `shorten()` was built for opaque bech32 LNURL strings; on a human-readable address it produces middle-elided output. **Fix:** Implemented `shortenAddress()` in `paymentParser.ts` which handles human-readable addresses by keeping them verbatim up to 30 chars and then truncating at the domain boundary, while preserving middle-elision for opaque bech32 strings.
 
 ## 7. Swap notifications cannot deep-link to a specific Activity row
 

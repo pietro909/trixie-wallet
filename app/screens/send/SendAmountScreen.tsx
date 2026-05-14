@@ -17,6 +17,12 @@ import {
   TextInput,
   View,
 } from "react-native";
+import Animated, {
+  FadeIn,
+  FadeOut,
+  SlideInDown,
+  SlideOutDown,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AssetAvatar from "../../components/AssetAvatar";
 import Button from "../../components/Button";
@@ -840,15 +846,28 @@ export default function SendAmountScreen() {
 
       <Modal
         visible={showAssetPicker}
-        animationType="slide"
+        animationType="none"
         transparent
         onRequestClose={() => setShowAssetPicker(false)}
       >
-        <Pressable
-          style={styles.modalBackdrop}
-          onPress={() => setShowAssetPicker(false)}
-        >
-          <Pressable
+        <View style={styles.modalBackdropContainer}>
+          <Animated.View
+            entering={FadeIn.duration(200)}
+            exiting={FadeOut.duration(200)}
+            style={[
+              styles.modalBackdrop,
+              { backgroundColor: "rgba(0,0,0,0.5)" },
+            ]}
+          >
+            <Pressable
+              style={styles.flex}
+              onPress={() => setShowAssetPicker(false)}
+            />
+          </Animated.View>
+
+          <Animated.View
+            entering={SlideInDown.duration(300).springify().damping(20)}
+            exiting={SlideOutDown.duration(300)}
             style={[
               styles.modalSheet,
               {
@@ -856,7 +875,6 @@ export default function SendAmountScreen() {
                 borderColor: theme.colors.border,
               },
             ]}
-            onPress={(e) => e.stopPropagation()}
           >
             <Text style={[styles.modalTitle, { color: theme.colors.text }]}>
               Pick what to send
@@ -910,8 +928,8 @@ export default function SendAmountScreen() {
                 );
               })}
             </ScrollView>
-          </Pressable>
-        </Pressable>
+          </Animated.View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -1144,10 +1162,12 @@ const styles = StyleSheet.create({
   footer: {
     padding: spacing[5],
   },
-  modalBackdrop: {
+  modalBackdropContainer: {
     flex: 1,
     justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
   },
   modalSheet: {
     paddingTop: spacing[5],
