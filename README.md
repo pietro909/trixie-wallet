@@ -1,5 +1,7 @@
 # Trixie Wallet
 
+**Status: alpha.** Persisted state and on-disk formats are not stable. Every iteration is treated as a clean slate — there are no migrations, no backward-compatibility shims, and no commitment to preserving existing wallets across versions. Reinstall or reset between builds. Compatibility rules will be defined when the project reaches beta.
+
 Self-custodial Arkade wallet for iOS and Android, built with Expo. See [ROADMAP.md](./ROADMAP.md) for milestone tracking, [SPECS.md](./SPECS.md) for the original spec, [CLAUDE.md](./CLAUDE.md) for architecture and conventions, and [ISSUES.md](./ISSUES.md) for open items.
 
 ## Stack

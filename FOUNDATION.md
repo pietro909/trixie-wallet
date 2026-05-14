@@ -2,6 +2,19 @@
 
 Shared project guidance for AI coding agents working in this repository. Agent-specific entrypoints should import this file instead of duplicating project facts.
 
+## Project Status: Alpha
+
+**While the project is in alpha, treat every iteration as a clean slate.** Do not preserve compatibility with persisted state from prior versions, and do not invest in migrations or deprecation paths.
+
+Concretely:
+
+- **No schema migrations.** If the shape of `app_state_v1` (or any other persisted blob) no longer matches the current types, wipe storage on hydrate and let the user re-onboard. Do not write `migrate()` functions or version-bump ladders.
+- **No backward-compat shims.** Renames, type changes, and structural refactors don't need adapter code or fallback branches for the old shape.
+- **No `schemaVersion` bumps as a forward-looking gesture.** The current `schemaVersion: 5` and the `migrate()` in `app/store/useAppStore.ts` predate this rule; they are a known red flag and should be simplified to wipe-on-mismatch when next touched.
+- **Deletions are fine.** If a field or feature is removed, drop it from the types and let `hydrate` discard the unknown keys. No `// removed in v6` comments, no soft-deprecation.
+
+This policy will be revisited when the project reaches beta. Until then, prioritize shape clarity and forward velocity over user-data continuity.
+
 ## Build & Development Commands
 
 ```bash
