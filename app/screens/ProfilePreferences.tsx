@@ -112,7 +112,7 @@ export default function ProfilePreferences() {
             {THEME_OPTIONS.map((opt) => (
               <Pressable
                 key={opt.value}
-                onPress={() => setThemePref(opt.value)}
+                onPress={async () => await setThemePref(opt.value)}
                 style={[
                   styles.option,
                   currentTheme === opt.value && {
@@ -157,7 +157,7 @@ export default function ProfilePreferences() {
             {CURRENCY_OPTIONS.map((opt) => (
               <Pressable
                 key={opt.value}
-                onPress={() => setFiatCurrency(opt.value)}
+                onPress={async () => await setFiatCurrency(opt.value)}
                 style={[
                   styles.option,
                   currentCurrency === opt.value && {
@@ -202,7 +202,7 @@ export default function ProfilePreferences() {
             {BITCOIN_UNIT_OPTIONS.map((opt) => (
               <Pressable
                 key={opt.value}
-                onPress={() => setBitcoinUnit(opt.value)}
+                onPress={async () => await setBitcoinUnit(opt.value)}
                 style={[
                   styles.option,
                   currentBitcoinUnit === opt.value && {
@@ -304,7 +304,9 @@ export default function ProfilePreferences() {
                   </Text>
                   <Switch
                     value={notificationPrefs.swaps}
-                    onValueChange={(swaps) => setNotificationPrefs({ swaps })}
+                    onValueChange={async (swaps) =>
+                      await setNotificationPrefs({ swaps })
+                    }
                     trackColor={{ true: theme.colors.primary }}
                   />
                 </View>
@@ -322,8 +324,8 @@ export default function ProfilePreferences() {
                   </Text>
                   <Switch
                     value={notificationPrefs.payments}
-                    onValueChange={(payments) =>
-                      setNotificationPrefs({ payments })
+                    onValueChange={async (payments) =>
+                      await setNotificationPrefs({ payments })
                     }
                     trackColor={{ true: theme.colors.primary }}
                   />

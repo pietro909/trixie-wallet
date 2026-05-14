@@ -183,7 +183,7 @@ export type NotificationPreferences = {
 };
 
 export type AppState = {
-  schemaVersion: 4;
+  schemaVersion: 5;
   wallet: ArkadeWalletMetadata | null;
   network: {
     arkServerUrl: string;
@@ -204,6 +204,7 @@ export type AppState = {
   security: {
     isLocked: boolean;
     passwordHash?: string;
+    passwordSalt?: string;
     biometricsEnabled: boolean;
     /**
      * Timestamp (ms since epoch) of the last successful encrypted-backup

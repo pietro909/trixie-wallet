@@ -143,7 +143,7 @@ import type {
   WalletBehavior,
 } from "./types";
 
-const CURRENT_SCHEMA_VERSION: AppState["schemaVersion"] = 4;
+const CURRENT_SCHEMA_VERSION: AppState["schemaVersion"] = 5;
 
 async function clearLegacyStorage(): Promise<void> {
   await Promise.all(
@@ -151,14 +151,28 @@ async function clearLegacyStorage(): Promise<void> {
   );
 }
 
-function simpleHash(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash |= 0;
+export async function hashPassword(
+  password: string,
+  salt: string,
+): Promise<string> {
+  return Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    password + salt,
+  );
+}
+
+export function generateSalt(): string {
+  const bytes = Crypto.getRandomBytes(16);
+  return bytesToHex(bytes);
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) {
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
-  return hash.toString(36);
+  return mismatch === 0;
 }
 
 function newWalletId(): string {
@@ -281,7 +295,7 @@ const BACKGROUND_TASK_DESCRIPTORS: Record<
 };
 
 const DEFAULT_STATE: AppState = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   wallet: null,
   network: {
     arkServerUrl: DEFAULT_ARK_SERVER_URL,
@@ -770,6 +784,28 @@ const EMPTY_RECOVERY_SCAN: RecoveryScan = {
   counts: {},
 };
 
+export function migrate(
+  data: Record<string, unknown>,
+  fromVersion: number,
+): Record<string, unknown> {
+  const migrated: Record<string, unknown> = { ...data };
+  if (fromVersion < 5) {
+    // v4 -> v5: Hardened password hashing (SHA-256 + salt).
+    // Existing simpleHash values are incompatible; clear them to avoid lock-out.
+    const sec = migrated.security as Record<string, unknown> | undefined;
+    if (sec) {
+      migrated.security = {
+        ...sec,
+        passwordHash: undefined,
+        passwordSalt: undefined,
+        isLocked: false,
+      };
+    }
+    migrated.schemaVersion = 5;
+  }
+  return migrated;
+}
+
 export const useAppStore = create<StoreState>((set, get) => ({
   ...DEFAULT_STATE,
   _hydrated: false,
@@ -791,39 +827,47 @@ export const useAppStore = create<StoreState>((set, get) => ({
         set({ _hydrated: true });
         return;
       }
-      let parsed: Partial<AppState>;
+      let parsed: Record<string, unknown>;
       try {
-        parsed = JSON.parse(raw) as Partial<AppState>;
+        parsed = JSON.parse(raw) as Record<string, unknown>;
       } catch {
         await AsyncStorage.removeItem(STORAGE_KEY);
         await clearLegacyStorage();
         set({ _hydrated: true });
         return;
       }
-      if (parsed.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+
+      const storedVersion =
+        typeof parsed.schemaVersion === "number" ? parsed.schemaVersion : 0;
+      if (storedVersion < CURRENT_SCHEMA_VERSION) {
+        parsed = migrate(parsed, storedVersion);
+      } else if (storedVersion > CURRENT_SCHEMA_VERSION) {
+        // Future version found; wipe to avoid loading garbage.
         await AsyncStorage.removeItem(STORAGE_KEY);
         await clearLegacyStorage();
         set({ _hydrated: true });
         return;
       }
+
+      const data = parsed as Partial<AppState>;
       set({
         ...DEFAULT_STATE,
-        ...parsed,
+        ...data,
         schemaVersion: CURRENT_SCHEMA_VERSION,
-        network: { ...DEFAULT_STATE.network, ...(parsed.network ?? {}) },
-        preferences: normalizePreferences(parsed.preferences),
+        network: { ...DEFAULT_STATE.network, ...(data.network ?? {}) },
+        preferences: normalizePreferences(data.preferences),
         security: {
           ...DEFAULT_STATE.security,
-          ...(parsed.security ?? {}),
+          ...(data.security ?? {}),
         },
-        walletBehavior: normalizeWalletBehavior(parsed.walletBehavior),
-        backgroundTasks: normalizeBackgroundTasks(parsed.backgroundTasks),
-        assets: normalizeAssetsSlice(parsed.assets),
-        wallet: parsed.wallet
+        walletBehavior: normalizeWalletBehavior(data.walletBehavior),
+        backgroundTasks: normalizeBackgroundTasks(data.backgroundTasks),
+        assets: normalizeAssetsSlice(data.assets),
+        wallet: data.wallet
           ? {
-              ...parsed.wallet,
-              assetBalances: Array.isArray(parsed.wallet.assetBalances)
-                ? parsed.wallet.assetBalances
+              ...data.wallet,
+              assetBalances: Array.isArray(data.wallet.assetBalances)
+                ? data.wallet.assetBalances
                 : [],
             }
           : null,
@@ -1525,8 +1569,9 @@ export const useAppStore = create<StoreState>((set, get) => ({
 
   unlockWithPassword: async (password) => {
     const { security } = get();
-    if (!security.passwordHash) return false;
-    if (simpleHash(password) !== security.passwordHash) return false;
+    if (!security.passwordHash || !security.passwordSalt) return false;
+    const hash = await hashPassword(password, security.passwordSalt);
+    if (!timingSafeEqual(hash, security.passwordHash)) return false;
     set({ security: { ...security, isLocked: false } });
     await persist(get());
     scheduleLightningResume("unlock");
@@ -2302,8 +2347,10 @@ export const useAppStore = create<StoreState>((set, get) => ({
   },
 
   setPassword: async (password) => {
+    const salt = generateSalt();
+    const hash = await hashPassword(password, salt);
     set((s) => ({
-      security: { ...s.security, passwordHash: simpleHash(password) },
+      security: { ...s.security, passwordHash: hash, passwordSalt: salt },
     }));
     await persist(get());
   },

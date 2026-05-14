@@ -31,8 +31,8 @@ export default function ProfileLock() {
       return;
     }
     setError("");
-    setPassword(password);
-    if (biometrics) toggleBiometrics(true);
+    await setPassword(password);
+    if (biometrics) await toggleBiometrics(true);
     await lockWallet();
     showToast("Wallet locked", "info");
   }
