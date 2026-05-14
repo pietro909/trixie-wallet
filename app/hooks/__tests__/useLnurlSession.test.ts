@@ -6,6 +6,13 @@ import {
   useLnurlSession,
 } from "../useLnurlSession";
 
+// The SSE session POST uses expo/fetch (streaming-capable); invoice sub-requests
+// use the global fetch. Mock them separately so each test can drive the stream
+// independently of the invoice traffic.
+jest.mock("expo/fetch", () => ({ fetch: jest.fn() }));
+
+import { fetch as expoFetch } from "expo/fetch";
+
 // We exercise the hook through a tiny wrapper component because the SSE
 // reader loop runs inside a useEffect — render the hook for real, drive a
 // ReadableStream the test owns, and assert against both the hook's state
@@ -21,6 +28,7 @@ const SESSION_EVENT =
 type FetchCall = { url: string; init: RequestInit | undefined };
 
 type Harness = {
+  sessionFetchCall: () => { url: string; init: RequestInit | undefined } | undefined;
   fetchCalls: FetchCall[];
   enqueue: (chunk: string) => Promise<void>;
   closeStream: () => Promise<void>;
@@ -39,8 +47,9 @@ function setupHarness(args: {
   const invoicePostStatus = args.invoicePostStatus ?? 200;
   const fetchCalls: FetchCall[] = [];
 
-  // A single SSE stream backs the first fetch (the session POST). Subsequent
-  // fetches (invoice POSTs) resolve to plain ok responses without a body.
+  // A single SSE stream backs the expo/fetch session POST. Subsequent
+  // fetches (invoice POSTs) go through globalThis.fetch and resolve to
+  // plain ok responses without a body.
   let streamController!: ReadableStreamDefaultController<Uint8Array>;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -48,18 +57,23 @@ function setupHarness(args: {
     },
   });
 
-  let sessionResolved = false;
-  globalThis.fetch = jest.fn(async (input: RequestInfo, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input.toString();
-    fetchCalls.push({ url, init });
-    if (!sessionResolved && url.endsWith("/lnurl/session")) {
-      sessionResolved = true;
+  // expo/fetch backs the SSE session stream
+  const sessionCalls: { url: string; init: RequestInit | undefined }[] = [];
+  (expoFetch as jest.MockedFunction<typeof fetch>).mockImplementation(
+    async (input: RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      sessionCalls.push({ url, init });
       // Construct a Response with the readable stream as body. Cast via unknown
       // because lib.dom's Response type does not accept a ReadableStream<Uint8Array>
       // in its constructor signature even though the runtime supports it.
-      const res = new Response(stream as unknown as BodyInit, { status: 200 });
-      return res;
-    }
+      return new Response(stream as unknown as BodyInit, { status: 200 });
+    },
+  );
+
+  // global fetch backs the invoice sub-requests
+  globalThis.fetch = jest.fn(async (input: RequestInfo, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    fetchCalls.push({ url, init });
     return new Response("", { status: invoicePostStatus });
   }) as unknown as typeof fetch;
 
@@ -122,7 +136,14 @@ function setupHarness(args: {
   };
 
   return {
-    harness: { fetchCalls, enqueue, closeStream, invoicePostBodies, unmount },
+    harness: {
+      sessionFetchCall: () => sessionCalls[0],
+      fetchCalls,
+      enqueue,
+      closeStream,
+      invoicePostBodies,
+      unmount,
+    },
     getSession: () => latest,
   };
 }
@@ -153,8 +174,8 @@ describe("useLnurlSession", () => {
     expect(s.active).toBe(true);
     expect(s.lnurl).toBe("LNURL1ABC");
     expect(s.error).toBeUndefined();
-    expect(harness.fetchCalls[0]?.url).toBe(`${BASE}/lnurl/session`);
-    expect(harness.fetchCalls[0]?.init?.method).toBe("POST");
+    expect(harness.sessionFetchCall()?.url).toBe(`${BASE}/lnurl/session`);
+    expect(harness.sessionFetchCall()?.init?.method).toBe("POST");
 
     await harness.unmount();
   });
@@ -250,8 +271,7 @@ describe("useLnurlSession", () => {
     const { harness } = setupHarness({ handler });
 
     await harness.enqueue(SESSION_EVENT);
-    const sessionCall = harness.fetchCalls[0];
-    const signal = sessionCall?.init?.signal as AbortSignal | undefined;
+    const signal = harness.sessionFetchCall()?.init?.signal as AbortSignal | undefined;
     expect(signal?.aborted).toBe(false);
 
     await harness.unmount();
@@ -270,6 +290,7 @@ describe("useLnurlSession", () => {
       await flushMicrotasks();
     });
 
+    expect(harness.sessionFetchCall()).toBeUndefined();
     expect(harness.fetchCalls).toHaveLength(0);
     expect(getSession().active).toBe(false);
     expect(getSession().lnurl).toBe("");

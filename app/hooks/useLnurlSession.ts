@@ -1,3 +1,4 @@
+import { fetch as expoFetch } from "expo/fetch";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { recordError } from "../services/diagnostics/recorder";
 
@@ -20,9 +21,11 @@ export type LnurlInvoiceHandler = (req: LnurlInvoiceRequest) => Promise<string>;
 /**
  * Hook that manages an LNURL receive session with lnurl-server.
  *
- * Opens an SSE stream via `POST {lnurlServerUrl}/lnurl/session` and reads
- * raw line-by-line with `response.body.getReader()` + `TextDecoder` — the
- * `EventSource` API is unavailable in React Native / Hermes.
+ * Opens an SSE stream via `POST {lnurlServerUrl}/lnurl/session` using
+ * `expo/fetch` (backed by a native streaming implementation) and reads
+ * line-by-line with `response.body.getReader()` + `TextDecoder`. The global
+ * `fetch` buffers response bodies in React Native and never delivers chunks
+ * for a long-lived connection; `expo/fetch` streams properly.
  *
  * Lifecycle:
  *  - on `session_created`: stash sessionId + bearer token, expose `lnurl`
@@ -117,7 +120,7 @@ export function useLnurlSession(
 
     const connect = async () => {
       try {
-        const response = await fetch(`${baseUrl}/lnurl/session`, {
+        const response = await expoFetch(`${baseUrl}/lnurl/session`, {
           method: "POST",
           signal: abort.signal,
         });
