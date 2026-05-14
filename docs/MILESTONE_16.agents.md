@@ -10,32 +10,29 @@ This milestone should prove:
 - A user restoring from a seed phrase sees the same selector.
 - A user restoring from a backup file has the network pre-selected from the
   backup and the selector is disabled.
-- The correct server URLs are used for each network at runtime.
+- The correct server URLs (Ark, Boltz, Explorer, LNURL) are used for each network at runtime.
+- The payment parser prevents cross-network sends (e.g., sending mainnet sats to a mutinynet address).
 
 ## Current State
 
 - The app is hardcoded to mutinynet.
 - The sister app `../wallet` already holds the mainnet and mutinynet server
-  URLs; they should be imported or mirrored here.
+  URLs; they should be mirrored here.
 - The backup format (v2, from Milestone 10) does not carry a `network` field.
 - The Restore Wallet screen has no network selector.
+- The payment parser (`paymentParser.ts`) accepts both `ark1` and `tark1` prefixes regardless of the active network.
 
 ## Product Rules
 
-- Never connect a mainnet seed to a mutinynet node, or vice versa.
-- The chosen network must survive app restarts and full backup/restore cycles.
-- When a backup encodes a network, that value is authoritative — the selector
-  must be pre-filled and read-only.
-- Mainnet and mutinynet wallets must be visually distinguished in the UI so a
-  user cannot mistake which network they are on.
+- **No Silent Migrations:** Per `FOUNDATION.md`, do not write `migrate()` logic. Bump `CURRENT_SCHEMA_VERSION` to `6` and let the app trigger the schema mismatch modal. Users must wipe and re-onboard (or restore from a v6 backup).
+- **Network Gating:** Never connect a mainnet seed to a mutinynet node, or vice versa.
+- **Parser Enforcement:** An `ark1` address is invalid on Mutinynet; a `tark1` address is invalid on Mainnet.
+- **Visual Gating:** Mainnet and mutinynet wallets must be visually distinct so a user cannot mistake which network they are on.
 
 ## Selected Direction
 
 Add a `network` field (`'mutinynet' | 'mainnet'`) to the wallet store and to
-the backup payload (bump `schemaVersion`). Surface a network selector in the
-Create and Restore-from-seed flows. When restoring from a backup file, read
-the `network` field and lock the selector. Pull server URLs from the sister
-app's constants rather than duplicating them.
+the backup payload. Surface a network selector in the Create and Restore-from-seed flows. When restoring from a backup file, read the `network` field and lock the selector. Harden the payment parser to validate HRPs against the active network.
 
 ## Technical Refinement & Actionable Plan
 
@@ -45,12 +42,11 @@ app's constants rather than duplicating them.
 - **State Changes:**
   - Add `selectedNetwork: 'mainnet' | 'mutinynet'` to `AppState["network"]`.
   - Initialize `selectedNetwork` in `DEFAULT_STATE` to `'mutinynet'`.
-  - Update `migrate()`: If `fromVersion < 6`, infer `selectedNetwork` from the existing `arkServerUrl` (if it contains "mutinynet", set to `'mutinynet'`, otherwise `'mainnet'`).
 - **Actions:**
   - `setNetwork(network: 'mainnet' | 'mutinynet')`: Updates both `selectedNetwork` and `arkServerUrl` to their respective default production URLs.
   - `createWallet` & `restoreWallet`:
-    - After `probeServer()`, compare `probed.network` with the `selectedNetwork`.
-    - **Gating Rule:** Throw an error if the user selected "Mainnet" but the server reports a testnet/mutinynet network, and vice versa. This prevents seed leakage across network types.
+    - **Pre-flight Check:** Probe the server *before* requesting seed entry if possible.
+    - **Gating Rule:** Compare `probed.network` with `selectedNetwork`. Throw an error if they mismatch.
   - `importBackup`:
     - Read `network` from the backup payload.
     - Set `selectedNetwork` and `arkServerUrl` accordingly.
@@ -61,33 +57,33 @@ app's constants rather than duplicating them.
 - **Constants (`app/services/arkade/network.ts`):**
   - Export `MAINNET_ARK_SERVER_URL = "https://arkade.money"`
   - Export `MUTINEYNET_ARK_SERVER_URL = "https://mutinynet.arkade.sh"`
+  - Update `LNURL_SERVER_URLS` to include `mainnet: "https://lnurl.arkade.money"`.
 - **Lightning/Boltz (`app/services/arkade/lightning.ts`):**
-  - Verify `BOLTZ_API_URLS` correctly maps `bitcoin` to the mainnet API (`https://api.ark.boltz.exchange`).
+  - Verify `BOLTZ_API_URLS` correctly maps `bitcoin` to `https://api.ark.boltz.exchange`.
 - **Explorer (`app/services/activity-details/explorer.ts`):**
-  - Ensure `MAINNET` and `MUTINEYNET` URLs are distinct and correctly mapped.
+  - Ensure `bitcoin` maps to `arkade.space` / `mempool.space`.
+- **Parser (`app/services/paymentParser.ts`):**
+  - Update `ARKADE_RE` detection to be network-aware.
+  - If `network === 'mainnet'`, only `ark1` is `isPayable`.
+  - If `network === 'mutinynet'`, only `tark1` is `isPayable`.
+  - Add a descriptive `warning` when a mismatch is detected (e.g., "This is a Mutinynet address, but you are on Mainnet").
 
 ### 3. UI/UX Implementation
 
 - **Network Selector Component (`app/components/NetworkSelector.tsx`):**
-  - A segmented control allowing the user to toggle between "Mainnet" and "Mutinynet".
-  - Shows the target Ark server URL as a sub-label for transparency.
-  - Disables itself when a wallet already exists (multi-network support is out of scope for now).
+  - A segmented control (Mainnet / Mutinynet) with the Ark server URL as a sub-label.
+  - Disables itself when a wallet exists.
 - **Landing Screen (`app/screens/LandingNoWallet.tsx`):**
-  - Place the `NetworkSelector` at the top of the action area.
-  - Selecting a network updates the store's `selectedNetwork` and `arkServerUrl` immediately.
-- **Restore Screen (`app/screens/RestoreWallet.tsx`):**
-  - Show the `NetworkSelector` for the "Restore from seed" path.
-  - Ensure the "Restore from backup" flow bypasses the manual selector (the network is discovered only after decryption).
-- **Visual Gating (`app/screens/WalletScreen.tsx`):**
-  - Enhance the `networkTag` with conditional styling.
-  - **Mainnet:** Use a high-contrast badge (e.g., brand color background with white text) or a "Mainnet" label in the header.
-  - **Mutinynet:** Use a "Mutinynet" label with a subtle/warning color to indicate its experimental nature.
+  - Place `NetworkSelector` at the top. Selecting updates the store immediately.
+- **Visual Distinction (`app/screens/WalletScreen.tsx`):**
+  - **Mainnet:** Use the brand primary color (`#ff007f`) for the network badge.
+  - **Mutinynet:** Use a "Caution" style (e.g., amber/yellow badge) or a persistent "Experimental / Play Money" header to prevent confusion.
+- **Safety Feedback:** Ensure the `SendEntryScreen` prominently displays the "Wrong network" warning from the parser.
 
 ### 4. Verification Plan (E2E)
 
-1. **Create New (Mutinynet):** Select Mutinynet -> Create -> Verify server is `mutinynet.arkade.sh` and UI shows Mutinynet.
-2. **Create New (Mainnet):** Select Mainnet -> Create -> Verify server is `arkade.money` and UI shows Mainnet.
-3. **Restore Seed (Mainnet):** Select Mainnet -> Paste seed -> Verify wallet restores on Mainnet.
-4. **Restore Backup (Cross-check):** Export a Mutinynet backup -> Reset -> Import -> Verify the app automatically switches to Mutinynet and locks the selector during the flow.
-5. **Network Mismatch Guard:** Set server to `arkade.money` but select "Mutinynet" in UI -> Attempt Create -> Verify it fails with a network mismatch error.
-6. **Persistence:** Kill app -> Restart -> Verify the selected network persists.
+1. **Schema Wipe:** Install old version -> Update -> Verify "Schema Mismatch" modal appears and Wipe works.
+2. **Create New (Mutinynet):** Select Mutinynet -> Create -> Verify server is `mutinynet.arkade.sh` and parser rejects `ark1` addresses.
+3. **Create New (Mainnet):** Select Mainnet -> Create -> Verify server is `arkade.money` and parser rejects `tark1` addresses.
+4. **Network Mismatch Guard:** Set server to `arkade.money` but select "Mutinynet" in UI -> Attempt Create -> Verify it fails with a network mismatch error.
+5. **Backup Restore:** Export Mutinynet backup -> Import -> Verify app switches to Mutinynet and locks selector.
