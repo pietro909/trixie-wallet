@@ -1,3 +1,5 @@
+# RESOLVED
+
 # ISSUE: LNURL Receive — Session-Based Flow
 
 **Status:** RESOLVED  

@@ -1,3 +1,5 @@
+# RESOLVED
+
 # Split Expo Background Into an Opt-In Entrypoint
 
 ## Summary

@@ -1,3 +1,5 @@
+# RESOLVED
+
 # Issue 10 — Background tasks visibility & configuration
 
 **The ask:** show users which background tasks the app is running, with run metrics, and let them turn each one off. Slot the UI under "Wallet Behaviour".
