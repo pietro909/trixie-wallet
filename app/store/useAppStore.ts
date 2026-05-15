@@ -55,7 +55,8 @@ import {
 import {
   DEFAULT_ARK_SERVER_URL,
   isMainnetForNetworkName,
-  normalizeServerUrl,
+  MAINNET_ARK_SERVER_URL,
+  MUTINYNET_ARK_SERVER_URL,
 } from "../services/arkade/network";
 import { finalizePendingTx } from "../services/arkade/pending-tx-recovery";
 import {
@@ -382,7 +383,7 @@ type StoreState = AppState & {
   hydrate: () => Promise<void>;
   acknowledgeSchemaMismatchAndWipe: () => Promise<void>;
   refreshServer: () => Promise<void>;
-  setArkServerUrl: (url: string) => Promise<void>;
+  setArkadeNetwork: (network: "bitcoin" | "mutinynet") => Promise<void>;
   createWallet: (kind: CreateWalletKind) => Promise<void>;
   restoreWallet: (input: RestoreInput) => Promise<void>;
   refreshWallet: () => Promise<void>;
@@ -935,20 +936,25 @@ export const useAppStore = create<StoreState>((set, get) => ({
     }
   },
 
-  setArkServerUrl: async (url) => {
-    const normalized = normalizeServerUrl(url);
-    if (!normalized) return;
+  setArkadeNetwork: async (network) => {
+    if (get().wallet) {
+      throw new ArkadeError(
+        "wallet_init_failed",
+        "Network cannot be changed once a wallet exists. Reset to switch.",
+      );
+    }
+    const arkServerUrl =
+      network === "bitcoin" ? MAINNET_ARK_SERVER_URL : MUTINYNET_ARK_SERVER_URL;
     set((s) => ({
       network: {
         ...s.network,
-        arkServerUrl: normalized,
+        arkServerUrl,
         status: "idle",
         detectedNetwork: null,
         lastError: null,
         serverInfo: null,
       },
     }));
-    if (get().wallet) markDirtyForBackup();
     await persist(get());
   },
 
@@ -1964,39 +1970,41 @@ export const useAppStore = create<StoreState>((set, get) => ({
       );
     }
 
-    const arkServerUrl = payload.wallet.arkServerUrl;
-    set((s) => ({
-      network: {
-        ...s.network,
-        arkServerUrl,
-        status: "connecting",
-        detectedNetwork: null,
-        lastError: null,
-        serverInfo: null,
-      },
-      walletBehavior: payload.walletBehavior,
-      preferences: normalizePreferences(payload.preferences),
-    }));
+    // Backup's `wallet.network` is the source of truth. We derive the Ark
+    // server URL from it; the backup's saved `wallet.arkServerUrl` is legacy
+    // diagnostic data now that custom servers are gone.
+    const backupNetwork = payload.wallet.network;
+    const arkServerUrl =
+      backupNetwork === "bitcoin"
+        ? MAINNET_ARK_SERVER_URL
+        : backupNetwork === "mutinynet"
+          ? MUTINYNET_ARK_SERVER_URL
+          : null;
+    if (!arkServerUrl) {
+      throw new ArkadeError(
+        "wallet_init_failed",
+        `Backup references unsupported network "${backupNetwork}"`,
+      );
+    }
 
     let probed: Awaited<ReturnType<typeof probeServer>>;
     try {
       probed = await probeServer(arkServerUrl);
     } catch (e) {
-      const err = toArkadeError(
+      throw toArkadeError(
         "server_unreachable",
         "Could not reach Arkade server",
         e,
       );
-      set((s) => ({
-        network: {
-          ...s.network,
-          status: "offline",
-          lastError: err.message,
-        },
-      }));
-      throw err;
     }
     const serverNetwork = probed.network;
+    if (serverNetwork !== backupNetwork) {
+      throw new ArkadeError(
+        "wallet_init_failed",
+        `Network mismatch: backup is for ${backupNetwork} but server reports ${serverNetwork}`,
+      );
+    }
+
     const isMainnet = isMainnetForNetworkName(serverNetwork);
     const artifacts =
       payload.secret.kind === "mnemonic"
@@ -2004,11 +2012,29 @@ export const useAppStore = create<StoreState>((set, get) => ({
         : buildSingleKeyIdentityFromHex(payload.secret.privateKeyHex);
 
     const walletId = payload.wallet.id;
+    const normalizedPreferences = normalizePreferences(payload.preferences);
+    const restoredAssetsSlice: AssetsSlice = normalizeAssetsSlice({
+      importedAssetIds: payload.importedAssetIds ?? [],
+    });
+
+    // Track external side-effects so we can roll back on failure. Until we
+    // call the final `set()`, the persisted Zustand slice is untouched.
+    let secretSaved = false;
+    let swapMetadataRestored = false;
+    let walletRuntimeCreated = false;
     try {
       await saveSecret(walletId, payload.secret);
+      secretSaved = true;
       await restoreSwapMetadataRows(payload.swapMetadata);
+      swapMetadataRestored = true;
       await restoreBoltzSwaps(payload.boltzSwaps);
 
+      // Mark the runtime as "needs disposal" before the call: createWalletInstance
+      // mutates the module-level runtime cache (activeWalletInstance/subscription)
+      // before snapshotWallet returns, so a snapshot failure must still trigger
+      // disposeWallet() in the catch below. Safe because the import branch is
+      // guarded by `!get().wallet` and disposeWallet() is idempotent.
+      walletRuntimeCreated = true;
       const { snapshot } = await createWalletInstance({
         walletId,
         artifacts,
@@ -2019,7 +2045,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
       const draft = buildMetadata(
         walletId,
         arkServerUrl,
-        payload.wallet.esploraUrl ?? undefined,
+        undefined,
         serverNetwork,
         artifacts,
         snapshot,
@@ -2040,12 +2066,13 @@ export const useAppStore = create<StoreState>((set, get) => ({
         serverNetwork,
       );
       const metadata: ArkadeWalletMetadata = { ...restored, activities };
-      const restoredAssetsSlice: AssetsSlice = normalizeAssetsSlice({
-        importedAssetIds: payload.importedAssetIds ?? [],
-      });
+
+      // Atomic commit: all import work succeeded, write the final slice once.
       set((s) => ({
         wallet: metadata,
         assets: restoredAssetsSlice,
+        walletBehavior: payload.walletBehavior,
+        preferences: normalizedPreferences,
         security: {
           ...s.security,
           lastBackupAt: envelope.createdAt,
@@ -2053,6 +2080,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
         },
         network: {
           ...s.network,
+          arkServerUrl,
           status: "online",
           detectedNetwork: serverNetwork,
           lastError: null,
@@ -2060,15 +2088,24 @@ export const useAppStore = create<StoreState>((set, get) => ({
         },
       }));
       await persist(get());
+
+      // Post-commit work — must not roll back an otherwise successful import.
       if (isLightningSupportedForNetwork(serverNetwork)) {
         scheduleLightningRestore(walletId);
       }
     } catch (e) {
-      // Best-effort rollback: clear the partially-written secret/sql state so
-      // the user can retry without a stuck half-import.
-      await deleteSecret(walletId).catch(() => {});
-      await disposeWallet().catch(() => {});
+      if (walletRuntimeCreated) {
+        await disposeWallet().catch(() => {});
+      }
+      if (swapMetadataRestored) {
+        await clearSwapMetadataForWallet(walletId).catch(() => {});
+        await clearAllSwaps().catch(() => {});
+      }
+      if (secretSaved) {
+        await deleteSecret(walletId).catch(() => {});
+      }
       if (e instanceof BackupError || e instanceof PayloadParseError) throw e;
+      if (e instanceof ArkadeError) throw e;
       throw toArkadeError(
         "wallet_init_failed",
         "Failed to restore wallet from backup",

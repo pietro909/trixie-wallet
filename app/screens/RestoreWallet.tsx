@@ -6,6 +6,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Button from "../components/Button";
 import LoadingOverlay from "../components/LoadingOverlay";
+import NetworkSelector from "../components/NetworkSelector";
 import { useToast } from "../components/ToastProvider";
 import { useLoading } from "../hooks/useLoading";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
@@ -43,7 +44,6 @@ export default function RestoreWallet() {
   const nav = useNavigation<Nav>();
   const { showToast } = useToast();
   const restore = useAppStore((s) => s.restoreWallet);
-  const arkServerUrl = useAppStore((s) => s.network.arkServerUrl);
   const { isLoading, message, show, hide } = useLoading();
 
   const [value, setValue] = React.useState("");
@@ -105,6 +105,14 @@ export default function RestoreWallet() {
       style={[styles.container, { backgroundColor: theme.colors.background }]}
     >
       <View style={styles.content}>
+        <NetworkSelector theme={theme} disabled={isLoading || pickingBackup} />
+        <Text
+          style={[styles.selectorHelper, { color: theme.colors.textSubtle }]}
+        >
+          This selection applies only to seed phrase or private-key restore.
+          Backup files restore using the network saved inside the backup.
+        </Text>
+
         <Pressable
           onPress={handlePickBackup}
           disabled={isLoading || pickingBackup}
@@ -211,7 +219,7 @@ export default function RestoreWallet() {
         >
           <Info color={theme.colors.primary} size={18} />
           <Text style={[styles.bannerText, { color: theme.colors.primary }]}>
-            Restore connects to {arkServerUrl} and rebuilds your Arkade
+            Restore connects to the selected network and rebuilds your Arkade
             addresses.
           </Text>
         </View>
@@ -239,6 +247,13 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: spacing[5],
     paddingTop: spacing[5],
+  },
+  selectorHelper: {
+    fontSize: typography.size.xs,
+    marginTop: spacing[3],
+    marginBottom: spacing[5],
+    lineHeight: typography.lineHeight.xs,
+    textAlign: "center",
   },
   backupCard: {
     flexDirection: "row",

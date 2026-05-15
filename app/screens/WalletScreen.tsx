@@ -184,9 +184,35 @@ export default function WalletScreen() {
         <Text style={[styles.fiat, { color: theme.colors.textMuted }]}>
           {satsToFiat(wallet.balanceSats, fiatCurrency)}
         </Text>
-        <Text style={[styles.networkTag, { color: theme.colors.textSubtle }]}>
-          {(detectedNetwork ?? wallet.network).toUpperCase()}
-        </Text>
+        {(() => {
+          const tagNetwork = detectedNetwork ?? wallet.network;
+          const isMainnet = tagNetwork === "bitcoin";
+          return (
+            <View
+              style={[
+                styles.networkTag,
+                {
+                  backgroundColor: isMainnet
+                    ? theme.colors.primary
+                    : theme.colors.warning,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.networkTagText,
+                  {
+                    color: isMainnet
+                      ? theme.colors.onPrimary
+                      : theme.colors.onWarning,
+                  },
+                ]}
+              >
+                {isMainnet ? "MAINNET" : tagNetwork.toUpperCase()}
+              </Text>
+            </View>
+          );
+        })()}
       </View>
 
       {/* Action Buttons */}
@@ -408,8 +434,15 @@ const styles = StyleSheet.create({
     marginTop: spacing[1],
   },
   networkTag: {
+    alignSelf: "flex-start",
+    marginTop: spacing[3],
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[1],
+    borderRadius: radius.pill,
+  },
+  networkTagText: {
     fontSize: typography.size.xs,
-    marginTop: spacing[2],
+    fontWeight: typography.weight.bold,
     letterSpacing: 1,
   },
   actions: {

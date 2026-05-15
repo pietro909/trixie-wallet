@@ -21,10 +21,8 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
-import Button from "../components/Button";
 import { useToast } from "../components/ToastProvider";
 import { useBackgroundTaskMetrics } from "../hooks/useBackgroundTaskMetrics";
 import { useFormatSats } from "../hooks/useFormatSats";
@@ -35,11 +33,7 @@ import {
   getLightningLimits,
   isLightningSupportedForNetwork,
 } from "../services/arkade/lightning";
-import {
-  defaultDelegatorUrlForNetwork,
-  normalizeServerUrl,
-} from "../services/arkade/network";
-import { probeServer } from "../services/arkade/runtime";
+import { defaultDelegatorUrlForNetwork } from "../services/arkade/network";
 import { SWAP_BACKGROUND_TASK_NAME } from "../services/arkade/swap-background";
 import type { BgTaskMetrics } from "../services/diagnostics/bg-task-metrics";
 import { buildSupportBundle } from "../services/diagnostics/bundle";
@@ -49,12 +43,7 @@ import {
   shareBundleFile,
   writeBundleToTemp,
 } from "../services/diagnostics/storage";
-import type {
-  ArkadeServerInfo,
-  BackgroundTaskKey,
-  ServerStatus,
-  WalletBehavior,
-} from "../store/types";
+import type { BackgroundTaskKey, WalletBehavior } from "../store/types";
 import { useAppStore } from "../store/useAppStore";
 import { type AppTheme, radius, spacing, typography } from "../theme/theme";
 
@@ -97,7 +86,6 @@ export default function AdvancedScreen() {
   const wallet = useAppStore((s) => s.wallet);
   const walletBehavior = useAppStore((s) => s.walletBehavior);
   const backgroundTasks = useAppStore((s) => s.backgroundTasks);
-  const setArkServerUrl = useAppStore((s) => s.setArkServerUrl);
   const refreshServer = useAppStore((s) => s.refreshServer);
   const setWalletBehavior = useAppStore((s) => s.setWalletBehavior);
   const setBackgroundTaskEnabled = useAppStore(
@@ -105,16 +93,8 @@ export default function AdvancedScreen() {
   );
   const { format: formatSats, label: unitLabel } = useFormatSats();
 
-  const [draft, setDraft] = React.useState(networkState.arkServerUrl);
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [busyKey, setBusyKey] = React.useState<string | null>(null);
-  const normalizedDraft = normalizeServerUrl(draft);
-  const isDirty =
-    normalizedDraft !== "" && normalizedDraft !== networkState.arkServerUrl;
-  const previewMismatch =
-    normalizedDraft !== "" && normalizedDraft !== draft.trim();
-  const isConnecting = networkState.status === "connecting";
-  const isTesting = busyKey === "test";
   const serverInfo = networkState.serverInfo;
   const detectedNetwork = networkState.detectedNetwork;
   const behaviorNetwork = detectedNetwork ?? wallet?.network ?? null;
@@ -125,50 +105,6 @@ export default function AdvancedScreen() {
       refreshServer();
     }
   }, [networkState.status, refreshServer]);
-
-  async function handleApply() {
-    if (wallet) {
-      showToast("Reset the wallet before changing the server", "error");
-      setDraft(networkState.arkServerUrl);
-      return;
-    }
-    if (!normalizedDraft) {
-      showToast("Enter a server URL", "error");
-      return;
-    }
-    if (!isDirty) return;
-    setDraft(normalizedDraft);
-    await setArkServerUrl(normalizedDraft);
-    await refreshServer();
-  }
-
-  async function handleTest() {
-    const target = normalizedDraft || networkState.arkServerUrl;
-    if (!target) return;
-    if (target === networkState.arkServerUrl) {
-      await refreshServer();
-      const status = useAppStore.getState().network.status;
-      if (status === "online") {
-        showToast("Server reachable", "success");
-      } else if (status === "offline") {
-        showToast(
-          useAppStore.getState().network.lastError ?? "Server unreachable",
-          "error",
-        );
-      }
-      return;
-    }
-    setBusyKey("test");
-    try {
-      await probeServer(target);
-      showToast("Server reachable", "success");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Server unreachable";
-      showToast(msg, "error");
-    } finally {
-      setBusyKey(null);
-    }
-  }
 
   const handleCopy = React.useCallback(
     async (text: string, label: string) => {
@@ -459,88 +395,8 @@ export default function AdvancedScreen() {
           Advanced
         </Text>
         <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
-          Inspect the wallet runtime, switch servers, and copy raw
-          configuration.
+          Inspect the wallet runtime and copy raw configuration.
         </Text>
-      </View>
-
-      <View
-        style={[
-          styles.card,
-          {
-            backgroundColor: theme.colors.card,
-            borderColor: theme.colors.border,
-            ...theme.shadow("card"),
-          },
-        ]}
-      >
-        <Text style={[styles.label, { color: theme.colors.textMuted }]}>
-          Server URL
-        </Text>
-        <TextInput
-          value={draft}
-          onChangeText={setDraft}
-          autoCapitalize="none"
-          autoCorrect={false}
-          autoComplete="url"
-          inputMode="url"
-          placeholder="mutinynet.arkade.sh"
-          placeholderTextColor={theme.colors.placeholder}
-          returnKeyType="done"
-          onSubmitEditing={isDirty ? handleApply : handleTest}
-          editable={!isConnecting && !isTesting && !wallet}
-          style={[
-            styles.input,
-            {
-              color: theme.colors.text,
-              backgroundColor: theme.colors.surfaceSubtle,
-              borderColor: theme.colors.border,
-            },
-          ]}
-        />
-        {previewMismatch ? (
-          <Text style={[styles.hint, { color: theme.colors.textSubtle }]}>
-            Will use {normalizedDraft}
-          </Text>
-        ) : null}
-        {wallet ? (
-          <Text style={[styles.hint, { color: theme.colors.textSubtle }]}>
-            Server is locked once a wallet exists. Reset to switch.
-          </Text>
-        ) : null}
-        <View style={styles.pillRow}>
-          <StatusPill
-            status={networkState.status}
-            serverInfo={serverInfo}
-            theme={theme}
-          />
-        </View>
-        {networkState.lastError ? (
-          <Text style={[styles.errorText, { color: theme.colors.danger }]}>
-            {networkState.lastError}
-          </Text>
-        ) : null}
-      </View>
-
-      <View style={styles.actions}>
-        {isDirty ? (
-          <Button
-            label="Apply server"
-            theme={theme}
-            onPress={handleApply}
-            loading={isConnecting}
-            disabled={isConnecting || isTesting || !!wallet}
-          />
-        ) : null}
-        <Button
-          label="Test connection"
-          variant="secondary"
-          theme={theme}
-          onPress={handleTest}
-          loading={isConnecting || isTesting}
-          disabled={isConnecting || isTesting}
-          style={isDirty ? styles.testBtn : undefined}
-        />
       </View>
 
       <Text style={[styles.sectionLabel, { color: theme.colors.textMuted }]}>
@@ -911,49 +767,6 @@ export default function AdvancedScreen() {
         />
       </View>
     </ScrollView>
-  );
-}
-
-function StatusPill({
-  status,
-  serverInfo,
-  theme,
-}: {
-  status: ServerStatus;
-  serverInfo: ArkadeServerInfo | null;
-  theme: AppTheme;
-}) {
-  const tone =
-    status === "online"
-      ? theme.colors.success
-      : status === "offline"
-        ? theme.colors.danger
-        : status === "connecting"
-          ? theme.colors.primary
-          : theme.colors.textSubtle;
-
-  let text: string;
-  if (status === "online" && serverInfo) {
-    const parts = ["Online", serverInfo.network];
-    if (serverInfo.version) parts.push(`v${serverInfo.version}`);
-    text = parts.join(" · ");
-  } else if (status === "online") {
-    text = "Online";
-  } else if (status === "connecting") {
-    text = "Connecting…";
-  } else if (status === "offline") {
-    text = "Offline";
-  } else {
-    text = "Not checked";
-  }
-
-  return (
-    <View style={[styles.pill, { backgroundColor: `${tone}15` }]}>
-      <View style={[styles.pillDot, { backgroundColor: tone }]} />
-      <Text style={[styles.pillText, { color: tone }]} numberOfLines={1}>
-        {text}
-      </Text>
-    </View>
   );
 }
 
@@ -1452,66 +1265,10 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: typography.lineHeight.sm,
   },
-  card: {
-    padding: spacing[4],
-    borderRadius: radius.md,
-    borderWidth: 1,
-  },
   cardFlush: {
     borderRadius: radius.md,
     borderWidth: 1,
     overflow: "hidden",
-  },
-  label: {
-    fontSize: typography.size.xs,
-    fontWeight: typography.weight.semibold,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  input: {
-    fontSize: typography.size.md,
-    paddingVertical: spacing[3],
-    paddingHorizontal: spacing[4],
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    marginTop: spacing[2],
-  },
-  hint: {
-    fontSize: typography.size.xs,
-    marginTop: spacing[2],
-  },
-  pillRow: {
-    flexDirection: "row",
-    marginTop: spacing[4],
-  },
-  pill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing[2],
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    borderRadius: radius.pill,
-    maxWidth: "100%",
-  },
-  pillDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  pillText: {
-    fontSize: typography.size.xs,
-    fontWeight: typography.weight.semibold,
-    letterSpacing: 0.2,
-  },
-  errorText: {
-    fontSize: typography.size.xs,
-    marginTop: spacing[3],
-  },
-  actions: {
-    marginTop: spacing[5],
-  },
-  testBtn: {
-    marginTop: spacing[3],
   },
   sectionLabel: {
     fontSize: typography.size.xs,

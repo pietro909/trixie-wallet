@@ -57,9 +57,68 @@ jest.mock("../../services/arkade/runtime", () => ({
   setIncomingFundsListener: jest.fn(),
 }));
 
+// The SDK's seed-identity path pulls in @bitcoinerlab/descriptors-scure, which
+// instantiates a real @noble/curves hasher at module load and clashes with the
+// `@noble/hashes/sha2.js` mock above. Stub both the SDK package and the local
+// identity helpers so useAppStore does not transitively require seedIdentity.
+jest.mock("@arkade-os/sdk", () => ({
+  Ramps: jest.fn(),
+  ESPLORA_URL: {},
+}));
+
+// `@arkade-os/boltz-swap` initialises @noble/curves secp256k1 at module load,
+// which fails under the `@noble/hashes/sha2.js` mock. Mock the package itself
+// so anything in the dep graph below useAppStore that imports types/values
+// from it gets a no-op stub instead of triggering the curves init.
+jest.mock("@arkade-os/boltz-swap", () => ({
+  BoltzSwapProvider: jest.fn(),
+  isChainFinalStatus: jest.fn(() => false),
+  isChainSwapRefundable: jest.fn(() => false),
+  isReverseFinalStatus: jest.fn(() => false),
+  isReverseSuccessStatus: jest.fn(() => false),
+  isSubmarineFinalStatus: jest.fn(() => false),
+}));
+
+jest.mock("@arkade-os/boltz-swap/expo", () => ({
+  ExpoArkadeSwaps: jest.fn(),
+}));
+
+jest.mock("../../services/arkade/identity", () => ({
+  buildMnemonicIdentity: jest.fn(),
+  buildRandomSingleKeyIdentity: jest.fn(),
+  buildSingleKeyIdentityFromHex: jest.fn(),
+  buildSingleKeyIdentityFromNsec: jest.fn(),
+  bytesToHex: jest.fn((bytes: Uint8Array) =>
+    Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(""),
+  ),
+  hexToBytes: jest.fn((hex: string) => {
+    const out = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < out.length; i++) {
+      out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    }
+    return out;
+  }),
+  createMnemonic: jest.fn(() => "test mnemonic"),
+}));
+
 jest.mock("../../services/arkade/swap-background", () => ({
   ensureSwapBackgroundRegistered: jest.fn(),
   unregisterSwapBackgroundTask: jest.fn(),
+}));
+
+// recovery.ts re-pulls @arkade-os/boltz-swap which has the same noble-curves
+// load-time issue as the SDK; stub it so the store imports cleanly.
+jest.mock("../../services/arkade/recovery", () => ({
+  isSwapBeingProcessed: jest.fn(),
+  lookupSubmarineRecovery: jest.fn(),
+  runSubmarineRecovery: jest.fn(),
+  scanRecoveryState: jest.fn(),
+}));
+
+jest.mock("../../services/arkade/pending-tx-recovery", () => ({
+  finalizePendingTx: jest.fn(),
 }));
 
 jest.mock("../../services/arkade/asset-format", () => ({
@@ -70,6 +129,10 @@ jest.mock("../../services/diagnostics/persisted", () => ({
   drainPersistedErrors: jest.fn(() => Promise.resolve([])),
 }));
 
+import {
+  MAINNET_ARK_SERVER_URL,
+  MUTINYNET_ARK_SERVER_URL,
+} from "../../services/arkade/network";
 import { LEGACY_STORAGE_KEYS, STORAGE_KEY } from "../storage-keys";
 import { generateSalt, hashPassword, useAppStore } from "../useAppStore";
 
@@ -194,6 +257,89 @@ describe("useAppStore hydrate / schema mismatch", () => {
     const state = useAppStore.getState();
     expect(state._hydrated).toBe(true);
     expect(state._schemaMismatch).toBe(false);
+  });
+});
+
+describe("useAppStore setArkadeNetwork", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useAppStore.setState({
+      wallet: null,
+      network: {
+        arkServerUrl: MUTINYNET_ARK_SERVER_URL,
+        detectedNetwork: "mutinynet",
+        status: "online",
+        lastError: null,
+        serverInfo: {
+          version: "1.0.0",
+          network: "mutinynet",
+          signerPubkey: "abc",
+          forfeitAddress: "xyz",
+          dustSats: 1000,
+          unilateralExitDelaySeconds: 60,
+          txFeeRate: "1",
+          intentFee: {},
+        },
+      },
+    });
+  });
+
+  it("writes the canonical mainnet URL when network is bitcoin", async () => {
+    await useAppStore.getState().setArkadeNetwork("bitcoin");
+    const state = useAppStore.getState();
+    expect(state.network.arkServerUrl).toBe(MAINNET_ARK_SERVER_URL);
+    expect(state.network.detectedNetwork).toBeNull();
+    expect(state.network.serverInfo).toBeNull();
+    expect(state.network.status).toBe("idle");
+  });
+
+  it("writes the canonical mutinynet URL when network is mutinynet", async () => {
+    // Pre-condition: already on mutinynet but with stale detectedNetwork from a
+    // prior probe. Action should still reset to idle so the user re-probes on
+    // create/restore.
+    useAppStore.setState({
+      network: {
+        arkServerUrl: MAINNET_ARK_SERVER_URL,
+        detectedNetwork: "bitcoin",
+        status: "online",
+        lastError: null,
+        serverInfo: null,
+      },
+    });
+    await useAppStore.getState().setArkadeNetwork("mutinynet");
+    const state = useAppStore.getState();
+    expect(state.network.arkServerUrl).toBe(MUTINYNET_ARK_SERVER_URL);
+    expect(state.network.detectedNetwork).toBeNull();
+    expect(state.network.status).toBe("idle");
+  });
+
+  it("refuses to switch when a wallet already exists", async () => {
+    useAppStore.setState({
+      wallet: {
+        id: "w1",
+        type: "arkade",
+        label: "x",
+        identityKind: "mnemonic",
+        publicKeyHex: "00",
+        arkServerUrl: MUTINYNET_ARK_SERVER_URL,
+        network: "mutinynet",
+        arkAddress: "tark1example",
+        boardingAddress: "tb1example",
+        balanceSats: 0,
+        balanceTotalSats: 0,
+        balanceBoardingSats: 0,
+        assetBalances: [],
+        activities: [],
+        backup: { hasMnemonic: true, hasPrivateKey: false },
+      },
+    });
+    await expect(
+      useAppStore.getState().setArkadeNetwork("bitcoin"),
+    ).rejects.toThrow(/Reset to switch/);
+    // URL should be unchanged.
+    expect(useAppStore.getState().network.arkServerUrl).toBe(
+      MUTINYNET_ARK_SERVER_URL,
+    );
   });
 });
 

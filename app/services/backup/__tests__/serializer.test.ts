@@ -144,3 +144,31 @@ describe("backup serializer LNURL round-trip", () => {
     expect(() => parseBackupPayload(wire)).toThrow(PayloadParseError);
   });
 });
+
+describe("backup serializer network round-trip", () => {
+  it("round-trips a wallet with network bitcoin", () => {
+    const mainnetWallet: ArkadeWalletMetadata = {
+      ...wallet,
+      network: "bitcoin",
+      arkServerUrl: "https://arkade.computer",
+    };
+    const built = buildBackupPayload({
+      wallet: mainnetWallet,
+      walletBehavior,
+      preferences: {
+        theme: "system",
+        fiatCurrency: "EUR",
+        bitcoinUnit: "auto",
+        notifications: { enabled: false, swaps: false, payments: false },
+      },
+      secret,
+      swapMetadata: [],
+      boltzSwaps: [] as BoltzSwap[],
+      importedAssetIds: [],
+    });
+    const wire = JSON.parse(JSON.stringify(built));
+    const parsed = parseBackupPayload(wire);
+    expect(parsed.wallet.network).toBe("bitcoin");
+    expect(parsed.wallet.arkServerUrl).toBe("https://arkade.computer");
+  });
+});

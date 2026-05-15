@@ -85,7 +85,51 @@ const LNURL_RE = /^lnurl1[02-9ac-hj-np-z]+$/i;
 // to match what users practically paste in.
 const LN_ADDRESS_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 // Mainnet uses the `ark` HRP; testnet, signet, mutinynet, and regtest all use `tark`.
-const ARKADE_RE = /^t?ark1[02-9ac-hj-np-z]{20,}$/i;
+const MAINNET_ARKADE_RE = /^ark1[02-9ac-hj-np-z]{20,}$/i;
+const MUTINYNET_ARKADE_RE = /^tark1[02-9ac-hj-np-z]{20,}$/i;
+const ANY_ARKADE_RE = /^t?ark1[02-9ac-hj-np-z]{20,}$/i;
+
+function networkLabel(network: NetworkName): string {
+  if (network === "bitcoin") return "Mainnet";
+  if (network === "mutinynet") return "Mutinynet";
+  if (network === "signet") return "Signet";
+  if (network === "testnet") return "Testnet";
+  if (network === "regtest") return "Regtest";
+  return network;
+}
+
+/**
+ * `ark1…` is Bitcoin mainnet; `tark1…` is every other network (testnet, signet,
+ * mutinynet, regtest). When `network` is null, any HRP matches.
+ */
+export function isArkadeAddressForNetwork(
+  address: string,
+  network: string | null | undefined,
+): boolean {
+  const trimmed = address.trim();
+  if (!trimmed) return false;
+  if (!network) return ANY_ARKADE_RE.test(trimmed);
+  if (network === "bitcoin") return MAINNET_ARKADE_RE.test(trimmed);
+  return MUTINYNET_ARKADE_RE.test(trimmed);
+}
+
+function arkadeHrpNetwork(address: string): "bitcoin" | "other" | null {
+  if (MAINNET_ARKADE_RE.test(address)) return "bitcoin";
+  if (MUTINYNET_ARKADE_RE.test(address)) return "other";
+  return null;
+}
+
+function wrongNetworkArkadeWarning(
+  address: string,
+  activeNetwork: NetworkName,
+): string | null {
+  const hrpNet = arkadeHrpNetwork(address);
+  if (!hrpNet) return null;
+  if (hrpNet === "bitcoin" && activeNetwork === "bitcoin") return null;
+  if (hrpNet === "other" && activeNetwork !== "bitcoin") return null;
+  const addressLabel = hrpNet === "bitcoin" ? "Mainnet" : "Mutinynet";
+  return `This is a ${addressLabel} address, but you are on ${networkLabel(activeNetwork)}`;
+}
 
 const KNOWN_BIP21_KEYS = new Set([
   "amount",
@@ -139,7 +183,7 @@ function detectBareType(value: string): PaymentType | null {
   // Lightning Addresses are LNURL-pay underneath — resolved to a bech32
   // endpoint by `services/arkade/lnurl.ts` later in the Send flow.
   if (LN_ADDRESS_RE.test(v)) return "lnurl";
-  if (ARKADE_RE.test(v)) return "arkade";
+  if (ANY_ARKADE_RE.test(v)) return "arkade";
   if (BTC_ADDRESS_RE.test(v)) return "bitcoin";
   return null;
 }
@@ -272,11 +316,35 @@ function buildBareLnurl(rawInput: string, lnurl: string): ParseResult {
   };
 }
 
-function parseArkadeBody(rawInput: string, body: string): ParseResult {
+function parseArkadeBody(
+  rawInput: string,
+  body: string,
+  options: ParsePaymentOptions,
+): ParseResult {
   const metadata: Record<string, string> = {};
   const { address, query } = splitAddressAndQuery(body);
-  if (!ARKADE_RE.test(address)) {
+  if (!ANY_ARKADE_RE.test(address)) {
     return { options: [], metadata, error: "Invalid Arkade address" };
+  }
+  const networkName = options.network ?? null;
+  const wrongNetwork =
+    networkName != null
+      ? wrongNetworkArkadeWarning(address, networkName)
+      : null;
+  if (wrongNetwork) {
+    return {
+      options: [
+        {
+          id: makeId("arkade", address),
+          type: "arkade",
+          raw: rawInput,
+          destination: shorten(address),
+          isPayable: false,
+          warning: wrongNetwork,
+        },
+      ],
+      metadata,
+    };
   }
   const amountSats = query.get("amount")
     ? btcAmountToSats(query.get("amount") ?? "")
@@ -426,15 +494,21 @@ function parseBitcoinBody(
   }
 
   const arkParam = query.get("ark") ?? query.get("arkade");
-  if (arkParam && ARKADE_RE.test(arkParam)) {
+  if (arkParam && ANY_ARKADE_RE.test(arkParam)) {
+    const networkName = options.network ?? null;
+    const wrongNetwork =
+      networkName != null
+        ? wrongNetworkArkadeWarning(arkParam, networkName)
+        : null;
     parsedOptions.push({
       id: makeId("arkade", arkParam),
       type: "arkade",
       raw: arkParam,
       destination: shorten(arkParam),
-      amountSats,
-      memo,
-      isPayable: true,
+      amountSats: wrongNetwork ? undefined : amountSats,
+      memo: wrongNetwork ? undefined : memo,
+      isPayable: wrongNetwork == null,
+      warning: wrongNetwork ?? undefined,
     });
   }
 
@@ -476,7 +550,7 @@ export function parsePaymentInput(
   }
 
   if (scheme === "arkade" || scheme === "ark") {
-    return parseArkadeBody(trimmed, rest.replace(/^\/\//, ""));
+    return parseArkadeBody(trimmed, rest.replace(/^\/\//, ""), options);
   }
 
   if (scheme === "bitcoin") {
@@ -492,7 +566,7 @@ export function parsePaymentInput(
   }
   if (bare === "lightning") return buildBareLightning(trimmed, addressPart);
   if (bare === "lnurl") return buildBareLnurl(trimmed, addressPart);
-  if (bare === "arkade") return parseArkadeBody(trimmed, trimmed);
+  if (bare === "arkade") return parseArkadeBody(trimmed, trimmed, options);
   return parseBitcoinBody(trimmed, trimmed, options);
 }
 

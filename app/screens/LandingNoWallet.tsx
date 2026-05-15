@@ -5,6 +5,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Button from "../components/Button";
 import LoadingOverlay from "../components/LoadingOverlay";
+import NetworkSelector from "../components/NetworkSelector";
 import { useToast } from "../components/ToastProvider";
 import { useLoading } from "../hooks/useLoading";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
@@ -25,7 +26,6 @@ export default function LandingNoWallet() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
   const createWallet = useAppStore((s) => s.createWallet);
-  const arkServerUrl = useAppStore((s) => s.network.arkServerUrl);
   const { showToast } = useToast();
   const { isLoading, message, show, hide } = useLoading();
 
@@ -60,9 +60,9 @@ export default function LandingNoWallet() {
         <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
           Your self-custodial Arkade wallet
         </Text>
-        <Text style={[styles.serverHint, { color: theme.colors.textSubtle }]}>
-          Server: {arkServerUrl}
-        </Text>
+        <View style={styles.selector}>
+          <NetworkSelector theme={theme} disabled={isLoading} />
+        </View>
       </View>
 
       <View style={styles.actions}>
@@ -124,10 +124,9 @@ const styles = StyleSheet.create({
     fontSize: typography.size.md,
     marginTop: spacing[2],
   },
-  serverHint: {
-    fontSize: typography.size.xs,
-    marginTop: spacing[3],
-    fontFamily: typography.fontFamily.mono,
+  selector: {
+    width: "100%",
+    marginTop: spacing[6],
   },
   actions: {
     paddingBottom: spacing[8],

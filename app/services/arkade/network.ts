@@ -1,6 +1,8 @@
-export const DEFAULT_ARK_SERVER_URL = "https://mutinynet.arkade.sh";
+export const MAINNET_ARK_SERVER_URL = "https://arkade.computer";
+export const MUTINYNET_ARK_SERVER_URL = "https://mutinynet.arkade.sh";
+export const DEFAULT_ARK_SERVER_URL = MUTINYNET_ARK_SERVER_URL;
 
-const MAINNET_NETWORK_NAMES = new Set(["bitcoin", "mainnet"]);
+const MAINNET_NETWORK_NAMES = new Set(["bitcoin"]);
 
 const DEFAULT_DELEGATOR_URLS: Record<string, string> = {
   bitcoin: "https://delegate.arkade.money",
@@ -9,25 +11,26 @@ const DEFAULT_DELEGATOR_URLS: Record<string, string> = {
 };
 
 const LNURL_SERVER_URLS: Record<string, string> = {
+  bitcoin: "https://lnurl.arkade.sh",
   mutinynet: "https://lnurl.mutinynet.arkade.sh",
 };
 
 export function isMainnetForNetworkName(network: string): boolean {
-  return MAINNET_NETWORK_NAMES.has(network.toLowerCase());
+  return MAINNET_NETWORK_NAMES.has(network);
 }
 
 export function defaultDelegatorUrlForNetwork(
   network: string | null | undefined,
 ): string | null {
   if (!network) return null;
-  return DEFAULT_DELEGATOR_URLS[network.toLowerCase()] ?? null;
+  return DEFAULT_DELEGATOR_URLS[network] ?? null;
 }
 
 export function lnurlServerUrlForNetwork(
   network: string | null | undefined,
 ): string | null {
   if (!network) return null;
-  return LNURL_SERVER_URLS[network.toLowerCase()] ?? null;
+  return LNURL_SERVER_URLS[network] ?? null;
 }
 
 const PRIVATE_HOST_RE =
