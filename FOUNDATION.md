@@ -70,6 +70,10 @@ The active entry is `index.ts` → `App.tsx`, which mounts:
 - Mock data helpers in `app/store/mock.ts`
 - Actions: `hydrate()`, `createWallet()`, `lockWallet()`, `unlockWithPassword()`, `unlockWithBiometrics()`, `resetWallet()`, `setTheme()`, `setFiatCurrency()`, `setPassword()`, `toggleBiometrics()`
 
+### Network Naming
+
+Use `bitcoin` as the canonical internal and persisted network name for Bitcoin mainnet, matching `@arkade-os/sdk`'s `NetworkName`. Use "Mainnet" only as user-facing UI copy. Do not accept lowercase `mainnet` as an internal or boundary value; code should pass SDK `NetworkName` strings only.
+
 ### Theming
 
 Custom theme in `app/theme/theme.tsx`. Brand color: `#ff007f`.
