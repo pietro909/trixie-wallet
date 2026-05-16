@@ -4,7 +4,7 @@ This repository is an Expo-only, iOS/Android self-custodial Arkade wallet app. T
 
 This is a living document: tick items off as they land.
 
-Last updated: 2026-05-13 (Milestones 16–18 added; 11–18 reordered; pending milestones resequenced 16→17→15→18)
+Last updated: 2026-05-16 (Milestones 18–21 resequenced: 21→18→19→20 per IDEAS.md; Portable History Milestones moved before Cloud Backup)
 
 ## Milestones
 
@@ -45,11 +45,13 @@ Last updated: 2026-05-13 (Milestones 16–18 added; 11–18 reordered; pending m
   - Add a network selector (mutinynet / mainnet) to create and restore flows; encode the chosen network in the backup format.
 - [ ] Milestone 17: Multiple Wallets and Labels ([docs/MILESTONE_17.agents.md](./docs/MILESTONE_17.agents.md))
   - Move from a single-wallet store model to multiple wallets with labels and isolated state.
-- [ ] Milestone 18: Cloud Backup ([docs/MILESTONE_18.agents.md](./docs/MILESTONE_18.agents.md))
+- [ ] Milestone 18: Portable History Milestones ([docs/MILESTONE_18.agents.md](./docs/MILESTONE_18.agents.md))
+  - Build self-custodial history checkpoints that allow for fast-trust restores without exposing spend-keys.
+- [ ] Milestone 19: Cloud Backup ([docs/MILESTONE_19.agents.md](./docs/MILESTONE_19.agents.md))
   - Add optional cloud transport for the encrypted backup bundle (transport only; format remains local-first).
-- [ ] Milestone 19: Notification Deep-linking ([docs/MILESTONE_19.agents.md](./docs/MILESTONE_19.agents.md))
+- [ ] Milestone 20: Notification Deep-linking ([docs/MILESTONE_20.agents.md](./docs/MILESTONE_20.agents.md))
   - Enable OS notifications to deep-link directly to specific Activity rows by mapping background task results to activity IDs.
-- [ ] Milestone 20: Non-default Wallet Behavior ([docs/MILESTONE_20.agents.md](./docs/MILESTONE_20.agents.md))
+- [ ] Milestone 21: Non-default Wallet Behavior ([docs/MILESTONE_21.agents.md](./docs/MILESTONE_21.agents.md))
   - Formalize strategy and testing for disabling VTXO auto-renewal and delegated renewal, ensuring the SDK Settlement Manager respects these toggles safely.
 
 ## Relevant Documentation

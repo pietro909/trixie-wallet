@@ -50,4 +50,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     versions: compact({ sdk: sdkVersion, boltzSwap: boltzVersion }),
     git: compact({ commit, tag: exactTag, describe }),
   },
+  ios: {
+    bundleIdentifier: "uno.pietro.trixie",
+  },
 });

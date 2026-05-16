@@ -70,3 +70,19 @@ Milestone 15 made the user-driven store actions `await persist(get())` so they c
 The race window is small (the flag will be re-set on the next swap event anyway), but a swap-event burst that lands moments before app termination could lose the dirty mark, leaving the Reset gate's "needs backup" warning silent until the next mutation.
 
 A real fix would either (a) make the listener async and have the SwapManager await it, or (b) introduce a top-level persist queue that the app-lifecycle handler flushes before allowing suspension (same mechanism that would close [#2](#2-preference-toggle-persistence-is-not-actually-awaited-at-the-call-site)).
+
+## 5. In-app notifications appear at the bottom instead of the top
+
+**Status: OPEN**
+
+**Where:** `app/components/ToastProvider.tsx`
+
+Most OS and app-level notifications appear at the top of the screen. The current toast implementation anchors to the bottom, which is atypical and may confuse users who expect status feedback near the top.
+
+## 6. Send / Receive actions are not thumb-reachable on Wallet home
+
+**Status: OPEN**
+
+**Where:** `app/screens/WalletScreen.tsx`
+
+Send and Receive are the primary actions on the Wallet home screen, but their current placement is not optimised for one-handed use. Moving them toward the bottom of the screen would put them within natural thumb reach, matching the ergonomic conventions of other mobile wallet apps.

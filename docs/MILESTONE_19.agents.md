@@ -1,31 +1,31 @@
-# Milestone 19: Notification Deep-linking
+# Milestone 19: Cloud Backup
 
-**Status:** Planned (promoted from Issue 7)
+Goal: add optional encrypted cloud backup on top of the local backup format.
 
-## Goal
-Enable OS notifications (fired from the background swap-poll task) to deep-link directly to specific Activity rows. This improves the UX by taking the user straight to the relevant transaction detail instead of a generic activity list.
+This milestone should prove:
 
-## Context & Constraints
-The background swap-poll task (`@arkade-os/boltz-swap/expo/background`) currently emits aggregate counts in `TaskResult.data`:
-```json
-{ "polled": 1, "updated": 0, "claimed": 1, "refunded": 0, "errors": 0 }
-```
-Because the specific `claimedIds` or `refundedIds` are not exposed, the notification payload in `app/services/arkade/swap-background.ts` cannot include an `activityId`.
+- A user can sync an encrypted backup blob to a cloud service.
+- A user can restore that blob on a new device.
+- The cloud provider never sees plaintext wallet secrets.
+- Local backup remains the canonical recovery format.
 
-## Strategy
-To resolve this, we have two primary options:
+## Current State
 
-1. **Upstream Enhancement (Preferred):** Update the `@arkade-os/boltz-swap` SDK's background task to include the IDs of transitioned swaps in the `TaskResult`.
-2. **Local Reconciliation (Fallback):** Before firing the notification in `pushResult`, query the local SQLite swap repository to identify which swaps just transitioned to a "claim-notified" or "refund-notified" state.
+- Milestone 6 defines the local backup format and restore path.
+- There is no cloud sync transport yet.
+- The app already has the wallet metadata and recovery primitives needed to
+  produce a portable encrypted bundle.
 
-### Implementation Checklist
-- [ ] Research SDK capability: check if `TaskResult` can be extended to include `claimedIds`.
-- [ ] Update `RecordingSwapTaskQueue.pushResult` to extract specific IDs.
-- [ ] Map swap IDs to Activity IDs (using the logic in `app/services/arkade/activity-history.ts`).
-- [ ] Update `scheduleLocalNotification` payload to include `activityId`.
-- [ ] Verify `useNotifications` hook correctly handles the deep-link navigation.
+## Product Rules
 
-## Testing Matrix
-- **Background Claim:** Trigger a claim in the background; verify notification deep-links to the specific claim activity.
-- **Background Refund:** Trigger a refund in the background; verify notification deep-links to the specific refund activity.
-- **Coalesced Notification:** If multiple swaps transition, decide on a deep-linking strategy (e.g., link to the first one or fallback to the list).
+- Cloud sync is transport only. It must not become the secret store.
+- Never send mnemonics, private keys, or preimages unencrypted.
+- Validate bundle version and wallet ownership before import.
+- Keep provider-specific auth separate from the wallet model.
+
+## Selected Direction
+
+Add a cloud transport layer that uploads and downloads the encrypted backup
+bundle produced by Milestone 6. Support can be provider-specific, but the
+wallet-facing format should stay stable.
+
