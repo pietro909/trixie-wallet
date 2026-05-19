@@ -32,7 +32,7 @@ export default function ToastProvider({
   children: React.ReactNode;
 }) {
   const [toast, setToast] = React.useState<ToastState>(null);
-  const translateY = React.useRef(new Animated.Value(100)).current;
+  const translateY = React.useRef(new Animated.Value(-80)).current;
   const opacity = React.useRef(new Animated.Value(0)).current;
   const timerRef = React.useRef<ReturnType<typeof setTimeout>>(undefined);
   const theme = useAppTheme();
@@ -58,7 +58,7 @@ export default function ToastProvider({
       timerRef.current = setTimeout(() => {
         Animated.parallel([
           Animated.timing(translateY, {
-            toValue: 100,
+            toValue: -80,
             duration: 200,
             useNativeDriver: true,
           }),
@@ -88,7 +88,7 @@ export default function ToastProvider({
             styles.toast,
             {
               backgroundColor: bgColor,
-              bottom: 100 + insets.bottom,
+              top: insets.top + spacing[3],
               transform: [{ translateY }],
               opacity,
             },
