@@ -1,6 +1,6 @@
 export const MAINNET_ARK_SERVER_URL = "https://arkade.computer";
 export const MUTINYNET_ARK_SERVER_URL = "https://mutinynet.arkade.sh";
-export const DEFAULT_ARK_SERVER_URL = MUTINYNET_ARK_SERVER_URL;
+export const DEFAULT_ARK_SERVER_URL = MAINNET_ARK_SERVER_URL;
 
 const MAINNET_NETWORK_NAMES = new Set(["bitcoin"]);
 
