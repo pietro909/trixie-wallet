@@ -61,16 +61,16 @@ function setupHarness(args: {
 
   // expo/fetch backs the SSE session stream
   const sessionCalls: { url: string; init: RequestInit | undefined }[] = [];
-  (expoFetch as jest.MockedFunction<typeof fetch>).mockImplementation(
-    async (input: RequestInfo, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input.toString();
-      sessionCalls.push({ url, init });
-      // Construct a Response with the readable stream as body. Cast via unknown
-      // because lib.dom's Response type does not accept a ReadableStream<Uint8Array>
-      // in its constructor signature even though the runtime supports it.
-      return new Response(stream as unknown as BodyInit, { status: 200 });
-    },
-  );
+  (
+    expoFetch as unknown as jest.MockedFunction<typeof fetch>
+  ).mockImplementation(async (input: RequestInfo, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    sessionCalls.push({ url, init });
+    // Construct a Response with the readable stream as body. Cast via unknown
+    // because lib.dom's Response type does not accept a ReadableStream<Uint8Array>
+    // in its constructor signature even though the runtime supports it.
+    return new Response(stream as unknown as BodyInit, { status: 200 });
+  });
 
   // global fetch backs the invoice sub-requests
   globalThis.fetch = jest.fn(async (input: RequestInfo, init?: RequestInit) => {

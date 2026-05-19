@@ -296,7 +296,7 @@ export function buildActivityDetailSections(
   const lightningRows: SectionRow[] = [];
   const lnurlFlows = new Set(["lnurl_receive", "lnurl_send"]);
   if (lnurlFlows.has(readString(md, "createdForFlow") ?? "")) {
-    lightningRows.push({ kind: "plain", label: "Source", value: "LNURL" });
+    lightningRows.push({ kind: "text", label: "Source", value: "LNURL" });
   }
   let swapId = readString(md, "swapId");
   let swapType = readString(md, "swapType");

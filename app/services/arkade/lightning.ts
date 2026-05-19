@@ -12,15 +12,16 @@ import {
   type FeesResponse,
   isChainFinalStatus,
   isChainSwapRefundable,
+  isReverseFailedStatus,
   isReverseFinalStatus,
-  isReverseSuccessStatus,
+  isSubmarineFailedStatus,
   isSubmarineFinalStatus,
   type LimitsResponse,
   type SendLightningPaymentRequest,
   type SendLightningPaymentResponse,
 } from "@arkade-os/boltz-swap";
 import { ExpoArkadeSwaps } from "@arkade-os/boltz-swap/expo";
-import { type ArkTransaction, type NetworkName, TxType } from "@arkade-os/sdk";
+import type { ArkTransaction, NetworkName } from "@arkade-os/sdk";
 import type {
   ArkadeWalletMetadata,
   LightningResumeTrigger,
@@ -40,6 +41,11 @@ import {
   seedSwapPollTask,
   swapTaskQueue,
 } from "./swap-background";
+import {
+  findUnambiguousHistoryMatch,
+  LINKAGE_LOOKAHEAD_MS,
+  LINKAGE_LOOKBACK_MS,
+} from "./swap-linkage";
 import {
   getAllSwapMetadata,
   getSwapMetadata,
@@ -118,49 +124,88 @@ function notify(event: SwapEvent): void {
   }
 }
 
+type LinkageProfile = {
+  direction: "in" | "out";
+  amountSats: number;
+};
+
 /**
- * Receive linkage handshake (history-match fallback).
+ * Project a restorable reverse/submarine swap to the (direction, amount) used
+ * by the history-match heuristic. Returns null for chain swaps, failed
+ * states or refunded submarine swaps — those should remain separately
+ * visible instead of being collapsed into a successful Lightning row.
+ */
+function linkageProfileFor(swap: BoltzSwap): LinkageProfile | null {
+  if (swap.type === "reverse") {
+    if (isReverseFailedStatus(swap.status)) return null;
+    const amount = swap.response.onchainAmount;
+    if (amount == null) return null;
+    return { direction: "in", amountSats: amount };
+  }
+  if (swap.type === "submarine") {
+    if (isSubmarineFailedStatus(swap.status)) return null;
+    if (swap.refunded) return null;
+    const amount = swap.response.expectedAmount;
+    if (amount == null) return null;
+    return { direction: "out", amountSats: amount };
+  }
+  return null;
+}
+
+/**
+ * History-match linkage handshake.
  *
- * After a reverse swap completes, attempt to link it to a fresh incoming
- * Arkade tx so the merged Activity list collapses both rows into one. If the
- * package surface ever exposes a way to capture the claim tx id directly via
- * `SwapManagerCallbacks.claim`, prefer that path with `source: "receive_claim"`.
+ * After a swap completes live or is recovered during seed-only restore, attempt to link it to the
+ * matching Arkade payment row so `mergeActivities` collapses both rows into
+ * one Lightning activity. Two paths drive this:
+ *
+ * - Live (`onSwapCompleted`): the SDK already routes us through here when a
+ *   swap finishes during a normal session. The capture-on-create paths
+ *   (`send_result`, `receive_claim`) usually fire first; this is the fallback.
+ * - Seed-only restore: `restoreLightningActivity` calls this once per restored
+ *   swap. With no backup material, this heuristic is the *only* way to
+ *   re-establish the `walletTxId` link for both reverse and submarine swaps,
+ *   so the user doesn't see a bare "Arkade sent/received" row next to the
+ *   Lightning row.
  *
  * Multi-match rule: when 2+ candidate Arkade rows match the swap's
- * (amount, time-window), link none — let both swap rows and both Arkade rows
- * coexist until one of them reaches a terminal status that disambiguates.
+ * (direction, amount, time-window), link none — let both swap rows and both
+ * Arkade rows coexist until one reaches a terminal status that disambiguates.
+ *
+ * The `history` argument is optional. `restoreLightningActivity` fetches it
+ * once and reuses it across all restored swaps to avoid N round-trips.
  */
-async function attemptReverseLinkage(swap: BoltzSwap): Promise<void> {
-  if (swap.type !== "reverse") return;
-  if (!isReverseSuccessStatus(swap.status)) return;
+async function attemptSwapLinkage(
+  swap: BoltzSwap,
+  history?: ArkTransaction[],
+): Promise<void> {
+  const profile = linkageProfileFor(swap);
+  if (!profile) return;
   const meta = await getSwapMetadata(swap.id).catch(() => null);
   if (!meta || meta.walletTxId) return;
-  const onchainAmount = swap.response.onchainAmount;
-  if (onchainAmount == null) return;
-  let history: ArkTransaction[];
-  try {
-    const wallet = await getWallet();
-    history = await wallet.getTransactionHistory();
-  } catch (e) {
-    recordError(
-      "swap",
-      `reverse_linkage_history_unavailable: ${e instanceof Error ? e.message : String(e)}`,
-    );
-    return;
+  let txHistory: ArkTransaction[];
+  if (history) {
+    txHistory = history;
+  } else {
+    try {
+      const wallet = await getWallet();
+      txHistory = await wallet.getTransactionHistory();
+    } catch (e) {
+      recordError(
+        "swap",
+        `swap_linkage_history_unavailable: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return;
+    }
   }
   const swapCreatedAtMs = swap.createdAt * 1000;
-  const lowerBound = swapCreatedAtMs - 30_000;
-  const upperBound = Date.now() + 5_000;
-  const matches = history.filter((tx) => {
-    if (tx.type !== TxType.TxReceived) return false;
-    if (Math.abs(tx.amount) !== onchainAmount) return false;
-    return tx.createdAt >= lowerBound && tx.createdAt <= upperBound;
+  const txId = findUnambiguousHistoryMatch({
+    history: txHistory,
+    direction: profile.direction,
+    amountSats: profile.amountSats,
+    lowerBoundMs: swapCreatedAtMs - LINKAGE_LOOKBACK_MS,
+    upperBoundMs: Date.now() + LINKAGE_LOOKAHEAD_MS,
   });
-  if (matches.length !== 1) return;
-  const txId =
-    matches[0].key.arkTxid ||
-    matches[0].key.commitmentTxid ||
-    matches[0].key.boardingTxid;
   if (!txId) return;
   await linkSwapToWalletTx({
     swapId: swap.id,
@@ -232,11 +277,11 @@ async function attachSwapManagerSubscriptions(
     unsubs.push(
       await manager.onSwapCompleted(async (swap) => {
         try {
-          await attemptReverseLinkage(swap);
+          await attemptSwapLinkage(swap);
         } catch (e) {
           recordError(
             "swap",
-            `reverse_linkage_failed: ${e instanceof Error ? e.message : String(e)}`,
+            `swap_linkage_failed: ${e instanceof Error ? e.message : String(e)}`,
           );
         }
         notify({ kind: "completed", swap });
@@ -825,6 +870,14 @@ export async function restoreLightningActivity(
   try {
     const restoredAt = Date.now();
     const result = await swaps.restoreSwaps();
+    const restoredSwaps: BoltzSwap[] = [
+      ...result.reverseSwaps,
+      ...result.submarineSwaps,
+      ...result.chainSwaps,
+    ];
+    await Promise.allSettled(
+      restoredSwaps.map((swap) => swaps.swapRepository.saveSwap(swap)),
+    );
     if (walletId) {
       await recordRestoredLightningMetadata({
         walletId,
@@ -833,6 +886,30 @@ export async function restoreLightningActivity(
         submarineSwaps: result.submarineSwaps,
         chainSwaps: result.chainSwaps,
       });
+      // Seed-only restore: there is no backup file to source `walletTxId`
+      // from, so the merge logic in `swap-mappers.ts` would render the
+      // underlying Arkade payment row instead of (or alongside) the Lightning
+      // row. Run the history-match linkage once per restored reverse/
+      // submarine swap to recover the `walletTxId` where it's unambiguous.
+      let history: ArkTransaction[] = [];
+      try {
+        const wallet = await getWallet();
+        history = await wallet.getTransactionHistory();
+      } catch (e) {
+        recordError(
+          "swap",
+          `restore_linkage_history_unavailable: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+      if (history.length > 0) {
+        const linkageTargets: BoltzSwap[] = [
+          ...result.reverseSwaps,
+          ...result.submarineSwaps,
+        ];
+        await Promise.allSettled(
+          linkageTargets.map((swap) => attemptSwapLinkage(swap, history)),
+        );
+      }
     }
     return {
       reverseCount: result.reverseSwaps.length,
