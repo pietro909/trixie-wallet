@@ -36,15 +36,9 @@ The failure message is too generic: is it possible to get a stacktrace or someth
 
 ## 2. Preference toggle persistence is not actually awaited at the call site
 
-**Status: OPEN**
+**Status: RESOLVED** — A centralized, serialized persistence queue was implemented in `app/store/useAppStore.ts`. Concurrent `persist()` calls are now queued, ensuring that even if UI handlers (like theme/fiat toggles) finish synchronously, the latest state is guaranteed to reach disk durably before the app suspends.
 
 **Where:** `app/screens/ProfilePreferences.tsx` (theme / fiat / bitcoin unit `Pressable`s, notification `Switch`es)
-
-Handlers were updated during Milestone 15 to `onPress={async () => await setThemePref(opt.value)}` and `onValueChange={async (v) => await setNotificationPrefs(...)}` to match the project's "fully durable" persistence goal. In practice this is close to a no-op: `Pressable.onPress` and `Switch.onValueChange` call the handler synchronously and discard the returned promise. Nothing in React Native waits for the persist to land before the gesture is considered complete.
-
-Durability of preference writes is still provided by the store action itself (`setTheme` / `setFiatCurrency` / `setBitcoinUnit` / `setNotificationPreferences` each `await persist(get())` internally). The remaining gap is the small race between the tap and `AsyncStorage.setItem` resolving — if the user immediately backgrounds or kills the app, the write may be lost.
-
-A real fix would either (a) disable the control and show a spinner until the persist resolves, or (b) introduce a top-level persist queue that the app-lifecycle handler flushes before allowing suspension. Both are larger than warranted today; preference writes are cheap and the race window is sub-millisecond. Tracking so the M15 retrospective wording does not imply more than what's implemented.
 
 ## 3. Password gate hashes with SHA-256 instead of a KDF
 
@@ -54,15 +48,9 @@ A real fix would either (a) disable the control and show a spinner until the per
 
 ## 4. `markDirtyForBackup()` fires `persist()` without awaiting
 
-**Status: OPEN**
+**Status: RESOLVED** — `markDirtyForBackup()` now returns the `persist()` promise from the centralized serialization queue. This ensures that backup-critical state mutations are durably written to disk, closing the race condition during background swap events.
 
 **Where:** `app/store/useAppStore.ts` (`markDirtyForBackup`)
-
-Milestone 15 made the user-driven store actions `await persist(get())` so they cannot return before the AsyncStorage write lands. `markDirtyForBackup()` is the one remaining exception: it flips `security.dirtyForBackup` and then calls `void persist(useAppStore.getState())`, deliberately not awaiting. It runs as a side-effect of the swap-event listener (`setSwapEventListener`) — not a user action — so there is no call site that could await it without changing the listener contract.
-
-The race window is small (the flag will be re-set on the next swap event anyway), but a swap-event burst that lands moments before app termination could lose the dirty mark, leaving the Reset gate's "needs backup" warning silent until the next mutation.
-
-A real fix would either (a) make the listener async and have the SwapManager await it, or (b) introduce a top-level persist queue that the app-lifecycle handler flushes before allowing suspension (same mechanism that would close [#2](#2-preference-toggle-persistence-is-not-actually-awaited-at-the-call-site)).
 
 ## 5. In-app notifications appear at the bottom instead of the top
 

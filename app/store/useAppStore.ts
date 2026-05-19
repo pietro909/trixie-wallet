@@ -208,13 +208,13 @@ function appVersionString(): string {
   return cfg?.version ?? "unknown";
 }
 
-function markDirtyForBackup(): void {
+function markDirtyForBackup(): Promise<void> {
   const current = useAppStore.getState();
-  if (current.security.dirtyForBackup) return;
+  if (current.security.dirtyForBackup) return Promise.resolve();
   useAppStore.setState({
     security: { ...current.security, dirtyForBackup: true },
   });
-  void persist(useAppStore.getState());
+  return persist(useAppStore.getState());
 }
 
 const DEFAULT_WALLET_BEHAVIOR: WalletBehavior = {
@@ -485,18 +485,48 @@ type StoreState = AppState & {
   toggleBiometrics: (enabled: boolean) => Promise<void>;
 };
 
-async function persist(state: AppState) {
-  const data: AppState = {
-    schemaVersion: CURRENT_SCHEMA_VERSION,
-    wallet: state.wallet,
-    network: state.network,
-    walletBehavior: state.walletBehavior,
-    backgroundTasks: state.backgroundTasks,
-    assets: state.assets,
-    preferences: state.preferences,
-    security: state.security,
-  };
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+let isPersisting = false;
+let pendingPersist: Promise<void> | null = null;
+
+/**
+ * Persist the current state to AsyncStorage.
+ *
+ * Serialized to prevent concurrent write races. If a write is already in
+ * flight, subsequent calls wait for it to finish and then trigger exactly
+ * one more write of the latest state.
+ */
+async function persist(state: AppState): Promise<void> {
+  if (isPersisting) {
+    if (!pendingPersist) {
+      pendingPersist = (async () => {
+        while (isPersisting) {
+          // Wait for the active write to finish
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        // One more write of the absolute latest state
+        await persist(useAppStore.getState());
+        pendingPersist = null;
+      })();
+    }
+    return pendingPersist;
+  }
+
+  isPersisting = true;
+  try {
+    const data: AppState = {
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      wallet: state.wallet,
+      network: state.network,
+      walletBehavior: state.walletBehavior,
+      backgroundTasks: state.backgroundTasks,
+      assets: state.assets,
+      preferences: state.preferences,
+      security: state.security,
+    };
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } finally {
+    isPersisting = false;
+  }
 }
 
 async function buildActivities(
