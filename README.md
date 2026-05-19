@@ -28,12 +28,6 @@ pnpm format         # Format files
 pnpm check          # Lint + formatter check
 ```
 
-## Manual testing status
-
-Items here are implemented and type-checked but have not yet been exercised on a real device. They graduate off this list once the scenarios in their milestone doc's "Verification Plan" have been run end-to-end.
-
-- **Milestone 9 — Disaster Recovery Tooling** ([docs/MILESTONE_9.agents.md](./docs/MILESTONE_9.agents.md)): ProfileRecovery scan/classify, per-row submarine VHTLC recovery, ARK→BTC chain refund (Recovery + Activity Details entry points), pending-tx finalization, and the redacted recovery counts in the support bundle still need on-device verification across the scenarios in that doc.
-
 ## Notes
 
 - Package manager is **pnpm**. The repo uses `node-linker=hoisted` in `.npmrc` for Metro / Babel-alias compatibility.
