@@ -424,6 +424,7 @@ type StoreState = AppState & {
   lockWallet: () => Promise<void>;
   unlockWithPassword: (password: string) => Promise<boolean>;
   unlockWithBiometrics: () => Promise<boolean>;
+  verifyPassword: (password: string) => Promise<boolean>;
   resetWallet: () => Promise<void>;
   getPendingLightningSwapCount: () => Promise<number>;
   scanRecoveryState: () => Promise<RecoveryScan>;
@@ -1630,6 +1631,13 @@ export const useAppStore = create<StoreState>((set, get) => ({
     await persist(get());
     scheduleLightningResume("unlock");
     return true;
+  },
+
+  verifyPassword: async (password) => {
+    const { security } = get();
+    if (!security.passwordHash || !security.passwordSalt) return false;
+    const hash = await hashPassword(password, security.passwordSalt);
+    return timingSafeEqual(hash, security.passwordHash);
   },
 
   unlockWithBiometrics: async () => {

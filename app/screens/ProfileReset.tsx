@@ -4,6 +4,7 @@ import { AlertTriangle, ShieldCheck } from "lucide-react-native";
 import * as React from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import AuthGate from "../components/AuthGate";
 import Button from "../components/Button";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../navigation/RootStack";
@@ -38,6 +39,7 @@ export default function ProfileReset() {
   const [input, setInput] = React.useState("");
   const [pendingCount, setPendingCount] = React.useState<number | null>(null);
   const [health, setHealth] = React.useState<BackupHealth | null>(null);
+  const [authVisible, setAuthVisible] = React.useState(false);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run on backup-state signals
   React.useEffect(() => {
@@ -65,6 +67,11 @@ export default function ProfileReset() {
   const canReset = input === expected;
 
   async function handleReset() {
+    setAuthVisible(true);
+  }
+
+  async function performReset() {
+    setAuthVisible(false);
     await resetWallet();
     // Navigation auto-redirects to Landing because wallet becomes null.
   }
@@ -197,6 +204,13 @@ export default function ProfileReset() {
           style={styles.resetBtn}
         />
       </View>
+      <AuthGate
+        visible={authVisible}
+        title="Confirm Wallet Reset"
+        message="This will permanently delete all wallet data and keys. This cannot be undone."
+        onSuccess={performReset}
+        onCancel={() => setAuthVisible(false)}
+      />
     </SafeAreaView>
   );
 }

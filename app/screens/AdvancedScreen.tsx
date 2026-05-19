@@ -23,6 +23,7 @@ import {
   Text,
   View,
 } from "react-native";
+import AuthGate from "../components/AuthGate";
 import { useToast } from "../components/ToastProvider";
 import { useBackgroundTaskMetrics } from "../hooks/useBackgroundTaskMetrics";
 import { useFormatSats } from "../hooks/useFormatSats";
@@ -95,6 +96,7 @@ export default function AdvancedScreen() {
 
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [busyKey, setBusyKey] = React.useState<string | null>(null);
+  const [authVisible, setAuthVisible] = React.useState(false);
   const serverInfo = networkState.serverInfo;
   const detectedNetwork = networkState.detectedNetwork;
   const behaviorNetwork = detectedNetwork ?? wallet?.network ?? null;
@@ -197,6 +199,11 @@ export default function AdvancedScreen() {
   }
 
   function presentBundleActions() {
+    setAuthVisible(true);
+  }
+
+  function handleAuthorizedBundle() {
+    setAuthVisible(false);
     Alert.alert(
       "Support bundle",
       "Bundles a redacted snapshot of wallet, server, and recent error events. Safe to share with support.",
@@ -766,6 +773,13 @@ export default function AdvancedScreen() {
           onPress={presentBundleActions}
         />
       </View>
+      <AuthGate
+        visible={authVisible}
+        title="Authorize Support Bundle"
+        message="Authorize to build a redacted snapshot of wallet and server state for debugging."
+        onSuccess={handleAuthorizedBundle}
+        onCancel={() => setAuthVisible(false)}
+      />
     </ScrollView>
   );
 }

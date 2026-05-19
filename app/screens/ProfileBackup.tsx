@@ -21,6 +21,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import AuthGate from "../components/AuthGate";
 import Button from "../components/Button";
 import LoadingOverlay from "../components/LoadingOverlay";
 import { useToast } from "../components/ToastProvider";
@@ -99,9 +100,27 @@ export default function ProfileBackup() {
 
   const [health, setHealth] = React.useState<BackupHealth | null>(null);
 
+  const [authVisible, setAuthVisible] = React.useState(false);
+  const [authAction, setAuthAction] = React.useState<{
+    run: () => void | Promise<void>;
+  } | null>(null);
+  const [authTitle, setAuthTitle] = React.useState("");
+  const [authMessage, setAuthMessage] = React.useState("");
+
   const exportBackup = useAppStore((s) => s.exportBackup);
   const markBackupCompleted = useAppStore((s) => s.markBackupCompleted);
   const discardBackupTempFile = useAppStore((s) => s.discardBackupTempFile);
+
+  function requestAuth(
+    title: string,
+    message: string,
+    onSuccess: () => void | Promise<void>,
+  ) {
+    setAuthTitle(title);
+    setAuthMessage(message);
+    setAuthAction({ run: onSuccess });
+    setAuthVisible(true);
+  }
 
   // Re-fetch health whenever the dirty flag flips, the timestamp changes, or
   // we navigate back to this screen after an export. Cheap query, runs off
@@ -127,19 +146,26 @@ export default function ProfileBackup() {
       setRevealed(false);
       return;
     }
-    setRevealLoading(true);
-    setRevealError(null);
-    try {
-      const s = await readSecret(wallet.id);
-      setSecret(s);
-      setRevealed(true);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Could not read secret";
-      setRevealError(msg);
-      showToast(msg, "error");
-    } finally {
-      setRevealLoading(false);
-    }
+
+    requestAuth(
+      "Reveal Master Key",
+      "Authorize to view your wallet's secret phrase or private key.",
+      async () => {
+        setRevealLoading(true);
+        setRevealError(null);
+        try {
+          const s = await readSecret(wallet.id);
+          setSecret(s);
+          setRevealed(true);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Could not read secret";
+          setRevealError(msg);
+          showToast(msg, "error");
+        } finally {
+          setRevealLoading(false);
+        }
+      },
+    );
   }
 
   async function handleCopy(text: string, label: string) {
@@ -153,10 +179,16 @@ export default function ProfileBackup() {
   }
 
   function startExport() {
-    setExportError(null);
-    setPassword("");
-    setConfirm("");
-    setExportPhase("form");
+    requestAuth(
+      "Export Backup",
+      "Authorize to create an encrypted backup of your wallet.",
+      () => {
+        setExportError(null);
+        setPassword("");
+        setConfirm("");
+        setExportPhase("form");
+      },
+    );
   }
 
   function cancelExport() {
@@ -619,6 +651,21 @@ export default function ProfileBackup() {
               : "Opening share sheet…"
         }
         theme={theme}
+      />
+      <AuthGate
+        visible={authVisible}
+        title={authTitle}
+        message={authMessage}
+        onSuccess={() => {
+          setAuthVisible(false);
+          if (authAction) {
+            void authAction.run();
+          }
+        }}
+        onCancel={() => {
+          setAuthVisible(false);
+          setAuthAction(null);
+        }}
       />
     </SafeAreaView>
   );

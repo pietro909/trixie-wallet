@@ -48,16 +48,9 @@ A real fix would either (a) disable the control and show a spinner until the per
 
 ## 3. Password gate hashes with SHA-256 instead of a KDF
 
-**Status: RESOLVED (FOLLOW-UP REQUIRED)** — `hashPassword` now uses PBKDF2-SHA256 at 300k iterations, the unlock minimum was raised to 8 characters, and the backup export form carries a soft warning against password reuse. The remaining follow-up (require the unlock password on top of biometrics for sensitive UI flows) is out of scope for this fix and can be filed separately if wanted.
+**Status: RESOLVED** — `hashPassword` now uses PBKDF2-SHA256 at 300k iterations, the unlock minimum was raised to 8 characters, and the backup export form carries a soft warning against password reuse. Sensitive UI flows (secret reveal, backup export, wallet reset, support bundle, and raw script hex) are now protected by an `AuthGate` requiring re-authentication via password or biometrics.
 
 **Where:** `app/store/useAppStore.ts` (`hashPassword`) and `app/screens/ProfileLock.tsx` (6-char minimum at line 25)
-
-### Follow-up work
-
-- Replace `hashPassword` with PBKDF2 / Argon2id / scrypt — same KDF family the backup uses, ideally at comparable cost (or higher, since the unlock hash only needs to be verified once per session). The simplest fix is to reuse `pbkdf2Async` from `@noble/hashes` as already imported by `backup/crypto.ts`.
-- Raise the minimum password length above 6 (the 8-char minimum on the backup export is a reasonable floor; the two should not diverge).
-- Surface the password-reuse risk in the export flow — e.g. a tooltip explaining that the backup password should be different from the unlock password, or a soft check that flags reuse.
-- Consider whether the unlock password should be required to access locally sensitive UI flows (export, key reveal) on top of biometrics.
 
 ## 4. `markDirtyForBackup()` fires `persist()` without awaiting
 
@@ -89,7 +82,7 @@ Send and Receive are the primary actions on the Wallet home screen, but their cu
 
 ## 7. VTXO list title and explorer link assume a single address, but the wallet owns several
 
-**Status: OPEN**
+**Status: RESOLVED** (done in `4ea531a9c112e78175809920c145be14505795f7`)
 
 **Where:** `app/screens/vtxos/VtxoListScreen.tsx`
 

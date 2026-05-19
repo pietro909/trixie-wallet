@@ -18,6 +18,7 @@ import {
   Text,
   View,
 } from "react-native";
+import AuthGate from "../components/AuthGate";
 import Button from "../components/Button";
 import { useToast } from "../components/ToastProvider";
 import { useFormatSats } from "../hooks/useFormatSats";
@@ -135,6 +136,7 @@ export default function ProfileRecovery() {
   const [scanning, setScanning] = React.useState(false);
   const [bundleBusy, setBundleBusy] = React.useState(false);
   const [now, setNow] = React.useState(() => Math.floor(Date.now() / 1000));
+  const [authVisible, setAuthVisible] = React.useState(false);
 
   const anyRowInFlight = recoveringIds.size > 0;
 
@@ -165,6 +167,11 @@ export default function ProfileRecovery() {
   }, []);
 
   const presentBundleActions = React.useCallback(() => {
+    setAuthVisible(true);
+  }, []);
+
+  const handleAuthorizedBundle = React.useCallback(() => {
+    setAuthVisible(false);
     Alert.alert(
       "Support bundle",
       "Bundles a redacted snapshot of wallet, server, and recent error events. Safe to share with support.",
@@ -554,6 +561,14 @@ export default function ProfileRecovery() {
       {scanning && !fresh ? (
         <ActivityIndicator color={theme.colors.primary} />
       ) : null}
+
+      <AuthGate
+        visible={authVisible}
+        title="Authorize Support Bundle"
+        message="Authorize to build a redacted snapshot of recovery state and wallet errors for debugging."
+        onSuccess={handleAuthorizedBundle}
+        onCancel={() => setAuthVisible(false)}
+      />
     </ScrollView>
   );
 }

@@ -7,6 +7,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ChevronDown, ChevronRight, FileQuestion } from "lucide-react-native";
 import * as React from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import AuthGate from "../../components/AuthGate";
 import Button from "../../components/Button";
 import CopyableField from "../../components/CopyableField";
 import { useAssetMetadata } from "../../hooks/useAssetMetadata";
@@ -76,6 +77,7 @@ export default function VtxoDetailScreen(): React.ReactElement {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [showScript, setShowScript] = React.useState(false);
+  const [authVisible, setAuthVisible] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -175,6 +177,19 @@ export default function VtxoDetailScreen(): React.ReactElement {
   const visuals = vtxoStatusVisuals(vtxo.status, theme);
   const expiry = vtxo.virtualStatus.batchExpiry;
   const txExplorer = explorerUrl("ark_tx", vtxo.txid, network);
+
+  function handleToggleScript() {
+    if (!showScript) {
+      setAuthVisible(true);
+    } else {
+      setShowScript(false);
+    }
+  }
+
+  function performShowScript() {
+    setAuthVisible(false);
+    setShowScript(true);
+  }
 
   return (
     <ScrollView
@@ -340,10 +355,7 @@ export default function VtxoDetailScreen(): React.ReactElement {
       ) : null}
 
       <Section title="Script" theme={theme}>
-        <Pressable
-          onPress={() => setShowScript((v) => !v)}
-          style={styles.scriptToggle}
-        >
+        <Pressable onPress={handleToggleScript} style={styles.scriptToggle}>
           {showScript ? (
             <ChevronDown color={theme.colors.primary} size={16} />
           ) : (
@@ -359,6 +371,14 @@ export default function VtxoDetailScreen(): React.ReactElement {
           <CopyableField label="Script" value={vtxo.script} mono multiline />
         ) : null}
       </Section>
+
+      <AuthGate
+        visible={authVisible}
+        title="Authorize Script Reveal"
+        message="Authorize to view the raw script hex for this VTXO. This can contain sensitive material."
+        onSuccess={performShowScript}
+        onCancel={() => setAuthVisible(false)}
+      />
     </ScrollView>
   );
 }
