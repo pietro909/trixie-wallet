@@ -1,10 +1,9 @@
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Inbox } from "lucide-react-native";
+import { ChevronRight, Inbox } from "lucide-react-native";
 import * as React from "react";
 import {
   FlatList,
-  Linking,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -15,6 +14,7 @@ import Button from "../../components/Button";
 import { useFormatSats } from "../../hooks/useFormatSats";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../../navigation/RootStack";
+import type { OwnedAddress } from "../../services/arkade/addresses";
 import { ArkadeError } from "../../services/arkade/errors";
 import type {
   ClassifiedVtxo,
@@ -55,13 +55,11 @@ const STATUS_KEY: VtxoStatus[] = [
 export default function VtxoListScreen(): React.ReactElement {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
-  const arkAddress = useAppStore((s) => s.wallet?.arkAddress ?? null);
-  const network = useAppStore(
-    (s) => s.network.detectedNetwork ?? s.wallet?.network ?? null,
-  );
   const loadWalletVtxos = useAppStore((s) => s.loadWalletVtxos);
+  const loadWalletAddresses = useAppStore((s) => s.loadWalletAddresses);
   const { format: formatSats, label: unitLabel } = useFormatSats();
   const [vtxos, setVtxos] = React.useState<ClassifiedVtxo[]>([]);
+  const [addresses, setAddresses] = React.useState<OwnedAddress[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -71,8 +69,12 @@ export default function VtxoListScreen(): React.ReactElement {
       if (mode === "initial") setLoading(true);
       else setRefreshing(true);
       try {
-        const next = await loadWalletVtxos();
-        setVtxos(next);
+        const [nextVtxos, nextAddresses] = await Promise.all([
+          loadWalletVtxos(),
+          loadWalletAddresses(),
+        ]);
+        setVtxos(nextVtxos);
+        setAddresses(nextAddresses);
         setError(null);
       } catch (e) {
         const msg =
@@ -87,7 +89,7 @@ export default function VtxoListScreen(): React.ReactElement {
         setRefreshing(false);
       }
     },
-    [loadWalletVtxos],
+    [loadWalletVtxos, loadWalletAddresses],
   );
 
   useFocusEffect(
@@ -95,15 +97,6 @@ export default function VtxoListScreen(): React.ReactElement {
       void fetch("initial");
     }, [fetch]),
   );
-
-  const openExplorer = React.useCallback(() => {
-    if (!arkAddress || !network) return;
-    const base =
-      network.toLowerCase() === "mutinynet"
-        ? "https://explorer.mutinynet.arkade.sh"
-        : "https://arkade.space";
-    void Linking.openURL(`${base}/address/${arkAddress}`);
-  }, [arkAddress, network]);
 
   // `renderItem` must keep a stable identity across renders: FlatList
   // compares it by reference when deciding whether to re-render visible
@@ -167,15 +160,34 @@ export default function VtxoListScreen(): React.ReactElement {
     [theme, formatSats, unitLabel, nav],
   );
 
+  const subtitle = `${vtxos.length} ${vtxos.length === 1 ? "VTXO" : "VTXOs"} at ${addresses.length} ${addresses.length === 1 ? "address" : "addresses"}`;
+
   const header = (
     <View>
       <Text style={[styles.title, { color: theme.colors.text }]}>
-        VTXOs at this address
+        Your VTXOs
       </Text>
       <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
-        Every virtual output linked to your Arkade address, sorted by amount.
-        Pull to refresh.
+        {subtitle}. Aggregated across every contract this wallet owns. Pull to
+        refresh.
       </Text>
+      <Pressable
+        onPress={() => nav.navigate("Addresses")}
+        style={({ pressed }) => [
+          styles.cta,
+          {
+            backgroundColor: theme.colors.surfaceSubtle,
+            opacity: pressed ? 0.6 : 1,
+          },
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel="Show all my addresses"
+      >
+        <Text style={[styles.ctaText, { color: theme.colors.text }]}>
+          Show all my addresses
+        </Text>
+        <ChevronRight color={theme.colors.textMuted} size={18} />
+      </Pressable>
       <View style={styles.legend}>
         {STATUS_KEY.map((key) => {
           const s = vtxoStatusVisuals(key, theme);
@@ -228,15 +240,6 @@ export default function VtxoListScreen(): React.ReactElement {
             void fetch("initial");
           }}
         />
-        {arkAddress && network ? (
-          <Pressable onPress={openExplorer} style={styles.explorerLink}>
-            <Text
-              style={[styles.explorerText, { color: theme.colors.primary }]}
-            >
-              Open address in explorer
-            </Text>
-          </Pressable>
-        ) : null}
       </View>
     );
   }
@@ -379,10 +382,16 @@ const styles = StyleSheet.create({
     fontSize: typography.size.sm,
     textAlign: "center",
   },
-  explorerLink: {
-    marginTop: spacing[2],
+  cta: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: spacing[3],
+    paddingHorizontal: spacing[3],
+    borderRadius: radius.md,
+    marginBottom: spacing[4],
   },
-  explorerText: {
+  ctaText: {
     fontSize: typography.size.sm,
     fontWeight: typography.weight.medium,
   },

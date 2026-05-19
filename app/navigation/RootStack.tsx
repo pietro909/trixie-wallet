@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import ActivityDetailsScreen from "../screens/ActivityDetailsScreen";
 import ActivityScreen from "../screens/ActivityScreen";
+import AddressesScreen from "../screens/addresses/AddressesScreen";
 import AssetBurnScreen from "../screens/assets/AssetBurnScreen";
 import AssetDetailScreen from "../screens/assets/AssetDetailScreen";
 import AssetImportScreen from "../screens/assets/AssetImportScreen";
@@ -118,6 +119,7 @@ export type RootStackParamList = {
   AssetImport: undefined;
   VtxoList: undefined;
   VtxoDetail: { outpoint: string };
+  Addresses: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -366,6 +368,11 @@ export default function RootStack() {
             name="VtxoDetail"
             component={VtxoDetailScreen}
             options={{ ...headerOptions, title: "VTXO" }}
+          />
+          <Stack.Screen
+            name="Addresses"
+            component={AddressesScreen}
+            options={{ ...headerOptions, title: "Addresses" }}
           />
         </>
       )}

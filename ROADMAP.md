@@ -4,7 +4,7 @@ This repository is an Expo-only, iOS/Android self-custodial Arkade wallet app. T
 
 This is a living document: tick items off as they land.
 
-Last updated: 2026-05-16 (Milestones 18–21 resequenced: 21→18→19→20 per IDEAS.md; Portable History Milestones moved before Cloud Backup)
+Last updated: 2026-05-19 (Milestone 22 paused — narrow bug split out to ISSUES.md; the broader work likely turns into a future Contracts Management feature)
 
 ## Milestones
 
@@ -53,6 +53,8 @@ Last updated: 2026-05-16 (Milestones 18–21 resequenced: 21→18→19→20 per 
   - Enable OS notifications to deep-link directly to specific Activity rows by mapping background task results to activity IDs.
 - [ ] Milestone 21: Non-default Wallet Behavior ([docs/MILESTONE_21.agents.md](./docs/MILESTONE_21.agents.md))
   - Formalize strategy and testing for disabling VTXO auto-renewal and delegated renewal, ensuring the SDK Settlement Manager respects these toggles safely.
+- [ ] Milestone 22: VTXO List Grouped by Contract ([docs/MILESTONE_22.agents.md](./docs/MILESTONE_22.agents.md))
+  - Restructure the VTXO list around its owning contracts: collapsible sections per contract showing type, state, copyable script/address, with empty contracts still visible.
 
 ## Relevant Documentation
 

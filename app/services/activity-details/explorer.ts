@@ -8,7 +8,8 @@ export type ExplorerIdKind =
   | "ark_tx"
   | "commitment_tx"
   | "boarding_tx"
-  | "bitcoin_tx";
+  | "bitcoin_tx"
+  | "arkade_address";
 
 const ARKADE_EXPLORERS: Record<string, string> = {
   bitcoin: "https://arkade.space",
@@ -33,6 +34,12 @@ export function explorerUrl(
     const base = ARKADE_EXPLORERS[network];
     if (!base) return null;
     return `${base}/tx/${id}`;
+  }
+
+  if (kind === "arkade_address") {
+    const base = ARKADE_EXPLORERS[network];
+    if (!base) return null;
+    return `${base}/address/${id}`;
   }
 
   if (kind === "boarding_tx" || kind === "bitcoin_tx") {

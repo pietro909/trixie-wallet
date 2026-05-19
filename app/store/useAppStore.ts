@@ -11,6 +11,10 @@ import {
   type AppStateStatus as NativeAppStateStatus,
 } from "react-native";
 import { create } from "zustand";
+import {
+  loadOwnedAddresses,
+  type OwnedAddress,
+} from "../services/arkade/addresses";
 import { isValidAssetId } from "../services/arkade/asset-format";
 import {
   clearIconApprovals,
@@ -461,6 +465,15 @@ type StoreState = AppState & {
    * `maxAgeMs`, always re-fetches.
    */
   loadWalletVtxos: (opts?: { maxAgeMs?: number }) => Promise<ClassifiedVtxo[]>;
+  /**
+   * Load the wallet-owned addresses (one per registered contract — at minimum
+   * `default`, plus `delegate` when delegated renewal is on). Caches like
+   * {@link loadWalletVtxos}: `maxAgeMs` returns the snapshot when fresh,
+   * unset always re-fetches.
+   */
+  loadWalletAddresses: (opts?: {
+    maxAgeMs?: number;
+  }) => Promise<OwnedAddress[]>;
   setTheme: (theme: ThemePref) => Promise<void>;
   setFiatCurrency: (currency: FiatCurrency) => Promise<void>;
   setBitcoinUnit: (unit: BitcoinUnit) => Promise<void>;
@@ -548,6 +561,21 @@ let vtxoSnapshotCache: {
 
 function invalidateVtxoSnapshotCache(): void {
   vtxoSnapshotCache = null;
+}
+
+/**
+ * Cache for the wallet-owned addresses snapshot. Same shape and invalidation
+ * policy as {@link vtxoSnapshotCache} — lock, reset, and create-wallet wipe
+ * it so a stale snapshot can't survive a wallet boundary.
+ */
+let addressesSnapshotCache: {
+  walletId: string;
+  items: OwnedAddress[];
+  fetchedAt: number;
+} | null = null;
+
+function invalidateAddressesSnapshotCache(): void {
+  addressesSnapshotCache = null;
 }
 
 function applySnapshot(
@@ -969,6 +997,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
     // to leak through, but if the guard is ever relaxed (e.g. multi-wallet
     // support) we don't want a stale snapshot surviving the boundary.
     invalidateVtxoSnapshotCache();
+    invalidateAddressesSnapshotCache();
     const arkServerUrl = get().network.arkServerUrl;
     set((s) => ({
       network: { ...s.network, status: "connecting", lastError: null },
@@ -1585,6 +1614,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
     // The in-process wallet is kept too because the Lightning instance holds
     // a reference to it and would crash on swap events otherwise.
     invalidateVtxoSnapshotCache();
+    invalidateAddressesSnapshotCache();
     set((s) => ({
       security: { ...s.security, isLocked: true },
     }));
@@ -1623,6 +1653,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
 
   resetWallet: async () => {
     invalidateVtxoSnapshotCache();
+    invalidateAddressesSnapshotCache();
     const metadata = get().wallet;
     await disposeLightning();
     if (metadata) {
@@ -2363,6 +2394,36 @@ export const useAppStore = create<StoreState>((set, get) => ({
       dustSats,
     );
     vtxoSnapshotCache = {
+      walletId: metadata.id,
+      items,
+      fetchedAt: Date.now(),
+    };
+    return items;
+  },
+
+  loadWalletAddresses: async (opts) => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet available");
+    }
+    if (get().security.isLocked) {
+      throw new ArkadeError("wallet_not_ready", "Unlock the wallet first");
+    }
+    const maxAgeMs = opts?.maxAgeMs;
+    if (
+      maxAgeMs != null &&
+      addressesSnapshotCache &&
+      addressesSnapshotCache.walletId === metadata.id &&
+      Date.now() - addressesSnapshotCache.fetchedAt < maxAgeMs
+    ) {
+      return addressesSnapshotCache.items;
+    }
+    const wallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
+    const items = await loadOwnedAddresses(wallet);
+    addressesSnapshotCache = {
       walletId: metadata.id,
       items,
       fetchedAt: Date.now(),
