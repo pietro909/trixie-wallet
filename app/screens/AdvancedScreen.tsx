@@ -1099,6 +1099,8 @@ function BackgroundTaskMetricsBlock({
   theme: AppTheme;
   metrics: BgTaskMetrics | null;
 }) {
+  const [showDetails, setShowDetails] = React.useState(false);
+
   if (!metrics) return null;
   if (metrics.totalRuns === 0) {
     return (
@@ -1116,6 +1118,7 @@ function BackgroundTaskMetricsBlock({
       </View>
     );
   }
+
   const summary = formatSummary(metrics.lastSuccessSummary);
   const successPart =
     metrics.lastSuccessAt != null
@@ -1127,12 +1130,18 @@ function BackgroundTaskMetricsBlock({
             : ""
         }`
       : null;
+
   const failurePart =
     metrics.lastFailureAt != null
       ? `${formatRelativeTime(metrics.lastFailureAt)}${
           metrics.lastFailureMessage ? ` — ${metrics.lastFailureMessage}` : ""
         }`
       : null;
+
+  const hasDetails =
+    metrics.lastFailureDetails &&
+    Object.keys(metrics.lastFailureDetails).length > 0;
+
   return (
     <View
       style={[styles.bgMetricsBlock, { borderTopColor: theme.colors.divider }]}
@@ -1145,12 +1154,57 @@ function BackgroundTaskMetricsBlock({
         />
       ) : null}
       {failurePart ? (
-        <BackgroundTaskMetricsLine
-          theme={theme}
-          label="Last failure"
-          value={failurePart}
-          danger
-        />
+        <View>
+          <BackgroundTaskMetricsLine
+            theme={theme}
+            label="Last failure"
+            value={failurePart}
+            danger
+          />
+          {hasDetails && (
+            <Pressable
+              onPress={() => setShowDetails((v) => !v)}
+              accessibilityRole="button"
+              accessibilityLabel={
+                showDetails ? "Hide failure details" : "Show failure details"
+              }
+              accessibilityState={{ expanded: showDetails }}
+              style={styles.detailsToggle}
+            >
+              <Text
+                style={[
+                  styles.detailsToggleText,
+                  { color: theme.colors.primary },
+                ]}
+              >
+                {showDetails ? "Hide details" : "Show details"}
+              </Text>
+            </Pressable>
+          )}
+          {showDetails && hasDetails && (
+            <View
+              style={[
+                styles.detailsBox,
+                {
+                  backgroundColor: theme.colors.surfaceSubtle,
+                  borderColor: theme.colors.border,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.detailsText,
+                  {
+                    color: theme.colors.textMuted,
+                    fontFamily: typography.fontFamily.mono,
+                  },
+                ]}
+              >
+                {JSON.stringify(metrics.lastFailureDetails, null, 2)}
+              </Text>
+            </View>
+          )}
+        </View>
       ) : null}
       <BackgroundTaskMetricsLine
         theme={theme}
@@ -1258,6 +1312,8 @@ function RawRow({
     </Pressable>
   );
 }
+
+const METRICS_LABEL_WIDTH = 96;
 
 const styles = StyleSheet.create({
   content: {
@@ -1434,7 +1490,7 @@ const styles = StyleSheet.create({
     gap: spacing[3],
   },
   bgMetricsLabel: {
-    width: 96,
+    width: METRICS_LABEL_WIDTH,
     fontSize: typography.size.xs,
     fontWeight: typography.weight.medium,
     textTransform: "uppercase",
@@ -1456,5 +1512,25 @@ const styles = StyleSheet.create({
     width: 24,
     alignItems: "center",
     justifyContent: "center",
+  },
+  detailsToggle: {
+    marginLeft: METRICS_LABEL_WIDTH + spacing[3],
+    paddingVertical: spacing[1],
+  },
+  detailsToggleText: {
+    fontSize: typography.size.xs,
+    fontWeight: typography.weight.semibold,
+  },
+  detailsBox: {
+    marginLeft: METRICS_LABEL_WIDTH + spacing[3],
+    marginTop: spacing[1],
+    padding: spacing[2],
+    borderRadius: radius.sm,
+    borderWidth: 1,
+  },
+  detailsText: {
+    // intentionally below xs (12) for dense monospace technical output
+    fontSize: 10,
+    lineHeight: 14,
   },
 });

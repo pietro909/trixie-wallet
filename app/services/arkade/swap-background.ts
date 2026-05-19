@@ -98,6 +98,29 @@ function errorMessageFromSwapPollData(
   return undefined;
 }
 
+// TaskResult.data is Record<string, unknown>; flatten to the scalar types
+// accepted by recordBgTaskRun / recordPersistedError, coercing complex values
+// to their string representation so no runtime shape escapes the type boundary.
+function flattenTaskData(
+  data: Record<string, unknown> | undefined,
+): Record<string, string | number | boolean | null> | undefined {
+  if (!data) return undefined;
+  const out: Record<string, string | number | boolean | null> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (
+      v === null ||
+      typeof v === "string" ||
+      typeof v === "number" ||
+      typeof v === "boolean"
+    ) {
+      out[k] = v;
+    } else if (v !== undefined) {
+      out[k] = String(v);
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
   async pushResult(result: TaskResult): Promise<void> {
     await super.pushResult(result);
@@ -154,10 +177,15 @@ class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
       occurredAt: result.executedAt,
       summary,
       errorMessage,
+      errorDetails: flattenTaskData(result.data),
     });
     if (result.status === "failed") {
       const msg = errorMessage ?? "swap poll task failed";
-      await recordPersistedError("lightning", `bg_swap_poll_failed: ${msg}`);
+      await recordPersistedError(
+        "lightning",
+        `bg_swap_poll_failed: ${msg}`,
+        flattenTaskData(result.data),
+      );
     }
   }
 }
@@ -234,9 +262,11 @@ async function identityFactory() {
     ).identity;
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
     await recordPersistedError(
       "lightning",
       `bg_identity_factory_failed: ${message}`,
+      { stack },
     );
     throw e;
   }

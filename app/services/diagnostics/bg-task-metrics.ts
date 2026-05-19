@@ -30,6 +30,7 @@ export type BgTaskMetrics = {
   lastSuccessSummary: BgTaskSummary | null;
   lastFailureAt: number | null;
   lastFailureMessage: string | null;
+  lastFailureDetails: Record<string, string | number | boolean | null> | null;
 };
 
 export type RecordBgTaskRunInput = {
@@ -38,6 +39,7 @@ export type RecordBgTaskRunInput = {
   durationMs?: number;
   summary?: BgTaskSummary;
   errorMessage?: string;
+  errorDetails?: Record<string, string | number | boolean | null | undefined>;
 };
 
 function storageKey(taskName: string): string {
@@ -55,6 +57,7 @@ function emptyMetrics(taskName: string): BgTaskMetrics {
     lastSuccessSummary: null,
     lastFailureAt: null,
     lastFailureMessage: null,
+    lastFailureDetails: null,
   };
 }
 
@@ -96,6 +99,14 @@ function parseStored(taskName: string, raw: string): BgTaskMetrics {
       lastFailureMessage:
         typeof parsed.lastFailureMessage === "string"
           ? parsed.lastFailureMessage
+          : null,
+      lastFailureDetails:
+        parsed.lastFailureDetails &&
+        typeof parsed.lastFailureDetails === "object"
+          ? (parsed.lastFailureDetails as Record<
+              string,
+              string | number | boolean | null
+            >)
           : null,
     };
   } catch {
@@ -142,6 +153,19 @@ export async function recordBgTaskRun(
       next.lastFailureMessage = input.errorMessage
         ? redactString(input.errorMessage).slice(0, MAX_ERROR_LEN)
         : "Background task failed";
+
+      if (input.errorDetails) {
+        const redacted: Record<string, string | number | boolean | null> = {};
+        for (const [k, v] of Object.entries(input.errorDetails)) {
+          if (v === undefined) continue;
+          redacted[k] =
+            typeof v === "string" ? redactString(v).slice(0, MAX_ERROR_LEN) : v;
+        }
+        next.lastFailureDetails =
+          Object.keys(redacted).length > 0 ? redacted : null;
+      } else {
+        next.lastFailureDetails = null;
+      }
     } else {
       next.totalSuccesses = current.totalSuccesses + 1;
       next.lastSuccessAt = occurredAt;
