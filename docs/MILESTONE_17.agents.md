@@ -1,5 +1,15 @@
 # Milestone 17: Cached Wallet Profiles and Labels
 
+**Status:** PAUSED
+
+**Paused reason:** the implementation effort is not worth the result. The
+feature started as demo / testing ergonomics, but the required runtime,
+storage, backup, background-task, and UI invariants are large enough that this
+milestone should not proceed without a stronger product reason.
+
+Do not implement this milestone while it is paused. The plan below is retained
+as design context only.
+
 Goal: keep Trixie Wallet a single-wallet runtime while allowing the device to
 store multiple cached wallet profiles that can be switched quickly by label.
 
@@ -70,6 +80,10 @@ This milestone should prove:
   profile's wallet context.
 - **Network is intrinsic to the profile.** Each profile pins its network and
   Ark server URL. There is no app-wide network slice.
+- **Arkade servers are canonical.** The app does not support custom or
+  self-hosted Ark server profiles. Stored Ark server URLs are app-managed
+  Arkade endpoints derived from the selected network, not user-owned import /
+  export policy.
 - **App-wide lock.** Password and biometrics remain device-scoped. Unlocking
   opens the last active profile directly.
 - **Labels are user-owned metadata.** Renaming a profile does not touch the
@@ -81,7 +95,9 @@ This milestone should prove:
   into it and uses "Reset active wallet". "Full reset" is the only path that
   deletes inactive profiles without opening them first.
 - **No backwards compatibility.** Per `FOUNDATION.md`, schema version `6 -> 7`
-  triggers the wipe-on-mismatch modal. No migration ladder.
+  triggers the wipe-on-mismatch modal. Backup payload versions are also
+  current-version only during alpha. No migration ladder and no legacy backup
+  import support.
 
 ## Selected Direction
 
@@ -208,11 +224,15 @@ type ArkadeWalletMetadata = ExistingArkadeWalletMetadataFields & {
   - `importBackup(envelope, password)`
 - Remove `setArkadeNetwork`. The selected network is local screen state until
   create / restore commits a profile.
-- `refreshServer()` becomes profile-targeted or active-profile-only; it must
-  write probe state into the profile, never an app-wide network slice.
+- `refreshServer(walletId)` becomes profile-targeted. It must write probe state
+  into the specified profile, never an app-wide network slice. This allows the
+  WalletPicker to show server status for dormant profiles.
 - `setWalletBehavior()` becomes active-profile behavior update. It writes
   `activeWallet.behavior`, marks only that profile dirty for backup, and still
   disposes the active runtime because behavior affects wallet construction.
+- `rememberSwapBackgroundWallet` is pulled out of `ensureLightning` and
+  called from the store only after a profile has been committed as active
+  and its Lightning setup has succeeded.
 - `importAsset()` / `forgetAsset()` write the active profile's
   `importedAssetIds` and mark only that profile dirty.
 - `markDirtyForBackup(walletId)` and swap-event dirtiness must identify the
@@ -256,15 +276,27 @@ runtime.
 Add a central, non-persisted gate in the store:
 
 - `activeWalletOperations: Record<string, { kind: string; walletId: string }>`
-  or an equivalent refcount keyed by opaque token
 - `beginWalletOperation(kind, walletId = activeWalletId): token`
 - `finishWalletOperation(token)`
 - `withActiveWalletOperation(kind, fn)` helper for store actions
 - derived selector `hasActiveWalletOperation`
 
+The gate is a mutex, not a concurrency primitive. Trixie remains a
+single-wallet app; dormant profiles are convenient switch targets, not
+parallel accounts. `beginWalletOperation(...)` must throw `wallet_busy` when
+any foreground wallet operation is already active. No second foreground
+operation may start against the same active wallet or any dormant wallet while
+the gate is occupied.
+
 Every wallet-affecting foreground action enters the gate before touching the
 runtime and clears it in `finally`, after post-action `refreshWallet()` and
 `persist()` finish.
+
+Operation-specific follow-up work, such as a post-send refresh / persist, runs
+under the same captured operation and keeps the gate occupied until it
+finishes. A re-entrant refresh pump may coalesce repeated refresh requests
+internally, but it must not expose those requests as concurrent wallet
+operations.
 
 The token records the wallet id captured at operation start. After every await
 that touches the runtime, the action must re-check that the captured id is
@@ -291,8 +323,12 @@ Covered operations:
 - pull-to-refresh when it uses the active runtime and persists metadata
 
 Full reset does not enter the normal wallet operation gate as a wallet action,
-but its UI is disabled while this gate is busy. Once confirmed, full reset
-sets its own full-reset-in-progress flag and invalidates the runtime generation
+but it is blocked by any pending wallet work or lifecycle transition. The UI is
+disabled while `activeWalletOperations`, `walletSwitch`, backup import /
+create / restore activation, active reset, or another full reset is pending.
+The `fullReset()` action must enforce the same guard and throw without wiping
+storage if any pending work exists. Once confirmed and allowed, full reset sets
+its own full-reset-in-progress flag and invalidates the runtime generation
 before wiping storage.
 
 Move direct runtime-owning screen calls behind store/service wrappers that
@@ -317,6 +353,10 @@ new ArkadeError(
   "Finish the current wallet action before switching",
 )
 ```
+
+In-flight foreground async work has priority over switching. The switch action
+must not cancel or race active wallet work; it can start only after the gate is
+empty.
 
 The UI disables runtime-disposing entry points while busy:
 
@@ -548,22 +588,17 @@ Add an internal task context helper:
 - `withActiveSwapTaskContext(fn)` reads the key once and exposes
   `{ walletId, network, activeUpdatedAt, taskStartedAt }` to all background
   task collaborators for that execution.
-- `identityFactory` uses the captured `walletId` and `network` to read the
-  secret and build identity.
+- `identityFactory` and `swapRepository` factories MUST be lazy closures that
+  resolve the captured `walletId` and `network` from the active task context
+  at call-time, not at module load.
 - The background swap repository uses the captured `walletId`.
 - `RecordingSwapTaskQueue.pushResult` uses the captured context when recording
   the shadow result.
 
-Do not let `identityFactory`, repository methods, and result recording each
-read `ACTIVE_WALLET_KEY` independently during the same task execution. If the
-user switches profiles while a background task is running, independent reads
-could mix profile A's identity with profile B's repository or result
-attribution.
-
-If the package API does not expose a clean task-execution wrapper, emulate this
-with a short-lived module-level `activeTaskContext` that is set for the
-duration of a task run and cleared in `finally`. Fail closed when no context is
-available for a repository operation that would otherwise process swaps.
+If the package API does not expose a clean task-execution wrapper, use a
+short-lived module-level `activeTaskContext` that is set at the start of the
+task body and cleared in `finally`. Repository and identity methods must
+throw if called while this context is null.
 
 #### Active-Scoped Background Repository
 
@@ -603,8 +638,10 @@ Recording rules:
 
 - Push result entries with the captured `walletId` and `network`, not with a
   fresh read of `ACTIVE_WALLET_KEY` at result-write time.
-- Notification decisions are still made at result-write time, but notifications
-  must use the captured wallet id for metrics / retention.
+- Notification decisions are still made at result-write time, but a user-facing
+  notification may be shown only when the captured wallet id is still the
+  active wallet. Results for a dormant profile are retained without a
+  notification and surfaced only when that profile is reopened.
 - Durable background metrics include `walletId` and `network` where possible.
 - Persisted background errors include wallet id / network when they came from a
   captured context.
@@ -691,33 +728,35 @@ Flow:
 
 1. If `hasActiveWalletOperation`, throw `wallet_busy` and leave state
    unchanged.
-2. If `targetId === activeWalletId`, no-op.
-3. Find the target profile. Throw descriptively if missing.
-4. Capture `priorActiveWalletId`, `priorProfile`, and the current runtime
+2. If `walletSwitch != null`, throw `wallet_switch_in_progress` and leave
+   state unchanged. No switch re-entry is allowed.
+3. If `targetId === activeWalletId`, no-op.
+4. Find the target profile. Throw descriptively if missing.
+5. Capture `priorActiveWalletId`, `priorProfile`, and the current runtime
    generation.
-5. Set `walletSwitch` overlay state and increment runtime generation. From
+6. Set `walletSwitch` overlay state and increment runtime generation. From
    this point, late callbacks from the old runtime must fail their generation
    check and drop their writes.
-6. Clear foreground refresh timers, clear wallet-scoped
+7. Clear foreground refresh timers, clear wallet-scoped
    `lightningResumeInFlight`, and invalidate cached VTXO snapshots.
-7. Dispose Lightning, then dispose wallet.
-8. Probe `target.arkServerUrl` without changing persisted `activeWalletId`.
-9. On probe success, build the target runtime without committing active id yet:
+8. Dispose Lightning, then dispose wallet.
+9. Probe `target.arkServerUrl` without changing persisted `activeWalletId`.
+10. On probe success, build the target runtime without committing active id yet:
    - update a local target draft with server info / status
    - `ensureWallet({ metadata: targetDraft, behavior: target.behavior })`
    - `maybeEnsureLightning(targetDraft, target.behavior, backgroundTasks.swapPoll)`
      using the profile-scoped swap repository
    - `refreshWalletSnapshot(targetDraft, target.behavior)`
    - build the final target profile snapshot in memory
-10. Atomically commit the target only after step 9 succeeds:
+11. Atomically commit the target only after step 10 succeeds:
     - replace the target `wallets[]` entry with the refreshed target profile
     - set `activeWalletId = targetId`
     - persist once
-11. Schedule `resumeLightning("switch")` for the target profile only. The
+12. Schedule `resumeLightning("switch")` for the target profile only. The
     resume write is guarded by target wallet id and generation.
-12. Pop navigation to Main so Send / Receive / Activity params from the prior
+13. Pop navigation to Main so Send / Receive / Activity params from the prior
     profile cannot linger.
-13. Hide the stage overlay.
+14. Hide the stage overlay.
 
 Probe or target rebuild failure:
 
@@ -729,6 +768,9 @@ Probe or target rebuild failure:
 - if prior rebuild fails, set `activeWalletId = null`, persist the target error
   state, route to `WalletPicker`, and surface a toast explaining that no
   profile could be opened automatically
+- the `activeWalletId = null` store write and WalletPicker route reset must be
+  coordinated in the same failure transition; `Main` must never mount with a
+  non-existent active wallet
 - always clear `walletSwitch` in `finally`
 
 Switch no longer persists the target id before probe / rebuild. This avoids a
@@ -767,7 +809,7 @@ Backup remains one profile per file.
 Do not introduce a multi-wallet backup envelope. A `.trixiebackup` file still
 contains exactly one wallet profile and its recovery-critical local rows.
 
-The current v2 payload already carries:
+The prior v2 payload carried these conceptual fields:
 
 - `wallet`
 - `walletBehavior`
@@ -794,22 +836,23 @@ health markers:
   envelope / payload creation time and not dirty
 - later profile-local mutations mark only that profile dirty
 
-Batch 3 makes ownership metadata rows valid before all projection fields are
-known. Because current v2 parsing requires `direction` and `createdForFlow`,
-update the backup serializer as follows:
+#### Payload Shape Update
 
-- bump `PAYLOAD_VERSION` to `3` if `LocalSwapMetadata.direction` /
-  `createdForFlow` become nullable in the exported shape
-- keep v1 / v2 imports supported and normalize them into the v3 in-memory
-  shape
+Batch 3 makes metadata projection fields (`direction`, `createdForFlow`)
+nullable, so the payload version is bumped to `3`.
+
+- bump `PAYLOAD_VERSION` to `3`.
+- set supported payload versions to the current `PAYLOAD_VERSION` only.
+- reject v1 / v2 and any other non-current backup payload versions. Alpha
+  backups are not a compatibility boundary.
 - v3 `swapMetadata` rows require `swapId` and `walletId`, but nullable
-  projection fields stay nullable
-- duplicate `swapId` entries inside the same payload are invalid
+  projection fields stay nullable.
+- duplicate `swapId` entries inside the same payload are invalid.
 - `boltzSwaps` remains the package-owned object shape and is not normalized
-  beyond id/type presence checks
+  beyond id/type presence checks.
 - update `docs/BACKUP_FORMAT.md` and `scripts/decrypt-backup.mjs` examples /
   fixture expectations to show the current payload version and
-  `importedAssetIds`
+  `importedAssetIds`.
 
 #### Export
 
@@ -848,9 +891,12 @@ file. Cancelled save/share leaves `dirtyForBackup` unchanged.
 - validates the label with the same label rules as `renameWallet`; do not
   silently replace an invalid label
 - validates `payload.wallet.identityKind` matches `payload.secret.kind`
-- treats `payload.wallet.network` as the source of truth, derives the Ark
-  server URL from the known network mapping, and ignores the saved
-  `wallet.arkServerUrl` except for diagnostics
+- treats `payload.wallet.network` as the source of truth and derives the Ark
+  server URL from the canonical Arkade network mapping
+- ignores `payload.wallet.arkServerUrl` for runtime construction; it is
+  non-authoritative diagnostic material only
+- rejects payload versions that do not exactly match the current
+  `PAYLOAD_VERSION`
 - rejects unsupported networks before writing secrets or swap rows
 - probes the derived Ark server and rejects network mismatch before writing
   secrets or swap rows
@@ -1034,13 +1080,18 @@ the active wallet. The screen must show:
 - a clear instruction to check / back up each wallet first
 - a single destructive button, e.g. `Full reset`
 
-The full reset entry / button should still be disabled while the foreground
-operation gate is busy. This is not a backup or pending-swap check; it prevents
-wiping storage while a send / receive / recovery action is actively mutating
-the runtime.
+The full reset entry / button must be disabled while any wallet operation or
+wallet lifecycle transition is pending. This is not a backup-health or
+pending-swap check; it prevents wiping storage while app work is actively
+mutating the runtime or persisted wallet state. Durable pending swap rows do
+not trigger per-wallet scans here because the full-reset screen already warns
+that all local swap recovery state will be deleted.
 
 `fullReset()`:
 
+- rejects before side effects if any foreground operation, switch,
+  create/restore/import activation, active reset, or full reset is already
+  pending
 - enters a full-reset-in-progress state so late UI callbacks cannot start new
   wallet work
 - increments runtime generation
@@ -1067,6 +1118,12 @@ state" helper with schema-mismatch wipe, but keep the public actions separate:
 
 - `acknowledgeSchemaMismatchAndWipe()` is for the schema mismatch modal
 - `fullReset()` is for the explicit Profile nuclear reset screen
+
+Schema-mismatch wipe follows the alpha clean-install rule. It must not attempt
+to migrate a v6 single-wallet payload into v7 profiles, and it must not offer a
+dormant-wallet picker from mismatched persisted state. After the user confirms
+the mismatch modal, the app returns to the same UX as a fresh install unless a
+valid current-shape `wallets[]` payload can be hydrated.
 
 ### 9. Asset and Metadata Scoping
 
@@ -1111,6 +1168,12 @@ Keep the no-wallet routes separate from add-wallet routes:
   predictable.
 
 Root route gate:
+
+Never mount an active-wallet route unless the active profile exists. If
+`activeWalletId === null`, or if the id does not resolve to an entry in
+`wallets`, the active-wallet UI is unavailable. With dormant profiles present,
+the only route is wallet selection; with no profiles present, route through the
+normal onboarding create / restore experience.
 
 - `wallets.length === 0`:
   - `Landing`
@@ -1218,6 +1281,10 @@ Render the transient `walletSwitch` state as a blocking overlay above the app:
 The overlay blocks navigation, tab presses, and destructive actions. It must
 not expose cancel; switch teardown / rebuild is not safely cancellable once the
 runtime generation has been invalidated.
+
+While `walletSwitch != null`, all UI switch entry points stay disabled. The
+store still enforces the same rule and throws `wallet_switch_in_progress` if a
+second switch request materializes through a late press, deeplink, or test.
 
 Switch failure UX:
 
@@ -1513,8 +1580,9 @@ Test placement:
 - `app/services/arkade/__tests__/swap-background.test.ts`: active background
   target, task context capture, active-scoped repository, result attribution,
   profile-scoped drain/retention
-- `app/services/backup/__tests__/serializer.test.ts`: payload versions,
-  nullable metadata projection, duplicate-id rejection, v1/v2 normalization
+- `app/services/backup/__tests__/serializer.test.ts`: current payload version,
+  unsupported-version rejection, nullable metadata projection, duplicate-id
+  rejection
 - `app/store/__tests__/backup-import.test.ts` or store tests: additive import,
   collision preflight, rollback, backup-health attribution
 - `app/services/diagnostics/__tests__/bundle.test.ts`: support bundle v2 shape
@@ -1555,16 +1623,28 @@ commands above.
   probe fields, and `assetBalances`.
 - Hydrate of schema `6` sets `_schemaMismatch` and does not attempt to migrate
   old top-level `wallet`, `network`, `walletBehavior`, or `assets` fields.
+- Confirming a schema-mismatch wipe returns the app to clean-install onboarding
+  state; it does not create cached profiles from the mismatched payload.
 - `resumeLightning("switch")` records resume state on the target active profile
   and drops the write if the active profile changes before completion.
 - `beginWalletOperation(kind)` captures the active wallet id and returns an
   opaque token; `finishWalletOperation(token)` clears only that token.
+- `beginWalletOperation(kind)` throws `wallet_busy` when any foreground wallet
+  operation is already active.
 - `withActiveWalletOperation(kind, fn)` clears the operation token in `finally`
   when `fn` throws.
 - `switchWallet` while foreground gate is busy throws `wallet_busy`, leaves
   state unchanged, and does not dispose runtime.
+- `switchWallet` while `walletSwitch != null` throws
+  `wallet_switch_in_progress`, leaves state unchanged, and does not dispose
+  runtime.
+- `fullReset()` while any foreground wallet operation, switch,
+  create/restore/import activation, active reset, or full reset is pending
+  throws before side effects and leaves storage unchanged.
 - Foreground operations hold the gate through final refresh / persist and
   clear it in `finally`.
+- Two foreground wallet operations cannot run concurrently, even when both
+  target the same active profile.
 - `sendArkade`, `sendLightning`, `sendOnchain`, `sendChainSwap`,
   `runRecoveryAction`, asset mutations, behavior updates, create / restore /
   import, active reset, and pull-to-refresh enter the operation gate before
@@ -1673,6 +1753,9 @@ commands above.
   task start time, recorded time, and notification state.
 - Background result recording does not infer wallet id from a fresh
   `ACTIVE_WALLET_KEY` read after processing.
+- Background results for the currently active wallet may notify immediately;
+  results for any other wallet are retained without notification until that
+  wallet is reopened.
 - `drainSwapPollResultsForWallet(walletA)` returns only A results and writes B
   results back to the recent-results shadow log.
 - `drainSwapPollResultsForWallet(walletB)` later returns retained B results.
@@ -1703,10 +1786,11 @@ commands above.
 
 ### Backup
 
-- Existing single-wallet backup fixtures still parse.
-- v1 and v2 backup payloads normalize into the current in-memory payload shape.
+- v1 and v2 backup payloads are rejected as unsupported. The alpha policy does
+  not preserve old backup compatibility.
 - Current payload export writes the current payload version and includes
   nullable swap projection fields when metadata ownership rows are incomplete.
+- Current payload parsing accepts only the current `PAYLOAD_VERSION`.
 - Current payload parsing rejects duplicate `swapMetadata.swapId` values.
 - Current payload parsing rejects duplicate `boltzSwaps[].id` values.
 - Export for wallet A contains only A's metadata rows and A's joined Boltz
@@ -1758,6 +1842,11 @@ commands above.
 - Locked profiles route to Unlock.
 - Profiles with `activeWalletId == null` route to initial WalletPicker without
   mounting Main.
+- Profiles with an `activeWalletId` that does not resolve to a stored wallet
+  are treated like `activeWalletId == null`; Main and active-wallet routes are
+  not mounted.
+- No profiles route to the onboarding create / restore experience, not to
+  WalletPicker.
 - Profiles with active id route to Main and active-wallet routes.
 - Active-wallet route groups and RootTabs remount when `activeWalletId`
   changes.
@@ -1841,7 +1930,37 @@ commands above.
     destructive warning. Pressing the destructive button routes to Landing and
     clears background task state.
 
-## Resolved Decisions
+## Paused Open Points
+
+These points were still open when the milestone was paused. They should be
+revisited only if the feature is revived with a stronger product justification.
+
+1. **Background task context strategy.** The Boltz background task must use one
+   captured wallet context for identity, repository, and result attribution.
+   The concrete package/API strategy was not finalized.
+2. **Persistence atomicity.** Storing every profile in one AsyncStorage app
+   blob increases the crash/corruption blast radius. The plan had not decided
+   whether to accept that alpha risk or split/stage profile persistence.
+3. **Import blocking UX.** Backup import needs a blocking in-progress UX, but
+   it was not decided whether to reuse the switch overlay or create an
+   import-specific overlay.
+4. **WalletPicker pending counts.** Dormant pending-swap counts could be loaded
+   with per-row queries or one aggregate helper. The query shape was not
+   finalized.
+5. **Lightning-unsupported switch copy.** The switch flow needs copy/stage
+   behavior for networks where Lightning is unsupported.
+6. **Asset metadata cache key.** Asset metadata was planned as network-keyed;
+   this remained open pending confirmation that Arkade-only endpoints make
+   network scoping sufficient.
+7. **Backup envelope navigation state.** The plan had not decided whether
+   decrypted/imported backup envelope data should travel through route params
+   or temporary store state.
+8. **Scope sanity.** The larger unresolved question is whether cached dormant
+   profiles are worth the single-runtime, scoped-storage, backup, and
+   background-task complexity at all. Current answer: no, so the milestone is
+   paused.
+
+## Decisions Captured Before Pause
 
 1. Trixie remains a single-wallet runtime. Cached profiles are dormant
    snapshots, not concurrently managed accounts.
@@ -1850,11 +1969,29 @@ commands above.
    opened.
 4. The central `boltz_swaps` table is acceptable only behind scoped repository
    views and `trixie_swap_meta.wallet_id` attribution.
-5. Switches are blocked only by active foreground operations, not by durable
+5. The foreground operation gate is a mutex. Active wallet operations have
+   priority, no foreground wallet work runs concurrently, and switching starts
+   only after in-flight active work has completed.
+6. Switch re-entry is not allowed. UI disables switch controls while a switch
+   is running, and the store throws if a second switch request materializes.
+7. Switches are blocked only by active foreground operations, not by durable
    pending swaps. Pending swaps trigger pause-warning copy.
-6. Network is per profile. There is no global network slice.
-7. Password and biometrics are device-scoped.
-8. Backup is one profile per file. Import appends and switches.
-9. Reset has only two user paths: reset the active wallet when survivors
+8. Network is per profile. There is no global network slice.
+9. Ark server URLs are canonical Arkade endpoints derived from the selected
+   network. Custom / self-hosted Ark servers are not supported.
+10. Password and biometrics are device-scoped.
+11. Backup is one profile per file. Import appends and switches.
+12. Backup imports accept only the current payload version during alpha.
+   Previous backup versions may break and are rejected.
+13. Reset has only two user paths: reset the active wallet when survivors
    exist, or full reset all local wallet state.
-10. Schema `6 -> 7` uses wipe-on-mismatch. No migration code.
+14. Full reset is blocked across the board by pending app work. If any wallet
+    operation, switch, activation flow, active reset, or full reset is pending,
+    both UI and action-level guards prevent the wipe.
+15. Schema `6 -> 7` uses wipe-on-mismatch as a clean-install reset. No
+    migration code.
+16. User-facing background notifications are active-wallet only. Dormant-wallet
+    results are retained and surfaced when that wallet is reopened.
+17. Active-wallet UI must never mount for a missing wallet. `activeWalletId ==
+    null` routes to WalletPicker when dormant profiles exist, and no profiles
+    routes to onboarding.
