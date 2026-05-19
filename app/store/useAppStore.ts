@@ -485,48 +485,43 @@ type StoreState = AppState & {
   toggleBiometrics: (enabled: boolean) => Promise<void>;
 };
 
-let isPersisting = false;
-let pendingPersist: Promise<void> | null = null;
+let persistChain = Promise.resolve();
+let hasPendingWrite = false;
 
 /**
  * Persist the current state to AsyncStorage.
  *
- * Serialized to prevent concurrent write races. If a write is already in
- * flight, subsequent calls wait for it to finish and then trigger exactly
- * one more write of the latest state.
+ * Serialized via a promise chain to prevent concurrent write races. If a write
+ * is already in flight, subsequent calls wait for the chain and then trigger
+ * exactly one more write of the latest state.
  */
-async function persist(state: AppState): Promise<void> {
-  if (isPersisting) {
-    if (!pendingPersist) {
-      pendingPersist = (async () => {
-        while (isPersisting) {
-          // Wait for the active write to finish
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        // One more write of the absolute latest state
-        await persist(useAppStore.getState());
-        pendingPersist = null;
-      })();
-    }
-    return pendingPersist;
-  }
+async function persist(_state: AppState): Promise<void> {
+  if (hasPendingWrite) return persistChain;
+  hasPendingWrite = true;
 
-  isPersisting = true;
-  try {
-    const data: AppState = {
-      schemaVersion: CURRENT_SCHEMA_VERSION,
-      wallet: state.wallet,
-      network: state.network,
-      walletBehavior: state.walletBehavior,
-      backgroundTasks: state.backgroundTasks,
-      assets: state.assets,
-      preferences: state.preferences,
-      security: state.security,
-    };
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } finally {
-    isPersisting = false;
-  }
+  persistChain = persistChain
+    .then(async () => {
+      hasPendingWrite = false;
+      const latest = useAppStore.getState();
+      const data: AppState = {
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        wallet: latest.wallet,
+        network: latest.network,
+        walletBehavior: latest.walletBehavior,
+        backgroundTasks: latest.backgroundTasks,
+        assets: latest.assets,
+        preferences: latest.preferences,
+        security: latest.security,
+      };
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    })
+    .catch((e) => {
+      hasPendingWrite = false;
+      // Log error but don't break the chain for future writes
+      recordError(e, { context: "persist_queue_failure" });
+    });
+
+  return persistChain;
 }
 
 async function buildActivities(
