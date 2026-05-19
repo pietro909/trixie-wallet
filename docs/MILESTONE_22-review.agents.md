@@ -1,6 +1,6 @@
-# Milestone 17 Plan Review
+# Milestone 22 Plan Review
 
-Review of `docs/MILESTONE_17.agents.md` — strategies questioned, gaps and
+Review of `docs/MILESTONE_22.agents.md` — strategies questioned, gaps and
 ambiguities flagged. Grouped by severity (high → low). Each finding tags the
 relevant section of the plan or the source file it touches.
 
@@ -221,7 +221,7 @@ relevant section of the plan or the source file it touches.
     say so.
 
 25. **Manual verification step 1 (v6 wipe)** — see #10. The doc asserts
-    existing v6 installs hit the modal and wipe. With M17's new wipe
+    existing v6 installs hit the modal and wipe. With M22's new wipe
     codepaths assuming multi-profile shape, ensure the v6 case is
     explicitly tested, not assumed.
 

@@ -98,25 +98,25 @@ The screen header reads "VTXOs at this address" and the error-state "Open addres
 - The list is sourced from `wallet.getVtxos()`, which internally calls `contractManager.getContractsWithVtxos()` and `flatMap`s every contract the wallet owns. The SDK auto-registers a `default` contract and, whenever `delegatedRenewal` is on (the app's default — see `app/store/useAppStore.ts:218`), a `delegate` contract with a different address. So the list aggregates VTXOs across **multiple** addresses; the singular "this address" copy is misleading from a fresh install onward. (VHTLCs used by `@arkade-os/boltz-swap` are not registered with `ContractManager` today, so they do not contribute additional addresses yet — but a planned SDK-space refactor will eventually add them, and the fix should not assume exactly two.)
 - `arkAddress` is the **default** contract's address only (`app/store/types.ts:108`, `app/services/arkade/runtime.ts:271`). The explorer link goes to that single address, but a delegate VTXO shown one line above the link will not appear at that URL. Silent inconsistency.
 
-This is the narrow bug carved out of the paused [MILESTONE_22](./docs/MILESTONE_22.agents.md). It can be fixed without restructuring the list.
+This is the narrow bug carved out of the paused [MILESTONE_21](./docs/MILESTONE_21.agents.md). It can be fixed without restructuring the list.
 
 ### Resolution direction
 
 Two options, in order of effort:
 
 1. **Minimal:** retitle the screen and drop the single-address explorer link. One file changed; ships the truth.
-2. **Expanded (preferred):** retitle, drop the broken link, and add a small read-only Addresses sub-screen. This is the smallest useful slice of a future Contracts Management surface (see [MILESTONE_22](./docs/MILESTONE_22.agents.md) for the broader design context that was paused) — view-only, no labeling/closing/filtering.
+2. **Expanded (preferred):** retitle, drop the broken link, and add a small read-only Addresses sub-screen. This is the smallest useful slice of a future Contracts Management surface (see [MILESTONE_21](./docs/MILESTONE_21.agents.md) for the broader design context that was paused) — view-only, no labeling/closing/filtering.
 
 The expanded option, refined:
 
 - **Title:** "Your VTXOs" (address-agnostic).
 - **Subtitle:** "X VTXOs at Y addresses", where Y counts every owned contract — including an empty `delegate` — so the user can see what the wallet owns even when no funds are present. Y is honest about the wallet's address surface; X is the same count the list shows today.
 - **CTA below the subtitle:** "Show all my addresses" → opens a new Addresses screen.
-- **Addresses screen contents:** one row per owned contract. Per-row data limited to public fields — `type`, `state`, `address`, `label`, `createdAt` (mirroring the information-disclosure rule from the paused MILESTONE_22). No `params`, no witness data, no preimages.
+- **Addresses screen contents:** one row per owned contract. Per-row data limited to public fields — `type`, `state`, `address`, `label`, `createdAt` (mirroring the information-disclosure rule from the paused MILESTONE_21). No `params`, no witness data, no preimages.
 - **Per-row actions:** tap-to-copy address with toast confirmation (primary, matches the existing `CopyableField` pattern); secondary affordance opens the per-address page in the OS browser using the network-aware explorer base (`mutinynet` → `explorer.mutinynet.arkade.sh`, `bitcoin` → `arkade.space`) that `VtxoListScreen.openExplorer` already uses today.
 - **Out of scope here:** labeling, closing, filtering, per-contract balances. Those belong to a future Contracts Management feature.
 
 ### Notes
 
 - The minimal option is a viable ship-it-tomorrow fix if the expanded option slips. The issue documents both so we don't pretend the new screen is "the bugfix".
-- Treat the Addresses screen as a deliberate first read-only step toward the Contracts Management feature the paused [MILESTONE_22](./docs/MILESTONE_22.agents.md) gestured at — not as scope creep.
+- Treat the Addresses screen as a deliberate first read-only step toward the Contracts Management feature the paused [MILESTONE_21](./docs/MILESTONE_21.agents.md) gestured at — not as scope creep.

@@ -1,5 +1,7 @@
 # Milestone 16: Mainnet Support
 
+**Status:** Delivered (commits `684b63d`, `8e7ce9d`, `a4fdbdc`).
+
 Goal: let users choose between mutinynet and Bitcoin mainnet when creating or
 restoring a wallet.
 
