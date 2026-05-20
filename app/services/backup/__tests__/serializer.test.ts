@@ -104,6 +104,7 @@ describe("backup serializer LNURL round-trip", () => {
       swapMetadata,
       boltzSwaps: [] as BoltzSwap[],
       importedAssetIds: [],
+      contractLabels: [],
     });
 
     // Serialize → deserialize via JSON to mirror the on-disk envelope path.
@@ -131,6 +132,7 @@ describe("backup serializer LNURL round-trip", () => {
       swapMetadata: [],
       boltzSwaps: [] as BoltzSwap[],
       importedAssetIds: [],
+      contractLabels: [],
     });
     const wire = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
     (wire.swapMetadata as unknown[]).push({
@@ -165,10 +167,137 @@ describe("backup serializer network round-trip", () => {
       swapMetadata: [],
       boltzSwaps: [] as BoltzSwap[],
       importedAssetIds: [],
+      contractLabels: [],
     });
     const wire = JSON.parse(JSON.stringify(built));
     const parsed = parseBackupPayload(wire);
     expect(parsed.wallet.network).toBe("bitcoin");
     expect(parsed.wallet.arkServerUrl).toBe("https://arkade.computer");
+  });
+});
+
+describe("backup serializer contract labels round-trip", () => {
+  function buildWithLabels(
+    contractLabels: { script: string; label: string }[],
+  ) {
+    return buildBackupPayload({
+      wallet,
+      walletBehavior,
+      preferences: {
+        theme: "system",
+        fiatCurrency: "EUR",
+        bitcoinUnit: "auto",
+        notifications: { enabled: false, swaps: false, payments: false },
+      },
+      secret,
+      swapMetadata: [],
+      boltzSwaps: [] as BoltzSwap[],
+      importedAssetIds: [],
+      contractLabels,
+    });
+  }
+
+  it("round-trips contractLabels byte-for-byte", () => {
+    const built = buildWithLabels([
+      { script: "s1", label: "Primary" },
+      { script: "s2", label: "Delegate" },
+    ]);
+    const wire = JSON.parse(JSON.stringify(built));
+    const parsed = parseBackupPayload(wire);
+    expect(parsed.contractLabels).toEqual([
+      { script: "s1", label: "Primary" },
+      { script: "s2", label: "Delegate" },
+    ]);
+  });
+
+  it("stamps the new version as 3", () => {
+    const built = buildWithLabels([]);
+    expect(built.version).toBe(3);
+  });
+
+  it("falls back to an empty contractLabels list for v1 backups", () => {
+    const v1 = {
+      version: 1,
+      createdAt: 1,
+      wallet: {
+        id: "w1",
+        label: "x",
+        identityKind: "mnemonic",
+        arkServerUrl: "https://ark.example",
+        esploraUrl: null,
+        network: "mutinynet",
+      },
+      walletBehavior,
+      preferences: {
+        theme: "system",
+        fiatCurrency: "EUR",
+        bitcoinUnit: "auto",
+      },
+      secret,
+      swapMetadata: [],
+      boltzSwaps: [],
+    };
+    const parsed = parseBackupPayload(v1);
+    expect(parsed.contractLabels).toEqual([]);
+    expect(parsed.importedAssetIds).toEqual([]);
+  });
+
+  it("falls back to an empty contractLabels list for v2 backups", () => {
+    const v2 = {
+      version: 2,
+      createdAt: 1,
+      wallet: {
+        id: "w1",
+        label: "x",
+        identityKind: "mnemonic",
+        arkServerUrl: "https://ark.example",
+        esploraUrl: null,
+        network: "mutinynet",
+      },
+      walletBehavior,
+      preferences: {
+        theme: "system",
+        fiatCurrency: "EUR",
+        bitcoinUnit: "auto",
+      },
+      secret,
+      swapMetadata: [],
+      boltzSwaps: [],
+      importedAssetIds: ["a"],
+    };
+    const parsed = parseBackupPayload(v2);
+    expect(parsed.contractLabels).toEqual([]);
+    expect(parsed.importedAssetIds).toEqual(["a"]);
+  });
+
+  it("rejects a contractLabels entry with an empty script", () => {
+    const payload = buildWithLabels([{ script: "ok", label: "L" }]);
+    const wire = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
+    (wire.contractLabels as unknown[]).push({ script: "", label: "x" });
+    expect(() => parseBackupPayload(wire)).toThrow(PayloadParseError);
+  });
+
+  it("rejects a contractLabels entry with an empty label", () => {
+    const payload = buildWithLabels([{ script: "ok", label: "L" }]);
+    const wire = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
+    (wire.contractLabels as unknown[]).push({ script: "s", label: "" });
+    expect(() => parseBackupPayload(wire)).toThrow(PayloadParseError);
+  });
+
+  it("rejects a non-array contractLabels field", () => {
+    const payload = buildWithLabels([]);
+    const wire = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
+    wire.contractLabels = "not-an-array";
+    expect(() => parseBackupPayload(wire)).toThrow(PayloadParseError);
+  });
+
+  it("dedupes by script (last write wins)", () => {
+    const payload = buildWithLabels([
+      { script: "s1", label: "First" },
+      { script: "s1", label: "Second" },
+    ]);
+    const wire = JSON.parse(JSON.stringify(payload));
+    const parsed = parseBackupPayload(wire);
+    expect(parsed.contractLabels).toEqual([{ script: "s1", label: "Second" }]);
   });
 });

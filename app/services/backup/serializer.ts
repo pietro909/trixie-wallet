@@ -4,6 +4,7 @@ import type {
   ArkadeWalletMetadata,
   WalletBehavior,
 } from "../../store/types";
+import type { ContractLabelBackup } from "../arkade/contracts";
 import type { StoredSecret } from "../arkade/secret-store";
 import {
   isLocalSwapFlow,
@@ -11,9 +12,9 @@ import {
 } from "../arkade/swap-storage";
 import { recordError } from "../diagnostics/recorder";
 
-export const PAYLOAD_VERSION = 2 as const;
+export const PAYLOAD_VERSION = 3 as const;
 
-const SUPPORTED_VERSIONS = new Set<number>([1, 2]);
+const SUPPORTED_VERSIONS = new Set<number>([1, 2, 3]);
 
 /** Hard cap on imported asset ids carried in the backup envelope. */
 const MAX_IMPORTED_ASSET_IDS = 200;
@@ -49,7 +50,12 @@ export type BackupPayloadV2 = Omit<BackupPayloadV1, "version"> & {
   importedAssetIds: string[];
 };
 
-export type BackupPayload = BackupPayloadV2;
+export type BackupPayloadV3 = Omit<BackupPayloadV2, "version"> & {
+  version: 3;
+  contractLabels: ContractLabelBackup[];
+};
+
+export type BackupPayload = BackupPayloadV3;
 
 export type BuildPayloadInput = {
   wallet: ArkadeWalletMetadata;
@@ -59,6 +65,7 @@ export type BuildPayloadInput = {
   swapMetadata: LocalSwapMetadata[];
   boltzSwaps: BoltzSwap[];
   importedAssetIds: string[];
+  contractLabels: ContractLabelBackup[];
 };
 
 export function buildBackupPayload(input: BuildPayloadInput): BackupPayload {
@@ -80,6 +87,7 @@ export function buildBackupPayload(input: BuildPayloadInput): BackupPayload {
     swapMetadata: input.swapMetadata,
     boltzSwaps: input.boltzSwaps,
     importedAssetIds: input.importedAssetIds,
+    contractLabels: input.contractLabels,
   };
 }
 
@@ -129,6 +137,8 @@ export function parseBackupPayload(raw: unknown): BackupPayload {
   const boltzSwaps = parseBoltzSwaps(r.boltzSwaps);
   const importedAssetIds =
     r.version === 1 ? [] : parseImportedAssetIds(r.importedAssetIds);
+  const contractLabels =
+    r.version < 3 ? [] : parseContractLabels(r.contractLabels);
   return {
     version: PAYLOAD_VERSION,
     createdAt: r.createdAt,
@@ -139,7 +149,52 @@ export function parseBackupPayload(raw: unknown): BackupPayload {
     swapMetadata,
     boltzSwaps,
     importedAssetIds,
+    contractLabels,
   };
+}
+
+function parseContractLabels(raw: unknown): ContractLabelBackup[] {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) {
+    throw new PayloadParseError(
+      "malformed_payload",
+      "Backup contractLabels is not an array",
+    );
+  }
+  const out: ContractLabelBackup[] = [];
+  const seen = new Map<string, number>();
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) {
+      throw new PayloadParseError(
+        "malformed_payload",
+        "Backup contractLabels entry is not an object",
+      );
+    }
+    const r = entry as Record<string, unknown>;
+    const script = typeof r.script === "string" ? r.script : "";
+    if (script.length === 0) {
+      throw new PayloadParseError(
+        "malformed_payload",
+        "Backup contractLabels entry has missing or empty script",
+      );
+    }
+    const labelRaw = typeof r.label === "string" ? r.label : "";
+    const label = labelRaw.trim();
+    if (label.length === 0) {
+      throw new PayloadParseError(
+        "malformed_payload",
+        "Backup contractLabels entry has missing or empty label",
+      );
+    }
+    const existing = seen.get(script);
+    if (existing != null) {
+      out[existing] = { script, label };
+    } else {
+      seen.set(script, out.length);
+      out.push({ script, label });
+    }
+  }
+  return out;
 }
 
 function parseImportedAssetIds(raw: unknown): string[] {

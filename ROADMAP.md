@@ -4,7 +4,7 @@ This repository is an Expo-only, iOS/Android self-custodial Arkade wallet app. T
 
 This is a living document: tick items off as they land.
 
-Last updated: 2026-05-20 (Milestone 23: Thumb-Reachable Wallet Actions delivered)
+Last updated: 2026-05-20 (Milestone 24: Contract Manager specced)
 
 ## Milestones
 
@@ -57,6 +57,8 @@ Last updated: 2026-05-20 (Milestone 23: Thumb-Reachable Wallet Actions delivered
   - Move from a single-wallet store model to multiple wallets with labels and isolated state.
 - [x] Milestone 23: Thumb-Reachable Wallet Actions ([docs/MILESTONE_23.agents.md](./docs/MILESTONE_23.agents.md))
   - Move Wallet home Send / Receive into a bottom action dock above the tab bar, preserving premium mobile ergonomics and avoiding content occlusion.
+- [x] Milestone 24: Contract Manager ([docs/MILESTONE_24.agents.md](./docs/MILESTONE_24.agents.md))
+  - Replace AddressesScreen with a proper Profile → Contracts section: filterable list of all wallet contracts and a detail view with biometric-gated params and inline label editing.
 
 ## Relevant Documentation
 

@@ -218,5 +218,15 @@ export type AppState = {
      * needing wall-clock comparisons against opaque SQLite tables.
      */
     dirtyForBackup?: boolean;
+    /**
+     * Timestamp (ms since epoch) of the most recent contract label write
+     * (set or clear). Contract labels live in the SDK `ContractManager`, so
+     * `getBackupHealth` can't read them directly without warming the wallet
+     * runtime — this timestamp is the cheap proxy that tells the Backup
+     * screen "this wallet has labels worth backing up." Set on every label
+     * write (including clears, mirroring `getLatestSwapMetadataWriteAt`) and
+     * restored from the envelope's `createdAt` on import.
+     */
+    latestContractLabelWriteAt?: number | null;
   };
 };

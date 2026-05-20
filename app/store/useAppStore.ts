@@ -21,6 +21,13 @@ import {
   markSelfIssued,
 } from "../services/arkade/asset-icon-approval";
 import { clearAssetMetadata } from "../services/arkade/asset-metadata";
+import {
+  type ContractSummary,
+  loadContractLabelsForBackup,
+  loadContractParams,
+  loadContractSummaries,
+  updateContractLabel,
+} from "../services/arkade/contracts";
 import { ArkadeError, toArkadeError } from "../services/arkade/errors";
 import {
   estimateOffboardFee,
@@ -475,6 +482,24 @@ type StoreState = AppState & {
   loadWalletAddresses: (opts?: {
     maxAgeMs?: number;
   }) => Promise<OwnedAddress[]>;
+  /**
+   * Load every non-VHTLC contract owned by the wallet as a public-fields-only
+   * summary (no `params`). Re-fetches on every call — wallets carry few
+   * contracts and the data can change with label edits and state flips.
+   */
+  loadWalletContractSummaries: () => Promise<ContractSummary[]>;
+  /**
+   * Load the `params` map for a single contract by `script`. Sensitive —
+   * callers MUST wrap this in an `AuthGate.onSuccess` callback and clear the
+   * returned bytes on screen blur. No caching, ever.
+   */
+  loadWalletContractParams: (script: string) => Promise<Record<string, string>>;
+  /**
+   * Set or clear a contract's user label (empty/whitespace clears). Marks
+   * the wallet dirty for backup and stamps `latestContractLabelWriteAt` so
+   * the Backup screen sees labels as backup-worthy material.
+   */
+  updateWalletContractLabel: (script: string, label: string) => Promise<void>;
   setTheme: (theme: ThemePref) => Promise<void>;
   setFiatCurrency: (currency: FiatCurrency) => Promise<void>;
   setBitcoinUnit: (unit: BitcoinUnit) => Promise<void>;
@@ -1972,6 +1997,19 @@ export const useAppStore = create<StoreState>((set, get) => ({
     const secret = await readSecret(metadata.id);
     const swapMetadata = await getAllSwapMetadata(metadata.id).catch(() => []);
     const boltzSwaps = await snapshotBoltzSwaps().catch(() => []);
+    // Fail loud on label-fetch errors: `markBackupCompleted` clears
+    // `dirtyForBackup` unconditionally on export success, so silently writing
+    // `contractLabels: []` would let the user trust a file that drops labels
+    // at restore. The throw propagates to the caller (`ProfileBackup`), whose
+    // existing error toast surfaces the failure; the dirty flag stays true so
+    // the stale warning remains visible and the user can retry. The
+    // swapMetadata / boltzSwaps `.catch(() => [])` above keeps the original
+    // best-effort posture — those surfaces predate this milestone.
+    const exportWallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
+    const contractLabels = await loadContractLabelsForBackup(exportWallet);
     const payload = buildBackupPayload({
       wallet: metadata,
       walletBehavior: get().walletBehavior,
@@ -1980,6 +2018,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
       swapMetadata,
       boltzSwaps,
       importedAssetIds: get().assets.importedAssetIds,
+      contractLabels,
     });
     const plaintext = utf8ToBytes(JSON.stringify(payload));
     const envelope = await encryptBundle({
@@ -2141,6 +2180,13 @@ export const useAppStore = create<StoreState>((set, get) => ({
           ...s.security,
           lastBackupAt: envelope.createdAt,
           dirtyForBackup: false,
+          // Mirror the swap-storage write-timestamp shape: presence — not the
+          // current population — is what flags this wallet as having
+          // backup-worthy labels. A wallet that later clears every label
+          // stays in fresh/stale rather than collapsing to "no-material",
+          // matching the documented asymmetry in the swap path.
+          latestContractLabelWriteAt:
+            payload.contractLabels.length > 0 ? envelope.createdAt : null,
         },
         network: {
           ...s.network,
@@ -2156,6 +2202,45 @@ export const useAppStore = create<StoreState>((set, get) => ({
       // Post-commit work — must not roll back an otherwise successful import.
       if (isLightningSupportedForNetwork(serverNetwork)) {
         scheduleLightningRestore(walletId);
+      }
+
+      // Best-effort: re-apply contract labels. A failure here leaves the
+      // user with restored funds + history and unlabeled contracts; we log
+      // via recordError and move on. Bypasses the store-level
+      // `updateWalletContractLabel` bridge on purpose:
+      //   - the bridge calls `markDirtyForBackup()`, but a fresh restore
+      //     should remain clean until the user makes the next edit
+      //   - the bridge re-checks `isLocked`, which is mid-construction here
+      if (payload.contractLabels.length > 0) {
+        void (async () => {
+          try {
+            const labelWallet = await ensureWallet({
+              metadata,
+              behavior: payload.walletBehavior,
+            });
+            for (const entry of payload.contractLabels) {
+              try {
+                await updateContractLabel(
+                  labelWallet,
+                  entry.script,
+                  entry.label,
+                );
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                recordError(
+                  "backup",
+                  `contract_label_restore_failed: ${entry.script}: ${msg}`,
+                );
+              }
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            recordError(
+              "backup",
+              `contract_labels_ensure_wallet_failed: ${msg}`,
+            );
+          }
+        })();
       }
     } catch (e) {
       if (walletRuntimeCreated) {
@@ -2190,9 +2275,12 @@ export const useAppStore = create<StoreState>((set, get) => ({
     ]);
     const hasSwapMaterial = metaTs != null || boltzTs != null;
     const importedAssetIds = get().assets.importedAssetIds;
-    const hasBackupMaterial = hasSwapMaterial || importedAssetIds.length > 0;
+    const latestLabelTs = get().security.latestContractLabelWriteAt ?? null;
+    const hasLabelMaterial = latestLabelTs != null;
+    const hasBackupMaterial =
+      hasSwapMaterial || importedAssetIds.length > 0 || hasLabelMaterial;
     const dirty = get().security.dirtyForBackup === true;
-    const latest = Math.max(metaTs ?? 0, boltzTs ?? 0);
+    const latest = Math.max(metaTs ?? 0, boltzTs ?? 0, latestLabelTs ?? 0);
     // An existing backup goes stale whenever something dirtied the state
     // since the last export — even if the current material set is empty
     // (e.g. user forgot the last imported asset, or swept all swaps). The
@@ -2462,6 +2550,62 @@ export const useAppStore = create<StoreState>((set, get) => ({
       fetchedAt: Date.now(),
     };
     return items;
+  },
+
+  loadWalletContractSummaries: async () => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet available");
+    }
+    if (get().security.isLocked) {
+      throw new ArkadeError("wallet_not_ready", "Unlock the wallet first");
+    }
+    const wallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
+    return loadContractSummaries(wallet);
+  },
+
+  loadWalletContractParams: async (script) => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet available");
+    }
+    if (get().security.isLocked) {
+      throw new ArkadeError("wallet_not_ready", "Unlock the wallet first");
+    }
+    const wallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
+    return loadContractParams(wallet, script);
+  },
+
+  updateWalletContractLabel: async (script, label) => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet available");
+    }
+    if (get().security.isLocked) {
+      throw new ArkadeError("wallet_not_ready", "Unlock the wallet first");
+    }
+    const wallet = await ensureWallet({
+      metadata,
+      behavior: get().walletBehavior,
+    });
+    await updateContractLabel(wallet, script, label);
+    // Atomic commit: dirty flag + label-write timestamp in a single set(),
+    // followed by one awaited persist. See §1b of MILESTONE_24 for the
+    // rationale on inlining rather than calling markDirtyForBackup().
+    set((s) => ({
+      security: {
+        ...s.security,
+        dirtyForBackup: true,
+        latestContractLabelWriteAt: Date.now(),
+      },
+    }));
+    await persist(get());
   },
 
   setTheme: async (theme) => {

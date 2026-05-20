@@ -9,12 +9,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import ActivityDetailsScreen from "../screens/ActivityDetailsScreen";
 import ActivityScreen from "../screens/ActivityScreen";
-import AddressesScreen from "../screens/addresses/AddressesScreen";
 import AssetBurnScreen from "../screens/assets/AssetBurnScreen";
 import AssetDetailScreen from "../screens/assets/AssetDetailScreen";
 import AssetImportScreen from "../screens/assets/AssetImportScreen";
 import AssetMintScreen from "../screens/assets/AssetMintScreen";
 import AssetReissueScreen from "../screens/assets/AssetReissueScreen";
+import ContractDetailScreen from "../screens/contracts/ContractDetailScreen";
+import ContractsScreen from "../screens/contracts/ContractsScreen";
 import IntroCarousel from "../screens/IntroCarousel";
 import LandingNoWallet from "../screens/LandingNoWallet";
 import ProfileBackup from "../screens/ProfileBackup";
@@ -119,7 +120,8 @@ export type RootStackParamList = {
   AssetImport: undefined;
   VtxoList: undefined;
   VtxoDetail: { outpoint: string };
-  Addresses: undefined;
+  Contracts: undefined;
+  ContractDetail: { script: string };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -370,9 +372,14 @@ export default function RootStack() {
             options={{ ...headerOptions, title: "VTXO" }}
           />
           <Stack.Screen
-            name="Addresses"
-            component={AddressesScreen}
-            options={{ ...headerOptions, title: "Addresses" }}
+            name="Contracts"
+            component={ContractsScreen}
+            options={{ ...headerOptions, title: "Contracts" }}
+          />
+          <Stack.Screen
+            name="ContractDetail"
+            component={ContractDetailScreen}
+            options={{ ...headerOptions, title: "Contract" }}
           />
         </>
       )}

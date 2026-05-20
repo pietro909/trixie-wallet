@@ -172,7 +172,7 @@ export default function VtxoListScreen(): React.ReactElement {
         refresh.
       </Text>
       <Pressable
-        onPress={() => nav.navigate("Addresses")}
+        onPress={() => nav.navigate("Contracts")}
         style={({ pressed }) => [
           styles.cta,
           {

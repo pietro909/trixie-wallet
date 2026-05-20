@@ -1,25 +1,28 @@
-import { useFocusEffect } from "@react-navigation/native";
-import * as Clipboard from "expo-clipboard";
-import * as Haptics from "expo-haptics";
-import { ExternalLink, Inbox } from "lucide-react-native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { ChevronRight, Inbox } from "lucide-react-native";
 import * as React from "react";
 import {
   FlatList,
-  Linking,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import Button from "../../components/Button";
-import { useToast } from "../../components/ToastProvider";
 import { useResolvedTheme } from "../../hooks/useResolvedTheme";
-import { explorerUrl } from "../../services/activity-details/explorer";
-import type { OwnedAddress } from "../../services/arkade/addresses";
+import type { RootStackParamList } from "../../navigation/RootStack";
+import type { ContractSummary } from "../../services/arkade/contracts";
 import { ArkadeError } from "../../services/arkade/errors";
 import { useAppStore } from "../../store/useAppStore";
 import { type AppTheme, radius, spacing, typography } from "../../theme/theme";
+
+type Nav = NativeStackNavigationProp<RootStackParamList, "Contracts">;
+
+type StateFilter = "all" | "active" | "inactive";
+type TypeFilter = "all" | "default" | "delegate";
 
 function relativeTime(ts: number): string {
   const diff = Date.now() - ts;
@@ -36,14 +39,11 @@ function typeLabel(type: string): string {
   return type.toUpperCase();
 }
 
-function stateLabel(state: OwnedAddress["state"]): string {
+function stateLabel(state: ContractSummary["state"]): string {
   return state.toUpperCase();
 }
 
-type PillVisual = {
-  fg: string;
-  bg: string;
-};
+type PillVisual = { fg: string; bg: string };
 
 function typePillVisual(type: string, theme: AppTheme): PillVisual {
   if (type === "default") {
@@ -53,7 +53,7 @@ function typePillVisual(type: string, theme: AppTheme): PillVisual {
 }
 
 function statePillVisual(
-  state: OwnedAddress["state"],
+  state: ContractSummary["state"],
   theme: AppTheme,
 ): PillVisual {
   if (state === "active") {
@@ -62,25 +62,88 @@ function statePillVisual(
   return { fg: theme.colors.textMuted, bg: theme.colors.surfaceSubtle };
 }
 
-export default function AddressesScreen(): React.ReactElement {
-  const theme = useResolvedTheme();
-  const network = useAppStore(
-    (s) => s.network.detectedNetwork ?? s.wallet?.network ?? null,
+function emptyCopy(stateFilter: StateFilter, typeFilter: TypeFilter): string {
+  if (stateFilter === "all" && typeFilter === "all") {
+    return "The wallet has no registered contracts.";
+  }
+  return "No contracts match these filters.";
+}
+
+type FilterChipProps<T extends string> = {
+  label: string;
+  value: T;
+  /** Sentinel returned when an already-active specific chip is tapped. */
+  defaultValue: T;
+  active: boolean;
+  onSelect: (v: T) => void;
+  theme: AppTheme;
+};
+
+function FilterChip<T extends string>({
+  label,
+  value,
+  defaultValue,
+  active,
+  onSelect,
+  theme,
+}: FilterChipProps<T>): React.ReactElement {
+  // Tapping an active specific chip deselects back to the row's default
+  // ("all"). The default chip itself is a no-op when active. Tapping an
+  // inactive chip selects it (rows are mutually exclusive).
+  const handlePress = () => {
+    if (active) {
+      if (value !== defaultValue) onSelect(defaultValue);
+      return;
+    }
+    onSelect(value);
+  };
+  return (
+    <Pressable
+      onPress={handlePress}
+      style={({ pressed }) => [
+        styles.chip,
+        {
+          backgroundColor: active
+            ? theme.colors.primary
+            : theme.colors.surfaceSubtle,
+          opacity: pressed ? 0.7 : 1,
+        },
+      ]}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+    >
+      <Text
+        style={[
+          styles.chipText,
+          { color: active ? theme.colors.onPrimary : theme.colors.text },
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
   );
-  const loadWalletAddresses = useAppStore((s) => s.loadWalletAddresses);
-  const { showToast } = useToast();
-  const [items, setItems] = React.useState<OwnedAddress[]>([]);
+}
+
+export default function ContractsScreen(): React.ReactElement {
+  const theme = useResolvedTheme();
+  const nav = useNavigation<Nav>();
+  const loadWalletContractSummaries = useAppStore(
+    (s) => s.loadWalletContractSummaries,
+  );
+  const [contracts, setContracts] = React.useState<ContractSummary[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [stateFilter, setStateFilter] = React.useState<StateFilter>("all");
+  const [typeFilter, setTypeFilter] = React.useState<TypeFilter>("all");
 
   const fetch = React.useCallback(
     async (mode: "initial" | "refresh") => {
       if (mode === "initial") setLoading(true);
       else setRefreshing(true);
       try {
-        const next = await loadWalletAddresses();
-        setItems(next);
+        const next = await loadWalletContractSummaries();
+        setContracts(next);
         setError(null);
       } catch (e) {
         const msg =
@@ -88,14 +151,14 @@ export default function AddressesScreen(): React.ReactElement {
             ? e.message
             : e instanceof Error
               ? e.message
-              : "Failed to load addresses";
+              : "Failed to load contracts";
         setError(msg);
       } finally {
         setLoading(false);
         setRefreshing(false);
       }
     },
-    [loadWalletAddresses],
+    [loadWalletContractSummaries],
   );
 
   useFocusEffect(
@@ -104,49 +167,23 @@ export default function AddressesScreen(): React.ReactElement {
     }, [fetch]),
   );
 
-  const handleCopy = React.useCallback(
-    async (address: string) => {
-      try {
-        await Clipboard.setStringAsync(address);
-        Haptics.selectionAsync().catch(() => {});
-        showToast("Address copied", "success");
-      } catch {
-        showToast("Could not copy", "error");
-      }
-    },
-    [showToast],
-  );
-
-  const handleOpenExplorer = React.useCallback(
-    async (address: string) => {
-      const url = explorerUrl("arkade_address", address, network);
-      if (!url) {
-        showToast("No explorer for this network", "error");
-        return;
-      }
-      try {
-        const supported = await Linking.canOpenURL(url);
-        if (supported) {
-          await Linking.openURL(url);
-        } else {
-          showToast("Cannot open link", "error");
-        }
-      } catch {
-        showToast("Cannot open link", "error");
-      }
-    },
-    [network, showToast],
-  );
+  const filtered = React.useMemo(() => {
+    return contracts.filter((c) => {
+      const stateMatch = stateFilter === "all" || c.state === stateFilter;
+      const typeMatch = typeFilter === "all" || c.type === typeFilter;
+      return stateMatch && typeMatch;
+    });
+  }, [contracts, stateFilter, typeFilter]);
 
   const renderItem = React.useCallback(
-    ({ item }: { item: OwnedAddress }) => {
+    ({ item }: { item: ContractSummary }) => {
       const tp = typePillVisual(item.type, theme);
       const sp = statePillVisual(item.state, theme);
       return (
         <Pressable
-          onPress={() => {
-            void handleCopy(item.address);
-          }}
+          onPress={() =>
+            nav.navigate("ContractDetail", { script: item.script })
+          }
           style={({ pressed }) => [
             styles.row,
             {
@@ -155,7 +192,7 @@ export default function AddressesScreen(): React.ReactElement {
             },
           ]}
           accessibilityRole="button"
-          accessibilityLabel={`Copy ${item.type} address`}
+          accessibilityLabel={`Open ${item.type} contract`}
         >
           <View style={styles.rowMain}>
             <View style={[styles.pill, { backgroundColor: tp.bg }]}>
@@ -169,23 +206,7 @@ export default function AddressesScreen(): React.ReactElement {
               </Text>
             </View>
             <View style={styles.spacer} />
-            <Pressable
-              onPress={() => {
-                void handleOpenExplorer(item.address);
-              }}
-              hitSlop={8}
-              style={({ pressed }) => [
-                styles.iconBtn,
-                {
-                  backgroundColor: theme.colors.surfaceSubtle,
-                  opacity: pressed ? 0.6 : 1,
-                },
-              ]}
-              accessibilityLabel={`Open ${item.type} address in explorer`}
-              accessibilityRole="button"
-            >
-              <ExternalLink color={theme.colors.textMuted} size={16} />
-            </Pressable>
+            <ChevronRight color={theme.colors.textSubtle} size={18} />
           </View>
           <Text
             style={[styles.address, { color: theme.colors.text }]}
@@ -212,40 +233,110 @@ export default function AddressesScreen(): React.ReactElement {
         </Pressable>
       );
     },
-    [theme, handleCopy, handleOpenExplorer],
+    [theme, nav],
   );
 
   const header = (
     <View>
       <Text style={[styles.title, { color: theme.colors.text }]}>
-        Your addresses
+        Your contracts
       </Text>
       <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
-        Every address registered against this wallet. Tap a row to copy, or use
-        the external link to open it in the network explorer.
+        Every Arkade contract registered against this wallet. Tap a row to view
+        details, edit its label, or reveal its parameters.
       </Text>
+      <View style={styles.filterGroup}>
+        <Text style={[styles.filterLabel, { color: theme.colors.textMuted }]}>
+          State
+        </Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chipsRow}
+        >
+          <FilterChip
+            label="All"
+            value="all"
+            defaultValue="all"
+            active={stateFilter === "all"}
+            onSelect={setStateFilter}
+            theme={theme}
+          />
+          <FilterChip
+            label="Active"
+            value="active"
+            defaultValue="all"
+            active={stateFilter === "active"}
+            onSelect={setStateFilter}
+            theme={theme}
+          />
+          <FilterChip
+            label="Inactive"
+            value="inactive"
+            defaultValue="all"
+            active={stateFilter === "inactive"}
+            onSelect={setStateFilter}
+            theme={theme}
+          />
+        </ScrollView>
+      </View>
+      <View style={styles.filterGroup}>
+        <Text style={[styles.filterLabel, { color: theme.colors.textMuted }]}>
+          Type
+        </Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chipsRow}
+        >
+          <FilterChip
+            label="All"
+            value="all"
+            defaultValue="all"
+            active={typeFilter === "all"}
+            onSelect={setTypeFilter}
+            theme={theme}
+          />
+          <FilterChip
+            label="Default"
+            value="default"
+            defaultValue="all"
+            active={typeFilter === "default"}
+            onSelect={setTypeFilter}
+            theme={theme}
+          />
+          <FilterChip
+            label="Delegate"
+            value="delegate"
+            defaultValue="all"
+            active={typeFilter === "delegate"}
+            onSelect={setTypeFilter}
+            theme={theme}
+          />
+        </ScrollView>
+      </View>
     </View>
   );
 
-  if (loading && items.length === 0 && !error) {
+  if (loading && contracts.length === 0 && !error) {
     return (
       <View
         style={[styles.empty, { backgroundColor: theme.colors.background }]}
       >
         <Text style={[styles.emptyText, { color: theme.colors.textMuted }]}>
-          Loading addresses…
+          Loading contracts…
         </Text>
       </View>
     );
   }
 
-  if (error && items.length === 0) {
+  if (error && contracts.length === 0) {
     return (
       <View
         style={[styles.errorBox, { backgroundColor: theme.colors.background }]}
       >
         <Text style={[styles.errorTitle, { color: theme.colors.text }]}>
-          Couldn't load addresses
+          Couldn't load contracts
         </Text>
         <Text style={[styles.errorBody, { color: theme.colors.textMuted }]}>
           {error}
@@ -263,7 +354,7 @@ export default function AddressesScreen(): React.ReactElement {
 
   return (
     <FlatList
-      data={items}
+      data={filtered}
       keyExtractor={(item) => item.script}
       renderItem={renderItem}
       ListHeaderComponent={header}
@@ -271,12 +362,14 @@ export default function AddressesScreen(): React.ReactElement {
         <View style={styles.emptyState}>
           <Inbox color={theme.colors.textSubtle} size={56} />
           <Text style={[styles.emptyStateTitle, { color: theme.colors.text }]}>
-            No addresses yet
+            {contracts.length === 0
+              ? "No contracts yet"
+              : "No matching contracts"}
           </Text>
           <Text
             style={[styles.emptyStateBody, { color: theme.colors.textMuted }]}
           >
-            The wallet has no registered contracts.
+            {emptyCopy(stateFilter, typeFilter)}
           </Text>
         </View>
       }
@@ -309,6 +402,30 @@ const styles = StyleSheet.create({
     marginTop: spacing[2],
     marginBottom: spacing[4],
     lineHeight: typography.size.sm * 1.4,
+  },
+  filterGroup: {
+    marginBottom: spacing[3],
+  },
+  filterLabel: {
+    fontSize: typography.size.xs,
+    fontWeight: typography.weight.semibold,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: spacing[2],
+  },
+  chipsRow: {
+    flexDirection: "row",
+    gap: spacing[2],
+    paddingRight: spacing[2],
+  },
+  chip: {
+    paddingHorizontal: spacing[3],
+    paddingVertical: spacing[2],
+    borderRadius: radius.pill,
+  },
+  chipText: {
+    fontSize: typography.size.xs,
+    fontWeight: typography.weight.semibold,
   },
   row: {
     paddingVertical: spacing[3],
@@ -348,13 +465,6 @@ const styles = StyleSheet.create({
   },
   created: {
     fontSize: typography.size.xs,
-  },
-  iconBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: radius.sm,
-    alignItems: "center",
-    justifyContent: "center",
   },
   emptyState: {
     alignItems: "center",

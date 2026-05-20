@@ -90,11 +90,13 @@ from a tampered ciphertext at this layer.
 
 The decrypted plaintext is a UTF-8 JSON document with its own version field,
 so the envelope (crypto shape) and the payload (content shape) can evolve
-independently.
+independently. The current payload version is `3`; the parser also accepts `1`
+and `2` and fills the fields they predate with empty arrays — see "Payload
+Version History" below.
 
 ```jsonc
 {
-  "version": 1,
+  "version": 3,
   "createdAt": 1730000000000,
   "wallet": {
     "id": "<hex string preserved across restore>",
@@ -122,7 +124,7 @@ independently.
       "swapId": "...",
       "walletId": "...",
       "direction": "in" | "out",
-      "createdForFlow": "send" | "receive",
+      "createdForFlow": "send" | "receive" | "lnurl_send" | "lnurl_receive",
       "invoiceAmountSats": 1000 | null,
       "arkadeAmountSats": 990 | null,
       "walletTxId": "..." | null,
@@ -137,6 +139,12 @@ independently.
     /* Each entry is the BoltzSwap object as persisted by @arkade-os/boltz-swap.
        The shape is BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap;
        see the package's type definitions for the exact fields. */
+  ],
+  "importedAssetIds": [
+    "<68-char hex asset id>"
+  ],
+  "contractLabels": [
+    { "script": "<pkScript hex>", "label": "Primary" }
   ]
 }
 ```
@@ -146,6 +154,30 @@ independently.
 ```jsonc
 { "kind": "singleKey", "privateKeyHex": "<64 hex chars>" }
 ```
+
+`importedAssetIds` carries user-curated Arkade asset ids (mint targets, pasted
+ids) that should survive a sweep to zero balance. Parser drops non-string and
+duplicate entries; empty array is valid.
+
+`contractLabels` carries user labels for wallet-owned contracts so they
+re-attach to the SDK `ContractManager` on restore. Each entry must have a
+non-empty `script` (hex pkScript) and a non-empty `label` (trimmed at parse
+time). Duplicates by `script` collapse to the last-write-wins entry. VHTLC
+contracts are excluded at export. Restoration is post-commit and best-effort:
+a failure on a single label is logged but does not roll back the import.
+
+### Payload Version History
+
+| Version | Added |
+|---|---|
+| 1 | Initial payload: wallet metadata, secret, walletBehavior, preferences, swapMetadata, boltzSwaps |
+| 2 | `importedAssetIds` |
+| 3 | `contractLabels` |
+
+The parser treats older versions as forward-compatible: a v1 file parses with
+`importedAssetIds: []` and `contractLabels: []`; a v2 file parses with
+`contractLabels: []`. Older importers refuse a newer `version` outright with
+`unsupported_version` — there is no backwards-stripping path.
 
 ### What the Payload Excludes (and Why)
 
@@ -224,8 +256,10 @@ file in the app and confirm that:
 - `kdf.salt` decodes to 16 bytes.
 - `cipher.iv` decodes to 12 bytes.
 - `cipher.ciphertext` decodes to plaintext-length + 16 bytes.
-- The decrypted JSON has `version: 1`, a non-empty `secret`, and a non-empty
-  `wallet.id` matching the device's wallet id at export time.
+- The decrypted JSON has `version: 3`, a non-empty `secret`, and a non-empty
+  `wallet.id` matching the device's wallet id at export time. `importedAssetIds`
+  and `contractLabels` may both be empty arrays — that's a valid v3 file from a
+  wallet that hasn't imported any assets or labeled any contracts.
 
 A bit-flip anywhere in `cipher.ciphertext` causes decryption to fail with
 `wrong_password` (the GCM auth tag verifies the entire ciphertext).
