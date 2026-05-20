@@ -13,8 +13,3 @@
  - FIAT integration?
  	- we DO NOT manage cards or FIAT payments, always lean on a 3rd party to buy BTC seamlessly and get them in the wallet via Arkade or Lightning
  		- what's the appetite for an Arkade-based BTC exchange? ie: buy 30 euros worth of BTC via Arkade, get them immediately
- 		
- 		
-## Roadmap changes
-	- 21 next - implies backup shape change (no secret) 
-	- new order: 21 - 18 - 19 - 20
