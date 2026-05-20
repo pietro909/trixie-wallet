@@ -41,10 +41,13 @@ const commit = git("rev-parse --short HEAD");
 const exactTag = git("describe --tags --exact-match HEAD");
 const describe = git("describe --tags --always --dirty");
 
+const requiredPlugins = ["expo-secure-store", "expo-sharing", "expo-sqlite"];
+
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: config.name ?? "trixie-wallet",
   slug: config.slug ?? "trixie-wallet",
+  plugins: Array.from(new Set([...(config.plugins ?? []), ...requiredPlugins])),
   extra: {
     ...(config.extra ?? {}),
     versions: compact({ sdk: sdkVersion, boltzSwap: boltzVersion }),
