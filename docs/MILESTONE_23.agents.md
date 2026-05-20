@@ -1,6 +1,6 @@
 # Milestone 23: Thumb-Reachable Wallet Actions
 
-**Status:** Planned (promoted from Issue 1)
+**Status:** Delivered (2026-05-20, commit `4d4f5f1`). Pending manual verification per the *Verification* checklist below.
 
 ## Goal
 Move the Wallet home screen's Send and Receive actions into the natural
