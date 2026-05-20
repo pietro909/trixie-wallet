@@ -74,13 +74,5 @@
     "jest-expo": "~55.0.17",
     "typescript": "~5.9.3"
   },
-  "pnpm": {
-    "peerDependencyRules": {
-      "allowedVersions": {
-        "expo-background-task": "*",
-        "expo-task-manager": "*"
-      }
-    }
-  },
   "private": true
 }

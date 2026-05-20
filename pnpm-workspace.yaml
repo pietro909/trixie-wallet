@@ -1,0 +1,4 @@
+peerDependencyRules:
+  allowedVersions:
+    expo-background-task: '*'
+    expo-task-manager: '*'
