@@ -385,9 +385,9 @@ function parseArkadeBody(
     warning = "Asset amount specified without an asset id";
     isPayable = false;
   }
-  for (const [k, v] of query.entries()) {
+  query.forEach((v, k) => {
     if (!KNOWN_BIP21_KEYS.has(k)) metadata[k] = v;
-  }
+  });
   return {
     options: [
       {
@@ -512,9 +512,9 @@ function parseBitcoinBody(
     });
   }
 
-  for (const [k, v] of query.entries()) {
+  query.forEach((v, k) => {
     if (!KNOWN_BIP21_KEYS.has(k)) metadata[k] = v;
-  }
+  });
 
   if (parsedOptions.length === 0) {
     return {

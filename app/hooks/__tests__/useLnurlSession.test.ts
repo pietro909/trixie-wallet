@@ -154,7 +154,7 @@ async function flushMicrotasks() {
   // Two ticks: the reader.read() resolves on one, the loop body runs and
   // posts a follow-up promise (handler / postInvoice) on the next.
   for (let i = 0; i < 5; i++) {
-    await new Promise((r) => setImmediate(r));
+    await new Promise<void>((resolve) => setImmediate(() => resolve()));
   }
 }
 

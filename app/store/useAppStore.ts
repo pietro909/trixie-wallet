@@ -543,7 +543,7 @@ async function persist(_state: AppState): Promise<void> {
     .catch((e) => {
       hasPendingWrite = false;
       // Log error but don't break the chain for future writes
-      recordError(e, { context: "persist_queue_failure" });
+      recordError("unknown", e instanceof Error ? e.message : String(e), { context: "persist_queue_failure" });
     });
 
   return persistChain;
