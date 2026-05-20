@@ -4,7 +4,7 @@ This repository is an Expo-only, iOS/Android self-custodial Arkade wallet app. T
 
 This is a living document: tick items off as they land.
 
-Last updated: 2026-05-19 (Milestone 21 paused — narrow bug split out to ISSUES.md; the broader work likely turns into a future Contracts Management feature)
+Last updated: 2026-05-20 (Issue 1 promoted to Milestone 23: Thumb-Reachable Wallet Actions)
 
 ## Milestones
 
@@ -55,6 +55,8 @@ Last updated: 2026-05-19 (Milestone 21 paused — narrow bug split out to ISSUES
   - Restructure the VTXO list around its owning contracts: collapsible sections per contract showing type, state, copyable script/address, with empty contracts still visible.
 - [ ] Milestone 22: Multiple Wallets and Labels ([docs/MILESTONE_22.agents.md](./docs/MILESTONE_22.agents.md))
   - Move from a single-wallet store model to multiple wallets with labels and isolated state.
+- [ ] Milestone 23: Thumb-Reachable Wallet Actions ([docs/MILESTONE_23.agents.md](./docs/MILESTONE_23.agents.md))
+  - Move Wallet home Send / Receive into a bottom action dock above the tab bar, preserving premium mobile ergonomics and avoiding content occlusion.
 
 ## Relevant Documentation
 
