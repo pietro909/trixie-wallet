@@ -83,18 +83,51 @@ more about account state and the bottom reach zone more about action.
 ### 1. Layout and Safe Area
 
 - Import `useSafeAreaInsets` in `WalletScreen.tsx`.
-- Wrap the existing `ScrollView` in a root `View` with
-  `backgroundColor: theme.colors.background`.
+- Wrap the existing `ScrollView` in a root `View`. Define a static
+  `styles.root = { flex: 1 }` in `StyleSheet.create` and apply the theme
+  background at render time via style composition:
+  `<View style={[styles.root, { backgroundColor: theme.colors.background }]}>`.
+  `theme.colors` is runtime state and cannot live inside
+  `StyleSheet.create`. The `flex: 1` is required: without it the root
+  collapses to content height and the absolutely positioned dock anchors
+  against that height instead of the tab scene, breaking the layout on
+  shorter content states (empty activity, collapsed assets).
+- Keep the `ScrollView` flexed/bounded inside the root (its existing
+  `style={{ backgroundColor: ... }}` should become
+  `style={{ flex: 1, backgroundColor: ... }}` so it fills the root). The
+  `contentContainerStyle` keeps `padding` and the increased bottom padding
+  for dock + tab clearance.
 - Remove the inline action row currently rendered after the balance card.
+  Also delete the now-unused `styles.actions` and `styles.actionBtn`
+  entries from the `StyleSheet.create` block so Biome does not flag
+  unused declarations.
 - Add `WalletActionDock` as an absolutely positioned sibling of the
-  `ScrollView`.
+  `ScrollView` (positioned via `left`, `right`, `bottom` relative to the
+  flexed root).
 - Compute the dock bottom offset from the same assumptions as
-  `makeBottomTabsOptions()`:
-  - tab bar height: 64
-  - tab bar bottom gap: `spacing[3] + Math.max(0, insets.bottom - 6)`
-  - dock-to-tab gap: `spacing[3]`
-- Increase the scroll content bottom padding so the final Balance breakdown
-  card can scroll above the dock and tab bar.
+  `makeBottomTabsOptions()`. Use this exact formula:
+
+  ```
+  bottomOffset = spacing[3] + Math.max(0, insets.bottom - 6) + 64 + spacing[3]
+  ```
+
+  Where each term is:
+  - `spacing[3] + Math.max(0, insets.bottom - 6)` — tab bar's bottom gap
+    (its distance from the screen edge, matching `makeBottomTabsOptions()`).
+  - `64` — tab bar height.
+  - `spacing[3]` — dock-to-tab gap so the two surfaces read as siblings,
+    not merged.
+- The scroll content bottom padding must clear the dock plus the tab
+  stack. The dock uses `Button`, which only guarantees `minHeight: 48`
+  (see `app/components/Button.tsx:128`), so its actual height grows with
+  accessibility text scaling and cannot be hard-coded. Measure the
+  rendered dock with `onLayout` (store `dockHeight` in component state)
+  and set `contentContainerStyle.paddingBottom` to
+  `bottomOffset + dockHeight + spacing[5]`. While `dockHeight` is `0` on
+  the first render, fall back to `bottomOffset + 64 + spacing[5]` so the
+  initial frame is not clipped — `64` matches `Button.minHeight + 2 *
+  spacing[2]` (the dock container's vertical padding from §3), which is
+  also the expected steady-state at default text size.
 
 ### 2. Dock Component
 
@@ -107,14 +140,22 @@ more about account state and the bottom reach zone more about action.
   - `onReceive`
 - Render a horizontal two-button layout with stable dimensions and
   `gap: spacing[3]`.
-- Prefer the existing `Button` component for both actions. If needed, add
-  narrow optional accessibility props to `Button` and pass them through to its
-  internal `Pressable`.
+- Use the existing `Button` component for both actions. This milestone
+  must extend `Button` to forward an accessibility label, because the
+  current `ButtonProps` (`app/components/Button.tsx:21`) does not accept
+  one and the internal `Pressable` (`app/components/Button.tsx:90`) is
+  not labelled — the visible "Send" / "Receive" labels do not satisfy the
+  explicit accessibility copy required below. Required changes to
+  `Button`:
+  - Add `accessibilityLabel?: string` to `ButtonProps`.
+  - Destructure it in the component signature and forward it to the
+    internal `Pressable` as `accessibilityLabel={accessibilityLabel}`.
+  - No other call sites need to change; the prop is optional.
 - Keep Send and Receive equal width. Preserve the current navigation behavior
   and avoid adding loading state in this milestone.
-- Add accessibility labels:
-  - "Send bitcoin or assets"
-  - "Receive bitcoin, Lightning, or assets"
+- Pass these accessibility labels from the dock into the two `Button`s:
+  - Send: "Send bitcoin or assets"
+  - Receive: "Receive bitcoin, Lightning, or assets"
 
 ### 3. Visual Polish
 
@@ -123,10 +164,21 @@ more about account state and the bottom reach zone more about action.
   - `borderRadius: radius.lg`
   - `padding: spacing[2]`
   - `borderWidth: 1`
-  - theme border color
-  - `theme.shadow("popover")` or equivalent elevated treatment
-- In dark mode, avoid a heavy black slab. Use the theme surface and border so
-  the dock stays quiet but legible.
+  - `borderColor: theme.colors.border`
+  - `backgroundColor: theme.colors.surfaceSubtle` — pinned to this token
+    (not `card` or `surface`). It is the closest analogue to the tab
+    bar's quiet-but-elevated read while staying opaque, and it sits one
+    step off the page background in both modes so the dock remains
+    legible without competing with the balance card.
+  - `theme.shadow("popover")` for elevation.
+- The dock is **opaque-with-shadow, not blurred.** Do not wrap it in a
+  `BlurView`. The visual relationship to the floating tab bar is
+  conveyed by shared shape, inset, and elevation language — not by
+  duplicating its glass effect. This keeps the dock readable as a
+  control surface distinct from the chrome behind it.
+- In dark mode, the `surfaceSubtle` token (`neutral[900]`) is already a
+  step lighter than the `neutral[1000]` background, so the dock will
+  not read as a heavy black slab. Verify the contrast on-device.
 - Verify button text and icons remain centered at larger accessibility text
   sizes.
 

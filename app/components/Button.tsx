@@ -27,6 +27,7 @@ type ButtonProps = {
   disabled?: boolean;
   icon?: React.ReactNode;
   style?: ViewStyle;
+  accessibilityLabel?: string;
 };
 
 export default function Button({
@@ -38,6 +39,7 @@ export default function Button({
   disabled = false,
   icon,
   style,
+  accessibilityLabel,
 }: ButtonProps) {
   const scale = React.useRef(new Animated.Value(1)).current;
   const isDisabled = disabled || loading;
@@ -92,6 +94,7 @@ export default function Button({
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         disabled={isDisabled}
+        accessibilityLabel={accessibilityLabel}
         style={[
           styles.button,
           {

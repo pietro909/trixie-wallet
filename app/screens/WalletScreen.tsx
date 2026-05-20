@@ -12,6 +12,7 @@ import {
 } from "lucide-react-native";
 import * as React from "react";
 import {
+  type LayoutChangeEvent,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -19,6 +20,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ActivityRow from "../components/ActivityRow";
 import AssetCard from "../components/AssetCard";
 import Button from "../components/Button";
@@ -29,7 +31,7 @@ import type { RootStackParamList } from "../navigation/RootStack";
 import { computePendingTotals } from "../services/wallet-balance";
 import { satsToFiat } from "../store/mock";
 import { useAppStore } from "../store/useAppStore";
-import { radius, spacing, typography } from "../theme/theme";
+import { type AppTheme, radius, spacing, typography } from "../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Main">;
 
@@ -94,6 +96,60 @@ function AssetSectionHeader({
   );
 }
 
+function WalletActionDock({
+  theme,
+  bottomOffset,
+  onSend,
+  onReceive,
+  onHeightChange,
+}: {
+  theme: AppTheme;
+  bottomOffset: number;
+  onSend: () => void;
+  onReceive: () => void;
+  onHeightChange: (height: number) => void;
+}): React.ReactElement {
+  function handleLayout(event: LayoutChangeEvent) {
+    onHeightChange(event.nativeEvent.layout.height);
+  }
+
+  return (
+    <View
+      onLayout={handleLayout}
+      style={[
+        styles.dock,
+        {
+          bottom: bottomOffset,
+          backgroundColor: theme.colors.surfaceSubtle,
+          borderColor: theme.colors.border,
+          ...theme.shadow("popover"),
+        },
+      ]}
+    >
+      <View style={styles.dockRow}>
+        <Button
+          label="Send"
+          variant="primary"
+          theme={theme}
+          icon={<ArrowUpRight color={theme.colors.onPrimary} size={20} />}
+          onPress={onSend}
+          accessibilityLabel="Send bitcoin or assets"
+          style={styles.dockButton}
+        />
+        <Button
+          label="Receive"
+          variant="secondary"
+          theme={theme}
+          icon={<ArrowDownLeft color={theme.colors.text} size={20} />}
+          onPress={onReceive}
+          accessibilityLabel="Receive bitcoin, Lightning, or assets"
+          style={styles.dockButton}
+        />
+      </View>
+    </View>
+  );
+}
+
 export default function WalletScreen() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
@@ -103,8 +159,21 @@ export default function WalletScreen() {
   const detectedNetwork = useAppStore((s) => s.network.detectedNetwork);
   const importedAssetIds = useAppStore((s) => s.assets.importedAssetIds);
   const { format: formatSats, label: unitLabel } = useFormatSats();
+  const insets = useSafeAreaInsets();
   const [refreshing, setRefreshing] = React.useState(false);
   const [assetsCollapsed, setAssetsCollapsed] = React.useState(true);
+  const [dockHeight, setDockHeight] = React.useState(0);
+
+  // Mirrors the tab bar's positioning from makeBottomTabsOptions():
+  // distance from screen edge + tab bar height + gap so the dock reads as
+  // a sibling of the floating tab bar, not merged with it.
+  const dockBottomOffset =
+    spacing[3] + Math.max(0, insets.bottom - 6) + 64 + spacing[3];
+  // Button.minHeight (48) + 2 * spacing[2] (dock container vertical padding)
+  // matches the steady-state dock height at default text size; used until
+  // onLayout reports the real value (which grows with accessibility text).
+  const dockClearance = dockHeight > 0 ? dockHeight : 64;
+  const scrollPaddingBottom = dockBottomOffset + dockClearance + spacing[5];
 
   const walletId = wallet?.id;
   React.useEffect(() => {
@@ -157,261 +226,282 @@ export default function WalletScreen() {
   const pendingTotals = computePendingTotals(wallet.activities);
 
   return (
-    <ScrollView
-      style={{ backgroundColor: theme.colors.background }}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-          tintColor={theme.colors.primary}
-        />
-      }
-    >
-      {/* Balance Card */}
-      <View
-        style={[
-          styles.balanceCard,
-          { backgroundColor: theme.colors.card, ...theme.shadow("card") },
+    <View style={[styles.root, { backgroundColor: theme.colors.background }]}>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: theme.colors.background }}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: scrollPaddingBottom },
         ]}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={theme.colors.primary}
+          />
+        }
       >
-        <Text style={[styles.walletLabel, { color: theme.colors.textSubtle }]}>
-          {wallet.label}
-        </Text>
-        <Text style={[styles.balance, { color: theme.colors.text }]}>
-          {formatSats(wallet.balanceSats)} {unitLabel}
-        </Text>
-        <Text style={[styles.fiat, { color: theme.colors.textMuted }]}>
-          {satsToFiat(wallet.balanceSats, fiatCurrency)}
-        </Text>
-        {(() => {
-          const tagNetwork = detectedNetwork ?? wallet.network;
-          const isMainnet = tagNetwork === "bitcoin";
-          return (
-            <View
-              style={[
-                styles.networkTag,
-                {
-                  backgroundColor: isMainnet
-                    ? theme.colors.primary
-                    : theme.colors.warning,
-                },
-              ]}
-            >
-              <Text
+        {/* Balance Card */}
+        <View
+          style={[
+            styles.balanceCard,
+            { backgroundColor: theme.colors.card, ...theme.shadow("card") },
+          ]}
+        >
+          <Text
+            style={[styles.walletLabel, { color: theme.colors.textSubtle }]}
+          >
+            {wallet.label}
+          </Text>
+          <Text style={[styles.balance, { color: theme.colors.text }]}>
+            {formatSats(wallet.balanceSats)} {unitLabel}
+          </Text>
+          <Text style={[styles.fiat, { color: theme.colors.textMuted }]}>
+            {satsToFiat(wallet.balanceSats, fiatCurrency)}
+          </Text>
+          {(() => {
+            const tagNetwork = detectedNetwork ?? wallet.network;
+            const isMainnet = tagNetwork === "bitcoin";
+            return (
+              <View
                 style={[
-                  styles.networkTagText,
+                  styles.networkTag,
                   {
-                    color: isMainnet
-                      ? theme.colors.onPrimary
-                      : theme.colors.onWarning,
+                    backgroundColor: isMainnet
+                      ? theme.colors.primary
+                      : theme.colors.warning,
                   },
                 ]}
               >
-                {isMainnet ? "MAINNET" : tagNetwork.toUpperCase()}
+                <Text
+                  style={[
+                    styles.networkTagText,
+                    {
+                      color: isMainnet
+                        ? theme.colors.onPrimary
+                        : theme.colors.onWarning,
+                    },
+                  ]}
+                >
+                  {isMainnet ? "MAINNET" : tagNetwork.toUpperCase()}
+                </Text>
+              </View>
+            );
+          })()}
+        </View>
+
+        {/* Recent Activity */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+              Recent Activity
+            </Text>
+            <Pressable
+              onPress={() => nav.navigate("Activity")}
+              style={styles.seeAll}
+            >
+              <Text
+                style={[styles.seeAllText, { color: theme.colors.primary }]}
+              >
+                See all
+              </Text>
+              <ChevronRight color={theme.colors.primary} size={16} />
+            </Pressable>
+          </View>
+
+          {recentActivity.length === 0 ? (
+            <View style={styles.emptyTxns}>
+              <Clock color={theme.colors.textSubtle} size={32} />
+              <Text
+                style={[
+                  styles.emptyTxnsText,
+                  { color: theme.colors.textMuted },
+                ]}
+              >
+                No activity yet
               </Text>
             </View>
-          );
-        })()}
-      </View>
+          ) : (
+            recentActivity.map((item) => (
+              <ActivityRow
+                key={item.id}
+                activity={item}
+                theme={theme}
+                onPress={() =>
+                  nav.navigate("ActivityDetails", { activityId: item.id })
+                }
+                formatTimestamp={formatRelativeTime}
+                assetMetadata={assetMetadata}
+                iconApprovals={iconApprovals}
+              />
+            ))
+          )}
+        </View>
 
-      {/* Action Buttons */}
-      <View style={styles.actions}>
-        <Button
-          label="Send"
-          variant="primary"
-          theme={theme}
-          icon={<ArrowUpRight color={theme.colors.onPrimary} size={20} />}
-          onPress={() => nav.navigate("SendEntry")}
-          style={styles.actionBtn}
-        />
-        <Button
-          label="Receive"
-          variant="secondary"
-          theme={theme}
-          icon={<ArrowDownLeft color={theme.colors.text} size={20} />}
-          onPress={() => nav.navigate("ReceiveSelect")}
-          style={styles.actionBtn}
-        />
-      </View>
+        {/* Assets */}
+        <View style={styles.section}>
+          <AssetSectionHeader
+            primaryColor={theme.colors.primary}
+            textColor={theme.colors.text}
+            onMint={() => nav.navigate("AssetMint")}
+            onImport={() => nav.navigate("AssetImport")}
+            collapsed={assetsCollapsed}
+            onToggle={() => setAssetsCollapsed((c) => !c)}
+            assetCount={assetIds.length}
+          />
+          {!assetsCollapsed &&
+            (assetIds.length > 0 ? (
+              <View style={styles.assetList}>
+                {assetIds.map((id) => {
+                  const entry = assetBalances.find((b) => b.assetId === id);
+                  let amount = 0n;
+                  try {
+                    amount = entry ? BigInt(entry.amount) : 0n;
+                  } catch {
+                    amount = 0n;
+                  }
+                  return (
+                    <AssetCard
+                      key={id}
+                      assetId={id}
+                      amount={amount}
+                      details={assetMetadata.get(id)}
+                      approvedIcon={iconApprovals[id] === true}
+                      onPress={() =>
+                        nav.navigate("AssetDetail", { assetId: id })
+                      }
+                    />
+                  );
+                })}
+              </View>
+            ) : (
+              <Text
+                style={[styles.assetsEmpty, { color: theme.colors.textSubtle }]}
+              >
+                No assets yet. Mint or import to track Arkade-native assets
+                here.
+              </Text>
+            ))}
+        </View>
 
-      {/* Recent Activity */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            Recent Activity
+        {/* Balance Breakdown */}
+        <View
+          style={[
+            styles.statsCard,
+            {
+              backgroundColor: theme.colors.surfaceSubtle,
+              borderColor: theme.colors.border,
+            },
+          ]}
+        >
+          <Text style={[styles.statsTitle, { color: theme.colors.textMuted }]}>
+            Balance breakdown
+          </Text>
+          <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
+            Available offchain: {formatSats(wallet.balanceSats)} {unitLabel}
+          </Text>
+          <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
+            Boarding (onchain): {formatSats(wallet.balanceBoardingSats)}{" "}
+            {unitLabel}
+          </Text>
+          {pendingTotals.inboundSats > 0 ? (
+            <View style={styles.pendingLine}>
+              <Text style={[styles.statLine, { color: theme.colors.pending }]}>
+                Pending inbound: {formatSats(pendingTotals.inboundSats)}{" "}
+                {unitLabel}
+              </Text>
+              <View
+                style={[
+                  styles.pendingChip,
+                  { backgroundColor: theme.colors.pendingSoft },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.pendingChipText,
+                    { color: theme.colors.pending },
+                  ]}
+                >
+                  Pending
+                </Text>
+              </View>
+            </View>
+          ) : null}
+          {pendingTotals.outboundSats > 0 ? (
+            <View style={styles.pendingLine}>
+              <Text style={[styles.statLine, { color: theme.colors.pending }]}>
+                Pending outbound: {formatSats(pendingTotals.outboundSats)}{" "}
+                {unitLabel}
+              </Text>
+              <View
+                style={[
+                  styles.pendingChip,
+                  { backgroundColor: theme.colors.pendingSoft },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.pendingChipText,
+                    { color: theme.colors.pending },
+                  ]}
+                >
+                  In flight
+                </Text>
+              </View>
+            </View>
+          ) : null}
+          <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
+            Total: {formatSats(wallet.balanceTotalSats)} {unitLabel}
           </Text>
           <Pressable
-            onPress={() => nav.navigate("Activity")}
-            style={styles.seeAll}
+            onPress={() => nav.navigate("VtxoList")}
+            style={({ pressed }) => [
+              styles.vtxoLink,
+              { opacity: pressed ? 0.6 : 1 },
+            ]}
           >
-            <Text style={[styles.seeAllText, { color: theme.colors.primary }]}>
-              See all
+            <ListTree color={theme.colors.primary} size={16} />
+            <Text
+              style={[styles.vtxoLinkText, { color: theme.colors.primary }]}
+            >
+              View VTXOs
             </Text>
             <ChevronRight color={theme.colors.primary} size={16} />
           </Pressable>
         </View>
-
-        {recentActivity.length === 0 ? (
-          <View style={styles.emptyTxns}>
-            <Clock color={theme.colors.textSubtle} size={32} />
-            <Text
-              style={[styles.emptyTxnsText, { color: theme.colors.textMuted }]}
-            >
-              No activity yet
-            </Text>
-          </View>
-        ) : (
-          recentActivity.map((item) => (
-            <ActivityRow
-              key={item.id}
-              activity={item}
-              theme={theme}
-              onPress={() =>
-                nav.navigate("ActivityDetails", { activityId: item.id })
-              }
-              formatTimestamp={formatRelativeTime}
-              assetMetadata={assetMetadata}
-              iconApprovals={iconApprovals}
-            />
-          ))
-        )}
-      </View>
-
-      {/* Assets */}
-      <View style={styles.section}>
-        <AssetSectionHeader
-          primaryColor={theme.colors.primary}
-          textColor={theme.colors.text}
-          onMint={() => nav.navigate("AssetMint")}
-          onImport={() => nav.navigate("AssetImport")}
-          collapsed={assetsCollapsed}
-          onToggle={() => setAssetsCollapsed((c) => !c)}
-          assetCount={assetIds.length}
-        />
-        {!assetsCollapsed &&
-          (assetIds.length > 0 ? (
-            <View style={styles.assetList}>
-              {assetIds.map((id) => {
-                const entry = assetBalances.find((b) => b.assetId === id);
-                let amount = 0n;
-                try {
-                  amount = entry ? BigInt(entry.amount) : 0n;
-                } catch {
-                  amount = 0n;
-                }
-                return (
-                  <AssetCard
-                    key={id}
-                    assetId={id}
-                    amount={amount}
-                    details={assetMetadata.get(id)}
-                    approvedIcon={iconApprovals[id] === true}
-                    onPress={() => nav.navigate("AssetDetail", { assetId: id })}
-                  />
-                );
-              })}
-            </View>
-          ) : (
-            <Text
-              style={[styles.assetsEmpty, { color: theme.colors.textSubtle }]}
-            >
-              No assets yet. Mint or import to track Arkade-native assets here.
-            </Text>
-          ))}
-      </View>
-
-      {/* Balance Breakdown */}
-      <View
-        style={[
-          styles.statsCard,
-          {
-            backgroundColor: theme.colors.surfaceSubtle,
-            borderColor: theme.colors.border,
-          },
-        ]}
-      >
-        <Text style={[styles.statsTitle, { color: theme.colors.textMuted }]}>
-          Balance breakdown
-        </Text>
-        <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
-          Available offchain: {formatSats(wallet.balanceSats)} {unitLabel}
-        </Text>
-        <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
-          Boarding (onchain): {formatSats(wallet.balanceBoardingSats)}{" "}
-          {unitLabel}
-        </Text>
-        {pendingTotals.inboundSats > 0 ? (
-          <View style={styles.pendingLine}>
-            <Text style={[styles.statLine, { color: theme.colors.pending }]}>
-              Pending inbound: {formatSats(pendingTotals.inboundSats)}{" "}
-              {unitLabel}
-            </Text>
-            <View
-              style={[
-                styles.pendingChip,
-                { backgroundColor: theme.colors.pendingSoft },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.pendingChipText,
-                  { color: theme.colors.pending },
-                ]}
-              >
-                Pending
-              </Text>
-            </View>
-          </View>
-        ) : null}
-        {pendingTotals.outboundSats > 0 ? (
-          <View style={styles.pendingLine}>
-            <Text style={[styles.statLine, { color: theme.colors.pending }]}>
-              Pending outbound: {formatSats(pendingTotals.outboundSats)}{" "}
-              {unitLabel}
-            </Text>
-            <View
-              style={[
-                styles.pendingChip,
-                { backgroundColor: theme.colors.pendingSoft },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.pendingChipText,
-                  { color: theme.colors.pending },
-                ]}
-              >
-                In flight
-              </Text>
-            </View>
-          </View>
-        ) : null}
-        <Text style={[styles.statLine, { color: theme.colors.textSubtle }]}>
-          Total: {formatSats(wallet.balanceTotalSats)} {unitLabel}
-        </Text>
-        <Pressable
-          onPress={() => nav.navigate("VtxoList")}
-          style={({ pressed }) => [
-            styles.vtxoLink,
-            { opacity: pressed ? 0.6 : 1 },
-          ]}
-        >
-          <ListTree color={theme.colors.primary} size={16} />
-          <Text style={[styles.vtxoLinkText, { color: theme.colors.primary }]}>
-            View VTXOs
-          </Text>
-          <ChevronRight color={theme.colors.primary} size={16} />
-        </Pressable>
-      </View>
-    </ScrollView>
+      </ScrollView>
+      <WalletActionDock
+        theme={theme}
+        bottomOffset={dockBottomOffset}
+        onSend={() => nav.navigate("SendEntry")}
+        onReceive={() => nav.navigate("ReceiveSelect")}
+        onHeightChange={setDockHeight}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
   content: {
     padding: spacing[5],
-    paddingBottom: 120,
+  },
+  dock: {
+    position: "absolute",
+    left: spacing[5],
+    right: spacing[5],
+    borderRadius: radius.lg,
+    padding: spacing[2],
+    borderWidth: 1,
+  },
+  dockRow: {
+    flexDirection: "row",
+    gap: spacing[3],
+  },
+  dockButton: {
+    flex: 1,
   },
   balanceCard: {
     padding: spacing[6],
@@ -444,14 +534,6 @@ const styles = StyleSheet.create({
     fontSize: typography.size.xs,
     fontWeight: typography.weight.bold,
     letterSpacing: 1,
-  },
-  actions: {
-    flexDirection: "row",
-    gap: spacing[3],
-    marginTop: spacing[5],
-  },
-  actionBtn: {
-    flex: 1,
   },
   section: {
     marginTop: spacing[6],
