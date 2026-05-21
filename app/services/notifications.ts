@@ -115,19 +115,54 @@ export async function scheduleLocalNotification(opts: {
   });
 }
 
-export async function shouldNotify(category: "swaps" | "payments") {
+/**
+ * Parsed notification opt-ins. `null` means all categories are off (either
+ * the master switch is disabled, storage is absent, or a parse error occurred).
+ */
+export type NotificationPrefsSnapshot = {
+  payments: boolean;
+  swaps: boolean;
+} | null;
+
+/**
+ * Reads the current notification preferences from AsyncStorage in a single
+ * pass. Returns `null` when the master switch is off or reading fails.
+ * Callers that need to check multiple categories in a tight loop should call
+ * this once and pass the result to `shouldNotify`.
+ */
+export async function fetchNotificationPrefs(): Promise<NotificationPrefsSnapshot> {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const prefs = parsed?.preferences?.notifications;
+    if (!prefs || prefs.enabled !== true) return null;
+    return {
+      payments: prefs.payments !== false,
+      swaps: prefs.swaps !== false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns true if the user has enabled notifications for the given category.
+ *
+ * Routing Policy (see also app/services/notifications/policy.ts):
+ * - 'payments': Inbound receipts across all rails (Arkade, Bitcoin, Lightning).
+ *   Even when technically a swap completion, the user-facing event is a payment.
+ * - 'swaps': Maintenance and background activity (refunds, background poll summaries).
+ */
+export async function shouldNotify(
+  category: "swaps" | "payments",
+  snapshot?: NotificationPrefsSnapshot,
+) {
+  if (snapshot !== undefined) return snapshot != null && snapshot[category];
   // Match the store-side opt-in default: only notify when the user has
   // explicitly enabled notifications AND the category is on. Missing prefs,
   // missing storage, or a parse error all collapse to "no", because we
   // never want to surface notifications the user did not consent to.
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (!raw) return false;
-    const parsed = JSON.parse(raw);
-    const prefs = parsed?.preferences?.notifications;
-    if (!prefs || prefs.enabled !== true) return false;
-    return prefs[category] !== false;
-  } catch {
-    return false;
-  }
+  const prefs = await fetchNotificationPrefs();
+  return prefs != null && prefs[category];
 }

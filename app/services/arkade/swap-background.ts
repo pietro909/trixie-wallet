@@ -20,13 +20,10 @@ import {
 } from "../diagnostics/bg-task-metrics";
 import { recordPersistedError } from "../diagnostics/persisted";
 import { scheduleLocalNotification } from "../notifications";
-import {
-  decideNotification,
-  executeNotification,
-} from "../notifications/policy";
+import { decideNotification } from "../notifications/policy";
 import { buildIdentityFromSecret } from "./identity";
 import { isMainnetForNetworkName } from "./network";
-import { markSwapAsNotified, recordSwapMetadata } from "./swap-storage";
+import { markSwapsAsNotifiedBulk, recordSwapMetadata } from "./swap-storage";
 import { isTerminalSwapStatus } from "./swap-mappers";
 import { readSecret } from "./secret-store";
 import { getSharedSqlExecutor } from "./storage";
@@ -158,11 +155,11 @@ class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
 
       if (decision.kind === "local_notification") {
         try {
-          await executeNotification(
-            decision,
-            { show: () => {} }, // Dummy toast handler for background
-            scheduleLocalNotification,
-          );
+          await scheduleLocalNotification({
+            title: decision.title,
+            body: decision.body,
+            channelId: decision.channelId,
+          });
           const { status } = await Notifications.getPermissionsAsync();
           notified = status === "granted";
 
@@ -233,11 +230,10 @@ function newTaskId(): string {
 async function markRecentlySettledSwapsAsNotified(walletId: string) {
   const repo = createSwapRepository();
   const swaps = await repo.getAllSwaps();
-  for (const swap of swaps) {
-    if (isTerminalSwapStatus(swap.status)) {
-      await markSwapAsNotified(swap.id);
-    }
-  }
+  const terminalIds = swaps
+    .filter((swap) => isTerminalSwapStatus(swap.status))
+    .map((swap) => swap.id);
+  await markSwapsAsNotifiedBulk(terminalIds);
 }
 
 async function readActiveSwapWallet(): Promise<ActiveSwapWallet> {

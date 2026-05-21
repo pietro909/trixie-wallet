@@ -175,7 +175,7 @@ export async function recordSwapMetadata(
       input.invoiceAmountSats ?? null,
       input.arkadeAmountSats ?? null,
       input.paymentHash ?? null,
-      input.backgroundNotified ? 1 : 0,
+      input.backgroundNotified != null ? (input.backgroundNotified ? 1 : 0) : null,
       input.restoredAt ?? null,
       now,
       now,
@@ -265,12 +265,17 @@ export async function findUnlinkedSwapCandidates(
   return rows.map(rowToMeta);
 }
 
-export async function markSwapAsNotified(swapId: string): Promise<void> {
+export async function markSwapsAsNotifiedBulk(
+  swapIds: string[],
+): Promise<void> {
+  if (swapIds.length === 0) return;
   await ensureInit();
   const exec = getSharedSqlExecutor();
+  const now = Date.now();
+  const placeholders = swapIds.map(() => "?").join(", ");
   await exec.run(
-    `UPDATE ${TABLE} SET background_notified = 1 WHERE swap_id = ?`,
-    [swapId],
+    `UPDATE ${TABLE} SET background_notified = 1, updated_at = ? WHERE swap_id IN (${placeholders}) AND background_notified = 0`,
+    [now, ...swapIds],
   );
 }
 

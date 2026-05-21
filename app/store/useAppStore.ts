@@ -134,10 +134,13 @@ import {
 } from "../services/diagnostics/persisted";
 import { recordError } from "../services/diagnostics/recorder";
 import {
+  clearNotifyState,
+  diffAndNotifyActivities,
+} from "./notify-diff";
+import {
   isBitcoinAddressForNetwork,
   networkNameOrNull,
 } from "../services/paymentParser";
-import { toastEmitter } from "../services/toast-emitter";
 import {
   auditBalanceIntegrity,
   computePendingTotals,
@@ -543,7 +546,9 @@ async function persist(_state: AppState): Promise<void> {
     .catch((e) => {
       hasPendingWrite = false;
       // Log error but don't break the chain for future writes
-      recordError("unknown", e instanceof Error ? e.message : String(e), { context: "persist_queue_failure" });
+      recordError("unknown", e instanceof Error ? e.message : String(e), {
+        context: "persist_queue_failure",
+      });
     });
 
   return persistChain;
@@ -973,6 +978,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
   },
 
   acknowledgeSchemaMismatchAndWipe: async () => {
+    clearNotifyState();
     await AsyncStorage.removeItem(STORAGE_KEY);
     await clearLegacyStorage();
     set({
@@ -1255,6 +1261,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
     };
 
     refreshInFlight = (async () => {
+      const baselineActivities = get().wallet?.activities ?? [];
       let lastError: unknown = null;
       do {
         refreshPending = false;
@@ -1265,6 +1272,21 @@ export const useAppStore = create<StoreState>((set, get) => ({
           lastError = e;
         }
       } while (refreshPending);
+
+      const wallet = get().wallet;
+      if (wallet && !lastError) {
+        await diffAndNotifyActivities(
+          wallet.id,
+          baselineActivities,
+          wallet.activities,
+        ).catch((e) => {
+          recordError(
+            "wallet",
+            `notification_diff_failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        });
+      }
+
       if (lastError) throw lastError;
     })().finally(() => {
       refreshInFlight = null;
@@ -1291,7 +1313,6 @@ export const useAppStore = create<StoreState>((set, get) => ({
           behavior: get().walletBehavior,
           trigger,
           swapBackgroundEnabled: get().backgroundTasks.swapPoll,
-          notificationPrefs: get().preferences.notifications,
         });
         resumeState = lightningResumeStateFromSummary(summary);
         shouldMarkDirty =
@@ -1666,6 +1687,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
     // a reference to it and would crash on swap events otherwise.
     invalidateVtxoSnapshotCache();
     invalidateAddressesSnapshotCache();
+    clearNotifyState();
     set((s) => ({
       security: { ...s.security, isLocked: true },
     }));
@@ -1712,6 +1734,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
   resetWallet: async () => {
     invalidateVtxoSnapshotCache();
     invalidateAddressesSnapshotCache();
+    clearNotifyState();
     const metadata = get().wallet;
     await disposeLightning();
     if (metadata) {
@@ -2707,11 +2730,6 @@ setSwapEventListener(() => {
 let incomingFundsRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 setIncomingFundsListener(() => {
   if (incomingFundsRefreshTimer) return;
-
-  const prefs = useAppStore.getState().preferences.notifications;
-  if (prefs.enabled && prefs.payments) {
-    toastEmitter.show("Payment received", "success");
-  }
 
   incomingFundsRefreshTimer = setTimeout(() => {
     incomingFundsRefreshTimer = null;

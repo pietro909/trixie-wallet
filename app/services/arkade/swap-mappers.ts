@@ -155,6 +155,18 @@ function submarineAmountSats(
   return swap.response.expectedAmount;
 }
 
+export function isTerminalSwapStatus(status: BoltzSwapStatus): boolean {
+  return (
+    isReverseSuccessStatus(status) ||
+    isReverseFailedStatus(status) ||
+    isSubmarineSuccessStatus(status) ||
+    isSubmarineFailedStatus(status) ||
+    isChainSuccessStatus(status) ||
+    isChainFailedStatus(status) ||
+    isChainRefundableStatus(status)
+  );
+}
+
 /**
  * Common metadata projected for every Lightning Activity row.
  *
@@ -172,6 +184,7 @@ function baseLightningMetadata(
     swapId: swap.id,
     swapType: swap.type,
     provider: "boltz",
+    backgroundNotified: meta?.backgroundNotified ?? false,
   };
   if (ctx.network) {
     out.network = ctx.network;
