@@ -55,6 +55,7 @@ function makeMeta(over: Partial<LocalSwapMetadata>): LocalSwapMetadata {
     walletTxId: null,
     paymentHash: "ph-1",
     linkSource: null,
+    backgroundNotified: false,
     restoredAt: null,
     createdAt: 1_700_000_000_000,
     updatedAt: 1_700_000_000_000,

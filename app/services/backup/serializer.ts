@@ -389,6 +389,7 @@ function parseSwapMetadataRow(raw: unknown, index: number): LocalSwapMetadata {
     walletTxId: stringOrNull(r.walletTxId),
     paymentHash: stringOrNull(r.paymentHash),
     linkSource: parseLinkSource(r.linkSource),
+    backgroundNotified: false,
     restoredAt: numberOrNull(r.restoredAt),
     createdAt: numberOr(r.createdAt, Date.now()),
     updatedAt: numberOr(r.updatedAt, Date.now()),

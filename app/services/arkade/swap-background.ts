@@ -19,9 +19,15 @@ import {
   recordBgTaskRun,
 } from "../diagnostics/bg-task-metrics";
 import { recordPersistedError } from "../diagnostics/persisted";
-import { scheduleLocalNotification, shouldNotify } from "../notifications";
+import { scheduleLocalNotification } from "../notifications";
+import {
+  decideNotification,
+  executeNotification,
+} from "../notifications/policy";
 import { buildIdentityFromSecret } from "./identity";
 import { isMainnetForNetworkName } from "./network";
+import { markSwapAsNotified, recordSwapMetadata } from "./swap-storage";
+import { isTerminalSwapStatus } from "./swap-mappers";
 import { readSecret } from "./secret-store";
 import { getSharedSqlExecutor } from "./storage";
 
@@ -142,18 +148,39 @@ class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
     // granted. If it isn't, leave `notified=false` so the foreground
     // drain still toasts the user — otherwise they get zero feedback.
     let notified = false;
-    if ((claimed > 0 || refunded > 0) && (await shouldNotify("swaps"))) {
-      const { title, body } = composeSwapNotificationCopy(claimed, refunded);
-      try {
-        await scheduleLocalNotification({ title, body, channelId: "swaps" });
-        const { status } = await Notifications.getPermissionsAsync();
-        notified = status === "granted";
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        await recordPersistedError(
-          "lightning",
-          `bg_swap_notification_failed: ${message}`,
-        );
+    if (claimed > 0 || refunded > 0) {
+      const decision = await decideNotification({
+        source: "swap_drain",
+        claimed,
+        refunded,
+        context: "background",
+      });
+
+      if (decision.kind === "local_notification") {
+        try {
+          await executeNotification(
+            decision,
+            { show: () => {} }, // Dummy toast handler for background
+            scheduleLocalNotification,
+          );
+          const { status } = await Notifications.getPermissionsAsync();
+          notified = status === "granted";
+
+          if (notified) {
+            try {
+              const active = await readActiveSwapWallet();
+              await markRecentlySettledSwapsAsNotified(active.walletId);
+            } catch {
+              // best effort
+            }
+          }
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          await recordPersistedError(
+            "lightning",
+            `bg_swap_notification_failed: ${message}`,
+          );
+        }
       }
     }
 
@@ -190,30 +217,6 @@ class RecordingSwapTaskQueue extends AsyncStorageTaskQueue {
   }
 }
 
-function composeSwapNotificationCopy(
-  claimed: number,
-  refunded: number,
-): { title: string; body: string } {
-  if (claimed > 0 && refunded > 0) {
-    return {
-      title: "Swap activity",
-      body:
-        `Claimed ${claimed} swap${claimed > 1 ? "s" : ""}, ` +
-        `refunded ${refunded} swap${refunded > 1 ? "s" : ""}.`,
-    };
-  }
-  if (claimed > 0) {
-    return {
-      title: "Payment Received",
-      body: `Successfully claimed ${claimed} swap${claimed > 1 ? "s" : ""}.`,
-    };
-  }
-  return {
-    title: "Swap Refunded",
-    body: `Refunded ${refunded} swap${refunded > 1 ? "s" : ""}.`,
-  };
-}
-
 export const swapTaskQueue = new RecordingSwapTaskQueue(
   AsyncStorage,
   QUEUE_PREFIX,
@@ -225,6 +228,16 @@ export function createSwapRepository(): SQLiteSwapRepository {
 
 function newTaskId(): string {
   return `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+}
+
+async function markRecentlySettledSwapsAsNotified(walletId: string) {
+  const repo = createSwapRepository();
+  const swaps = await repo.getAllSwaps();
+  for (const swap of swaps) {
+    if (isTerminalSwapStatus(swap.status)) {
+      await markSwapAsNotified(swap.id);
+    }
+  }
 }
 
 async function readActiveSwapWallet(): Promise<ActiveSwapWallet> {

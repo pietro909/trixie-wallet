@@ -48,6 +48,7 @@ export type LocalSwapMetadata = {
   walletTxId: string | null;
   paymentHash: string | null;
   linkSource: LinkSource | null;
+  backgroundNotified: boolean;
   restoredAt: number | null;
   createdAt: number;
   updatedAt: number;
@@ -70,6 +71,7 @@ async function ensureInit(): Promise<void> {
           wallet_tx_id TEXT,
           payment_hash TEXT,
           link_source TEXT,
+          background_notified INTEGER DEFAULT 0,
           restored_at INTEGER,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
@@ -96,6 +98,7 @@ type Row = {
   wallet_tx_id: string | null;
   payment_hash: string | null;
   link_source: LinkSource | null;
+  background_notified: number;
   restored_at: number | null;
   created_at: number;
   updated_at: number;
@@ -112,6 +115,7 @@ function rowToMeta(row: Row): LocalSwapMetadata {
     walletTxId: row.wallet_tx_id,
     paymentHash: row.payment_hash,
     linkSource: row.link_source,
+    backgroundNotified: row.background_notified === 1,
     restoredAt: row.restored_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -126,6 +130,7 @@ export type RecordSwapMetadataInput = {
   invoiceAmountSats?: number | null;
   arkadeAmountSats?: number | null;
   paymentHash?: string | null;
+  backgroundNotified?: boolean;
   restoredAt?: number | null;
 };
 
@@ -151,14 +156,15 @@ export async function recordSwapMetadata(
       swap_id, wallet_id, direction, created_for_flow,
       invoice_amount_sats, arkade_amount_sats,
       wallet_tx_id, payment_hash, link_source,
-      restored_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?)
+      background_notified, restored_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?)
     ON CONFLICT(swap_id) DO UPDATE SET
       direction = excluded.direction,
       created_for_flow = excluded.created_for_flow,
       invoice_amount_sats = COALESCE(excluded.invoice_amount_sats, ${TABLE}.invoice_amount_sats),
       arkade_amount_sats = COALESCE(excluded.arkade_amount_sats, ${TABLE}.arkade_amount_sats),
       payment_hash = COALESCE(excluded.payment_hash, ${TABLE}.payment_hash),
+      background_notified = COALESCE(excluded.background_notified, ${TABLE}.background_notified),
       restored_at = COALESCE(excluded.restored_at, ${TABLE}.restored_at),
       updated_at = excluded.updated_at`,
     [
@@ -169,6 +175,7 @@ export async function recordSwapMetadata(
       input.invoiceAmountSats ?? null,
       input.arkadeAmountSats ?? null,
       input.paymentHash ?? null,
+      input.backgroundNotified ? 1 : 0,
       input.restoredAt ?? null,
       now,
       now,
@@ -256,6 +263,15 @@ export async function findUnlinkedSwapCandidates(
     ],
   );
   return rows.map(rowToMeta);
+}
+
+export async function markSwapAsNotified(swapId: string): Promise<void> {
+  await ensureInit();
+  const exec = getSharedSqlExecutor();
+  await exec.run(
+    `UPDATE ${TABLE} SET background_notified = 1 WHERE swap_id = ?`,
+    [swapId],
+  );
 }
 
 export async function clearSwapMetadataForWallet(
