@@ -297,15 +297,25 @@ export default function ProfilePreferences() {
                   ]}
                 />
                 <View style={styles.switchRow}>
-                  <Text
-                    style={[styles.optionLabel, { color: theme.colors.text }]}
-                  >
-                    Swaps
-                  </Text>
+                  <View style={styles.labelContainer}>
+                    <Text
+                      style={[styles.optionLabel, { color: theme.colors.text }]}
+                    >
+                      Inbound Payments
+                    </Text>
+                    <Text
+                      style={[
+                        styles.optionDescription,
+                        { color: theme.colors.textMuted },
+                      ]}
+                    >
+                      Ark, Bitcoin, and Lightning receives
+                    </Text>
+                  </View>
                   <Switch
-                    value={notificationPrefs.swaps}
-                    onValueChange={async (swaps) =>
-                      await setNotificationPrefs({ swaps })
+                    value={notificationPrefs.payments}
+                    onValueChange={async (payments) =>
+                      await setNotificationPrefs({ payments })
                     }
                     trackColor={{ true: theme.colors.primary }}
                   />
@@ -317,15 +327,25 @@ export default function ProfilePreferences() {
                   ]}
                 />
                 <View style={styles.switchRow}>
-                  <Text
-                    style={[styles.optionLabel, { color: theme.colors.text }]}
-                  >
-                    Payments
-                  </Text>
+                  <View style={styles.labelContainer}>
+                    <Text
+                      style={[styles.optionLabel, { color: theme.colors.text }]}
+                    >
+                      Swap Activity
+                    </Text>
+                    <Text
+                      style={[
+                        styles.optionDescription,
+                        { color: theme.colors.textMuted },
+                      ]}
+                    >
+                      Background completions and refunds
+                    </Text>
+                  </View>
                   <Switch
-                    value={notificationPrefs.payments}
-                    onValueChange={async (payments) =>
-                      await setNotificationPrefs({ payments })
+                    value={notificationPrefs.swaps}
+                    onValueChange={async (swaps) =>
+                      await setNotificationPrefs({ swaps })
                     }
                     trackColor={{ true: theme.colors.primary }}
                   />
@@ -369,6 +389,14 @@ const styles = StyleSheet.create({
   },
   optionLabel: {
     fontSize: typography.size.md,
+  },
+  optionDescription: {
+    fontSize: typography.size.xs,
+    marginTop: spacing[1],
+  },
+  labelContainer: {
+    flex: 1,
+    marginRight: spacing[4],
   },
   switchRow: {
     flexDirection: "row",
