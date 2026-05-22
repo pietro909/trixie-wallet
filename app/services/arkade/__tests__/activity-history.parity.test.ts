@@ -1,6 +1,9 @@
 import type { ArkTransaction, VirtualCoin } from "@arkade-os/sdk";
 import type { Activity } from "../../../store/types";
-import { buildActivityHistory } from "../activity-history";
+import {
+  buildActivityHistory,
+  type TxCreatedAtResolver,
+} from "../activity-history";
 import transactionHistoryRaw from "./fixtures/transaction_history.json";
 
 // SDK-parity tests against the real-world fixtures from
@@ -62,9 +65,15 @@ const buildForCase = async (c: FixtureCase): Promise<Activity[]> => {
   })) as unknown as VirtualCoin[];
   const boardingTxs = c.allBoardingTxs as unknown as ArkTransaction[];
   const sendAllTxTime = c.sendAllTxTime;
-  const getTxCreatedAt = sendAllTxTime
-    ? (txid: string) => Promise.resolve(sendAllTxTime[txid])
-    : undefined;
+  let getTxCreatedAt: TxCreatedAtResolver | undefined;
+  if (sendAllTxTime) {
+    getTxCreatedAt = ((txid: string) =>
+      Promise.resolve(sendAllTxTime[txid])) as TxCreatedAtResolver;
+    getTxCreatedAt.getMany = (txids: string[]) =>
+      Promise.resolve(
+        new Map(txids.map((txid) => [txid, sendAllTxTime[txid]])),
+      );
+  }
   return buildActivityHistory(
     vtxos,
     boardingTxs,

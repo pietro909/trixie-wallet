@@ -303,10 +303,21 @@ function buildAssetActivity(args: {
 // Minimal indexer surface the resolver depends on. Keeping the type
 // narrow lets the factory stay loadable under jest-expo without dragging
 // in the SDK's ESM-only adapter.
+type TimestampOutpoint = { txid: string; vout: number };
+type TimestampVtxo = TimestampOutpoint & { createdAt: Date };
+type TimestampPage = { current: number; next: number; total: number };
+
 export type IndexerLike = {
   getVtxos: (opts: {
-    outpoints: { txid: string; vout: number }[];
-  }) => Promise<{ vtxos: { createdAt: Date }[] }>;
+    outpoints: TimestampOutpoint[];
+    pageIndex?: number;
+    pageSize?: number;
+  }) => Promise<{ vtxos: TimestampVtxo[]; page?: TimestampPage }>;
+};
+
+export type TxCreatedAtResolver = {
+  (txid: string): Promise<number | undefined>;
+  getMany?: (txids: string[]) => Promise<Map<string, number>>;
 };
 
 export type TimestampResolverDeps = {
@@ -321,6 +332,63 @@ export type TimestampResolverDeps = {
   loadIndexer: () => Promise<IndexerLike>;
 };
 
+const TIMESTAMP_FETCH_BATCH_SIZE = 100;
+
+function timestampOutpointKey(outpoint: TimestampOutpoint): string {
+  return `${outpoint.txid}:${outpoint.vout}`;
+}
+
+async function fetchTimestampsForOutpoints(
+  indexer: IndexerLike,
+  outpoints: TimestampOutpoint[],
+): Promise<Map<string, number>> {
+  const requestedByOutpoint = new Map(
+    outpoints.map((outpoint) => [
+      timestampOutpointKey(outpoint),
+      outpoint.txid,
+    ]),
+  );
+  const timestamps = new Map<string, number>();
+  let pageIndex = 0;
+  const seenPages = new Set<number>();
+
+  while (true) {
+    if (seenPages.has(pageIndex)) break;
+    seenPages.add(pageIndex);
+
+    const opts: {
+      outpoints: TimestampOutpoint[];
+      pageIndex?: number;
+      pageSize?: number;
+    } = { outpoints };
+    if (pageIndex > 0) opts.pageIndex = pageIndex;
+    if (outpoints.length > 1) opts.pageSize = outpoints.length;
+
+    const res = await indexer.getVtxos(opts);
+    for (const v of res.vtxos) {
+      const txid = requestedByOutpoint.get(timestampOutpointKey(v));
+      if (!txid) continue;
+      const ts = v.createdAt.getTime();
+      const existing = timestamps.get(txid);
+      if (existing === undefined || ts < existing) timestamps.set(txid, ts);
+    }
+
+    if (timestamps.size === requestedByOutpoint.size) break;
+    const page = res.page;
+    if (!page || page.total <= 1) break;
+    if (
+      page.next === page.current ||
+      page.next < 0 ||
+      page.next >= page.total
+    ) {
+      break;
+    }
+    pageIndex = page.next;
+  }
+
+  return timestamps;
+}
+
 /**
  * Builds a `getTxCreatedAt(txid)` that consults the persistent timestamp
  * cache first and only loads/constructs the indexer on a miss. The
@@ -330,7 +398,7 @@ export type TimestampResolverDeps = {
  */
 export function makeTimestampResolver(
   deps: TimestampResolverDeps,
-): (txid: string) => Promise<number | undefined> {
+): TxCreatedAtResolver {
   let indexerPromise: Promise<IndexerLike | null> | null = null;
   const loadOnce = (): Promise<IndexerLike | null> => {
     if (!indexerPromise) {
@@ -341,7 +409,18 @@ export function makeTimestampResolver(
     }
     return indexerPromise;
   };
-  return async (txid: string): Promise<number | undefined> => {
+
+  const saveTimestamp = async (txid: string, ts: number): Promise<void> => {
+    try {
+      await deps.saveTimestamp(txid, ts);
+    } catch {
+      // Timestamp persistence is a cache optimization; never fail refreshes on it.
+    }
+  };
+
+  const resolver: TxCreatedAtResolver = async (
+    txid: string,
+  ): Promise<number | undefined> => {
     let cached: number | undefined;
     try {
       cached = await deps.getTimestamp(txid);
@@ -351,18 +430,65 @@ export function makeTimestampResolver(
     if (cached !== undefined) return cached;
     const indexer = await loadOnce();
     if (!indexer) return undefined;
-    let ts: number | undefined;
+    let fetched: Map<string, number>;
     try {
-      const res = await indexer.getVtxos({
-        outpoints: [{ txid, vout: 0 }],
-      });
-      ts = res.vtxos[0]?.createdAt.getTime();
+      fetched = await fetchTimestampsForOutpoints(indexer, [{ txid, vout: 0 }]);
     } catch {
-      ts = undefined;
+      return undefined;
     }
-    if (ts !== undefined) await deps.saveTimestamp(txid, ts);
+    const ts = fetched.get(txid);
+    if (ts !== undefined) await saveTimestamp(txid, ts);
     return ts;
   };
+
+  resolver.getMany = async (txids: string[]): Promise<Map<string, number>> => {
+    const timestamps = new Map<string, number>();
+    const missingTxids: string[] = [];
+    for (const txid of new Set(txids)) {
+      try {
+        const cached = await deps.getTimestamp(txid);
+        if (cached !== undefined) {
+          timestamps.set(txid, cached);
+        } else {
+          missingTxids.push(txid);
+        }
+      } catch {
+        missingTxids.push(txid);
+      }
+    }
+
+    if (missingTxids.length === 0) return timestamps;
+    const indexer = await loadOnce();
+    if (!indexer) return timestamps;
+
+    for (let i = 0; i < missingTxids.length; i += TIMESTAMP_FETCH_BATCH_SIZE) {
+      const outpoints = missingTxids
+        .slice(i, i + TIMESTAMP_FETCH_BATCH_SIZE)
+        .map((txid) => ({ txid, vout: 0 }));
+      let fetched: Map<string, number>;
+      try {
+        fetched = await fetchTimestampsForOutpoints(indexer, outpoints);
+      } catch {
+        continue;
+      }
+      for (const [txid, ts] of fetched) {
+        timestamps.set(txid, ts);
+        await saveTimestamp(txid, ts);
+      }
+    }
+
+    return timestamps;
+  };
+
+  return resolver;
+}
+
+function hasBatchTimestampResolver(
+  resolver: TxCreatedAtResolver | undefined,
+): resolver is TxCreatedAtResolver & {
+  getMany: NonNullable<TxCreatedAtResolver["getMany"]>;
+} {
+  return typeof resolver?.getMany === "function";
 }
 
 // ===== Main builder =====
@@ -428,7 +554,7 @@ export async function buildActivityHistory(
   vtxos: VirtualCoin[],
   allBoardingTxs: ArkTransaction[],
   commitmentsToIgnore: Set<string>,
-  getTxCreatedAt?: (txid: string) => Promise<number | undefined>,
+  getTxCreatedAt?: TxCreatedAtResolver,
   options: GetActivityHistoryOptions = { network: null },
 ): Promise<Activity[]> {
   const sorted = [...vtxos].sort(
@@ -523,6 +649,31 @@ export async function buildActivityHistory(
       if (BigInt(tx.amount) === amount) return tx;
     }
     return null;
+  };
+
+  type OffchainSendPlan = {
+    changes: VirtualCoin[];
+    assets: Asset[];
+    reuse: Activity | undefined;
+    txAmount: bigint;
+  };
+
+  const offchainSendPlans = new Map<string, OffchainSendPlan>();
+  const getOffchainSendPlan = (arkTxId: string): OffchainSendPlan => {
+    const existing = offchainSendPlans.get(arkTxId);
+    if (existing) return existing;
+    const allSpent = vtxosByArkTxId.get(arkTxId) ?? EMPTY;
+    const changes = vtxosByTxid.get(arkTxId) ?? EMPTY;
+    const assets = subtractAssets(allSpent, changes);
+    const reuse = tryReuse(
+      activityId(assets.length > 0 ? "asset" : "offchain", arkTxId),
+    );
+    const spentBtc = sumValue(allSpent);
+    const changeBtc = sumValue(changes);
+    const txAmount = changes.length > 0 ? spentBtc - changeBtc : spentBtc;
+    const plan = { changes, assets, reuse, txAmount };
+    offchainSendPlans.set(arkTxId, plan);
+    return plan;
   };
 
   for (const commitmentTxid of commitmentIds) {
@@ -885,6 +1036,31 @@ export async function buildActivityHistory(
 
   const offchainSendsEmitted = new Set<string>();
   const offchainReceivesEmitted = new Set<string>();
+  const batchTimestampResolver = hasBatchTimestampResolver(getTxCreatedAt)
+    ? getTxCreatedAt
+    : null;
+  const batchedTxCreatedAt = new Map<string, number>();
+
+  if (batchTimestampResolver) {
+    const timestampTxids: string[] = [];
+    const plannedArkTxids = new Set<string>();
+    for (const v of sorted) {
+      if (!v.isSpent || !v.arkTxId || plannedArkTxids.has(v.arkTxId)) continue;
+      plannedArkTxids.add(v.arkTxId);
+      const plan = getOffchainSendPlan(v.arkTxId);
+      if (plan.changes.length === 0 && !plan.reuse) {
+        timestampTxids.push(v.arkTxId);
+      }
+    }
+    if (timestampTxids.length > 0) {
+      try {
+        const resolved = await batchTimestampResolver.getMany(timestampTxids);
+        for (const [txid, ts] of resolved) batchedTxCreatedAt.set(txid, ts);
+      } catch {
+        // A batch resolver is an optimization. Missing entries use the row fallback.
+      }
+    }
+  }
 
   for (const v of sorted) {
     if (!v.status.isLeaf && v.txid) {
@@ -940,28 +1116,29 @@ export async function buildActivityHistory(
     if (v.isSpent && v.arkTxId && !offchainSendsEmitted.has(v.arkTxId)) {
       offchainSendsEmitted.add(v.arkTxId);
       const arkTxId = v.arkTxId;
-      const allSpent = vtxosByArkTxId.get(arkTxId) ?? EMPTY;
-      const changes = vtxosByTxid.get(arkTxId) ?? EMPTY;
-      const hasAssets = subtractAssets(allSpent, changes).length > 0;
+      const plan = getOffchainSendPlan(arkTxId);
+      const { changes, assets, reuse, txAmount } = plan;
 
-      // No-change BTC sends are the hottest cache target: their timestamp
-      // requires a network call. Reuse before computing anything else.
-      const reuseId = activityId(hasAssets ? "asset" : "offchain", arkTxId);
-      const reuse = tryReuse(reuseId);
+      // No-change sends are the hottest cache target: their timestamp
+      // requires a network call. Reuse before resolving that timestamp.
       if (reuse) {
         activities.push(reuse);
         continue;
       }
 
-      const spentBtc = sumValue(allSpent);
-      const changeBtc = sumValue(changes);
-      const txAmount = changes.length > 0 ? spentBtc - changeBtc : spentBtc;
+      let resolvedTimestamp: number | undefined;
+      if (changes.length === 0) {
+        resolvedTimestamp = batchTimestampResolver
+          ? batchedTxCreatedAt.get(arkTxId)
+          : undefined;
+        if (resolvedTimestamp === undefined && getTxCreatedAt) {
+          resolvedTimestamp = await getTxCreatedAt(arkTxId);
+        }
+      }
       const tsTx =
         changes.length > 0
           ? changes[0].createdAt.getTime()
-          : ((getTxCreatedAt ? await getTxCreatedAt(arkTxId) : undefined) ??
-            v.createdAt.getTime() + 1);
-      const assets = subtractAssets(allSpent, changes);
+          : (resolvedTimestamp ?? v.createdAt.getTime() + 1);
 
       if (assets.length > 0) {
         activities.push(

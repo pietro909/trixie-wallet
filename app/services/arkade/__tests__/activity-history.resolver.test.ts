@@ -2,6 +2,7 @@ import type { VirtualCoin } from "@arkade-os/sdk";
 import {
   buildActivityHistory,
   makeTimestampResolver,
+  type TxCreatedAtResolver,
 } from "../activity-history";
 
 // Direct tests for the timestamp resolver factory. We pass fake cache and
@@ -9,7 +10,13 @@ import {
 // touching the Expo adapter or jest's dynamic-import path (which is
 // brittle under jest-expo).
 
-const indexerVtxo = (ts: number): { createdAt: Date } => ({
+const indexerVtxo = (
+  txid: string,
+  ts: number,
+  vout = 0,
+): { txid: string; vout: number; createdAt: Date } => ({
+  txid,
+  vout,
   createdAt: new Date(ts),
 });
 
@@ -32,7 +39,7 @@ describe("makeTimestampResolver", () => {
   // timestamp persisted.
   it("E-3: cache miss constructs the indexer once and persists the result", async () => {
     const loadIndexer = jest.fn(async () => ({
-      getVtxos: jest.fn(async () => ({ vtxos: [indexerVtxo(7000)] })),
+      getVtxos: jest.fn(async () => ({ vtxos: [indexerVtxo("tx-A", 7000)] })),
     }));
     const saveTimestamp = jest.fn(async () => undefined);
     const resolver = makeTimestampResolver({
@@ -49,9 +56,9 @@ describe("makeTimestampResolver", () => {
   it("E-4: multiple cache misses share one indexer instance", async () => {
     const getVtxos = jest
       .fn()
-      .mockResolvedValueOnce({ vtxos: [indexerVtxo(100)] })
-      .mockResolvedValueOnce({ vtxos: [indexerVtxo(200)] })
-      .mockResolvedValueOnce({ vtxos: [indexerVtxo(300)] });
+      .mockResolvedValueOnce({ vtxos: [indexerVtxo("a", 100)] })
+      .mockResolvedValueOnce({ vtxos: [indexerVtxo("b", 200)] })
+      .mockResolvedValueOnce({ vtxos: [indexerVtxo("c", 300)] });
     const loadIndexer = jest.fn(async () => ({ getVtxos }));
     const resolver = makeTimestampResolver({
       getTimestamp: async () => undefined,
@@ -101,7 +108,7 @@ describe("makeTimestampResolver", () => {
   // the indexer and returns its value.
   it("E-7: a getTimestamp throw is treated as a miss and the indexer is consulted", async () => {
     const loadIndexer = jest.fn(async () => ({
-      getVtxos: async () => ({ vtxos: [indexerVtxo(42)] }),
+      getVtxos: async () => ({ vtxos: [indexerVtxo("tx-A", 42)] }),
     }));
     const saveTimestamp = jest.fn(async () => undefined);
     const resolver = makeTimestampResolver({
@@ -136,7 +143,7 @@ describe("makeTimestampResolver", () => {
   // indexer; this currently matches the recipient-VTXO convention used by
   // off-chain send timestamp recovery.
   it("E-9: resolver requests outpoint { txid, vout: 0 }", async () => {
-    const getVtxos = jest.fn(async () => ({ vtxos: [indexerVtxo(1)] }));
+    const getVtxos = jest.fn(async () => ({ vtxos: [indexerVtxo("tx-Z", 1)] }));
     const resolver = makeTimestampResolver({
       getTimestamp: async () => undefined,
       saveTimestamp: jest.fn(),
@@ -146,6 +153,163 @@ describe("makeTimestampResolver", () => {
     expect(getVtxos).toHaveBeenCalledWith({
       outpoints: [{ txid: "tx-Z", vout: 0 }],
     });
+  });
+
+  it("F-1: getMany dedupes misses and skips cached timestamps", async () => {
+    const getTimestamp = jest.fn(async (txid: string) =>
+      txid === "cached" ? 111 : undefined,
+    );
+    const getVtxos = jest.fn(async () => ({
+      vtxos: [indexerVtxo("miss-b", 333), indexerVtxo("miss-a", 222)],
+    }));
+    const saveTimestamp = jest.fn(async () => undefined);
+    const resolver = makeTimestampResolver({
+      getTimestamp,
+      saveTimestamp,
+      loadIndexer: async () => ({ getVtxos }),
+    });
+
+    await expect(
+      resolver.getMany?.(["cached", "miss-a", "miss-a", "miss-b"]),
+    ).resolves.toStrictEqual(
+      new Map([
+        ["cached", 111],
+        ["miss-b", 333],
+        ["miss-a", 222],
+      ]),
+    );
+    expect(getVtxos).toHaveBeenCalledTimes(1);
+    expect(getVtxos).toHaveBeenCalledWith({
+      outpoints: [
+        { txid: "miss-a", vout: 0 },
+        { txid: "miss-b", vout: 0 },
+      ],
+      pageSize: 2,
+    });
+    expect(saveTimestamp).toHaveBeenCalledWith("miss-a", 222);
+    expect(saveTimestamp).toHaveBeenCalledWith("miss-b", 333);
+  });
+
+  it("F-2: getMany only attaches timestamps for exact requested outpoints", async () => {
+    const getVtxos = jest.fn(async () => ({
+      vtxos: [
+        indexerVtxo("other", 999),
+        indexerVtxo("tx-B", 888, 1),
+        indexerVtxo("tx-A", 777),
+      ],
+    }));
+    const saveTimestamp = jest.fn(async () => undefined);
+    const resolver = makeTimestampResolver({
+      getTimestamp: async () => undefined,
+      saveTimestamp,
+      loadIndexer: async () => ({ getVtxos }),
+    });
+
+    await expect(resolver.getMany?.(["tx-A", "tx-B"])).resolves.toStrictEqual(
+      new Map([["tx-A", 777]]),
+    );
+    expect(saveTimestamp).toHaveBeenCalledTimes(1);
+    expect(saveTimestamp).toHaveBeenCalledWith("tx-A", 777);
+  });
+
+  it("F-3: getMany follows paginated outpoint responses", async () => {
+    const getVtxos = jest
+      .fn()
+      .mockResolvedValueOnce({
+        vtxos: [indexerVtxo("tx-A", 100)],
+        page: { current: 0, next: 1, total: 2 },
+      })
+      .mockResolvedValueOnce({
+        vtxos: [indexerVtxo("tx-B", 200)],
+        page: { current: 1, next: 1, total: 2 },
+      });
+    const resolver = makeTimestampResolver({
+      getTimestamp: async () => undefined,
+      saveTimestamp: jest.fn(),
+      loadIndexer: async () => ({ getVtxos }),
+    });
+
+    await expect(resolver.getMany?.(["tx-A", "tx-B"])).resolves.toStrictEqual(
+      new Map([
+        ["tx-A", 100],
+        ["tx-B", 200],
+      ]),
+    );
+    expect(getVtxos).toHaveBeenNthCalledWith(1, {
+      outpoints: [
+        { txid: "tx-A", vout: 0 },
+        { txid: "tx-B", vout: 0 },
+      ],
+      pageSize: 2,
+    });
+    expect(getVtxos).toHaveBeenNthCalledWith(2, {
+      outpoints: [
+        { txid: "tx-A", vout: 0 },
+        { txid: "tx-B", vout: 0 },
+      ],
+      pageIndex: 1,
+      pageSize: 2,
+    });
+  });
+
+  it("F-3b: getMany stops when pagination points back to a visited page", async () => {
+    const getVtxos = jest
+      .fn()
+      .mockResolvedValueOnce({
+        vtxos: [indexerVtxo("tx-A", 100)],
+        page: { current: 0, next: 1, total: 3 },
+      })
+      .mockResolvedValueOnce({
+        vtxos: [],
+        page: { current: 1, next: 0, total: 3 },
+      });
+    const resolver = makeTimestampResolver({
+      getTimestamp: async () => undefined,
+      saveTimestamp: jest.fn(),
+      loadIndexer: async () => ({ getVtxos }),
+    });
+
+    await expect(resolver.getMany?.(["tx-A", "tx-B"])).resolves.toStrictEqual(
+      new Map([["tx-A", 100]]),
+    );
+    expect(getVtxos).toHaveBeenCalledTimes(2);
+  });
+
+  it("F-4: getMany isolates chunk failures and returns later successes", async () => {
+    const txids = Array.from({ length: 101 }, (_, i) => `tx-${i}`);
+    const getVtxos = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("first chunk failed"))
+      .mockResolvedValueOnce({ vtxos: [indexerVtxo("tx-100", 1000)] });
+    const saveTimestamp = jest.fn(async () => undefined);
+    const resolver = makeTimestampResolver({
+      getTimestamp: async () => undefined,
+      saveTimestamp,
+      loadIndexer: async () => ({ getVtxos }),
+    });
+
+    await expect(resolver.getMany?.(txids)).resolves.toStrictEqual(
+      new Map([["tx-100", 1000]]),
+    );
+    expect(getVtxos).toHaveBeenCalledTimes(2);
+    expect(saveTimestamp).toHaveBeenCalledTimes(1);
+    expect(saveTimestamp).toHaveBeenCalledWith("tx-100", 1000);
+  });
+
+  it("F-5: getMany returns timestamps even when cache writes fail", async () => {
+    const resolver = makeTimestampResolver({
+      getTimestamp: async () => undefined,
+      saveTimestamp: async () => {
+        throw new Error("cache write failed");
+      },
+      loadIndexer: async () => ({
+        getVtxos: async () => ({ vtxos: [indexerVtxo("tx-A", 123)] }),
+      }),
+    });
+
+    await expect(resolver.getMany?.(["tx-A"])).resolves.toStrictEqual(
+      new Map([["tx-A", 123]]),
+    );
   });
 });
 
@@ -231,7 +395,7 @@ describe("makeTimestampResolver — integration with buildActivityHistory", () =
       saveTimestamp: jest.fn(),
       loadIndexer: async () => ({
         getVtxos: async () => ({
-          vtxos: [indexerVtxo(baseDate.getTime() + 9)],
+          vtxos: [indexerVtxo("send-reused-tx", baseDate.getTime() + 9)],
         }),
       }),
     });
@@ -259,5 +423,93 @@ describe("makeTimestampResolver — integration with buildActivityHistory", () =
     });
     expect(getTimestamp).not.toHaveBeenCalled();
     expect(loadIndexer).not.toHaveBeenCalled();
+  });
+
+  it("F-6: buildActivityHistory batches no-change send timestamps", async () => {
+    const sendA = vtxo({
+      txid: "spent-a",
+      value: 1000,
+      arkTxId: "send-a",
+      isSpent: true,
+      createdAt: baseDate,
+    });
+    const sendB = vtxo({
+      txid: "spent-b",
+      value: 2000,
+      arkTxId: "send-b",
+      isSpent: true,
+      createdAt: new Date(baseDate.getTime() + 100),
+    });
+    const resolver = jest.fn(async () => {
+      throw new Error("single timestamp resolver should not be used");
+    }) as unknown as TxCreatedAtResolver & jest.Mock;
+    resolver.getMany = jest.fn(
+      async () =>
+        new Map([
+          ["send-a", baseDate.getTime() + 10],
+          ["send-b", baseDate.getTime() + 20],
+        ]),
+    );
+
+    const out = await buildActivityHistory(
+      [sendA, sendB],
+      [],
+      new Set(),
+      resolver,
+    );
+
+    expect(resolver.getMany).toHaveBeenCalledTimes(1);
+    expect(resolver.getMany).toHaveBeenCalledWith(["send-a", "send-b"]);
+    expect(resolver).not.toHaveBeenCalled();
+    expect(out.find((a) => a.id === "arkade:offchain:send-a")?.timestamp).toBe(
+      baseDate.getTime() + 10,
+    );
+    expect(out.find((a) => a.id === "arkade:offchain:send-b")?.timestamp).toBe(
+      baseDate.getTime() + 20,
+    );
+  });
+
+  it("F-7: missing batch entries retry the per-row timestamp resolver", async () => {
+    const sendA = vtxo({
+      txid: "spent-fallback-a",
+      value: 1000,
+      arkTxId: "send-fallback-a",
+      isSpent: true,
+      createdAt: baseDate,
+    });
+    const sendBDate = new Date(baseDate.getTime() + 500);
+    const sendB = vtxo({
+      txid: "spent-fallback-b",
+      value: 2000,
+      arkTxId: "send-fallback-b",
+      isSpent: true,
+      createdAt: sendBDate,
+    });
+    const resolver = jest.fn(async (txid: string) =>
+      txid === "send-fallback-b" ? sendBDate.getTime() + 30 : undefined,
+    ) as unknown as TxCreatedAtResolver & jest.Mock;
+    resolver.getMany = jest.fn(
+      async () => new Map([["send-fallback-a", baseDate.getTime() + 10]]),
+    );
+
+    const out = await buildActivityHistory(
+      [sendA, sendB],
+      [],
+      new Set(),
+      resolver,
+    );
+
+    expect(resolver.getMany).toHaveBeenCalledWith([
+      "send-fallback-a",
+      "send-fallback-b",
+    ]);
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(resolver).toHaveBeenCalledWith("send-fallback-b");
+    expect(
+      out.find((a) => a.id === "arkade:offchain:send-fallback-a")?.timestamp,
+    ).toBe(baseDate.getTime() + 10);
+    expect(
+      out.find((a) => a.id === "arkade:offchain:send-fallback-b")?.timestamp,
+    ).toBe(sendBDate.getTime() + 30);
   });
 });

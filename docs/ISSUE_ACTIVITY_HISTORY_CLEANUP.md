@@ -84,6 +84,8 @@ Only implement batching if a quick spike confirms all of the following:
 
 If the spike is not clearly positive, skip batching. Lazy construction plus pre-indexing is enough for this issue.
 
+Spike result on 2026-05-22: positive for the current SDK shape. `RestIndexerProvider.getVtxos` serializes multiple `outpoints` in one request, returned `VirtualCoin`s include `txid` and `vout`, and the SDK service-worker history path already batches uncached timestamp lookups in chunks of 100. The app implementation therefore batches no-change send timestamp misses in chunks of 100, follows pagination when present, attaches timestamps only after exact `{ txid, vout: 0 }` matching, saves found timestamps individually, and lets missing, mismatched, or failed chunks retry through the per-row resolver before using the existing `v.createdAt + 1` fallback.
+
 ### Phase 5: Confirmed-Row Reuse Regression Checks
 Keep the existing rule: only rows from `previousActivities` with `status === "confirmed"` may be reused.
 
