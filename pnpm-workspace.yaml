@@ -1,3 +1,6 @@
+minimumReleaseAgeExclude:
+  - '@arkade-os/boltz-swap@0.3.33'
+  - '@arkade-os/sdk@0.4.28'
 peerDependencyRules:
   allowedVersions:
     expo-background-task: '*'
