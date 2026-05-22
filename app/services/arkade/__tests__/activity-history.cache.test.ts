@@ -223,4 +223,152 @@ describe("buildActivityHistory — previousActivities reuse path", () => {
     expect(undef[0].id).toBe(empty[0].id);
     expect(undef[0].title).toBe(empty[0].title);
   });
+
+  // C-8 — Asset receive reuse: when `collectAssets` finds an asset
+  // delta, the builder must short-circuit before constructing the
+  // asset row.
+  it("C-8: confirmed asset receive is reused verbatim", async () => {
+    const txid = "asset-recv-tx";
+    // `settled = v.status.isLeaf || v.isSpent === true` inside the
+    // offchain-receive branch; set `isSpent` so the asset row is
+    // emitted as confirmed without taking the leaf path (which would
+    // route through the per-commitment loop).
+    const received = vtxo({
+      txid,
+      value: 1000,
+      createdAt: baseDate,
+      isSpent: true,
+      assets: [{ assetId: "A", amount: 50n }],
+    });
+    const firstRun = await buildActivityHistory([received], [], new Set());
+    const assetRow = firstRun.find(
+      (a) => a.id === `arkade:asset:${txid}`,
+    ) as Activity;
+    expect(assetRow.status).toBe("confirmed");
+
+    const tampered: Activity = { ...assetRow, title: "REUSED-ASSET-RECV" };
+    const secondRun = await buildActivityHistory(
+      [received],
+      [],
+      new Set(),
+      undefined,
+      { network: null, previousActivities: [tampered] },
+    );
+    const after = secondRun.find((a) => a.id === `arkade:asset:${txid}`);
+    expect(after).toBe(tampered);
+    expect(after?.title).toBe("REUSED-ASSET-RECV");
+  });
+
+  // C-9 — Representative all-confirmed history: when every emitted row
+  // is `confirmed` and `previousActivities` carries them, the resolver
+  // is never invoked AND each reused row is the same object reference
+  // (not just a structurally equal recomputation).
+  //
+  // Builder rule for the offchain branches: BTC receive is always
+  // confirmed (DIV-3a), but asset receive carries
+  // `settled = v.status.isLeaf || v.isSpent === true`. So every fixture
+  // here must take one of those paths to qualify for reuse.
+  it("C-9: all-confirmed reuse never invokes getTxCreatedAt across mixed branches", async () => {
+    const arkTxId = "send-c9-tx";
+    const send = vtxo({
+      txid: "spent-c9",
+      value: 1500,
+      arkTxId,
+      isSpent: true,
+    });
+    const recv = vtxo({
+      txid: "recv-c9",
+      value: 700,
+      createdAt: new Date(baseDate.getTime() + 200),
+    });
+    // `isSpent: true` flips the asset receive's `settled` flag without
+    // routing the vtxo into the per-commitment loop (which would need
+    // `isLeaf + commitmentTxIds`).
+    const assetRecv = vtxo({
+      txid: "asset-recv-c9",
+      value: 800,
+      createdAt: new Date(baseDate.getTime() + 400),
+      isSpent: true,
+      assets: [{ assetId: "A", amount: 25n }],
+    });
+
+    const seed = jest.fn(async () => baseDate.getTime() + 12);
+    const firstRun = await buildActivityHistory(
+      [send, recv, assetRecv],
+      [],
+      new Set(),
+      seed,
+    );
+    // Sanity: seed was used for the no-change send, and every emitted
+    // row is `confirmed` so the reuse path actually applies.
+    expect(seed).toHaveBeenCalled();
+    expect(firstRun.every((a) => a.status === "confirmed")).toBe(true);
+    // A spent vtxo that also has a `txid` not registered as anyone's
+    // `arkTxId` still surfaces as an offchain receive of its original
+    // incoming value — that's the "split vtxo" behavior pinned by D-1.
+    const expectedIds = new Set([
+      `arkade:offchain:${send.txid}`,
+      `arkade:offchain:${arkTxId}`,
+      `arkade:offchain:${recv.txid}`,
+      `arkade:asset:${assetRecv.txid}`,
+    ]);
+    expect(new Set(firstRun.map((a) => a.id))).toStrictEqual(expectedIds);
+
+    const reusedAll = jest.fn(async () => {
+      throw new Error("reuse should bypass timestamp resolution");
+    });
+    const secondRun = await buildActivityHistory(
+      [send, recv, assetRecv],
+      [],
+      new Set(),
+      reusedAll,
+      { network: null, previousActivities: firstRun },
+    );
+    expect(reusedAll).not.toHaveBeenCalled();
+    // Strong reuse check: every emitted row is the SAME reference as
+    // its match in firstRun, not a structurally-equal rebuild.
+    const firstById = new Map(firstRun.map((a) => [a.id, a]));
+    for (const a of secondRun) expect(a).toBe(firstById.get(a.id));
+    expect(new Set(secondRun.map((a) => a.id))).toStrictEqual(expectedIds);
+  });
+
+  // C-10 — Source-type mismatch documentation. The current builder
+  // looks up reuse rows by `id` only; it does not validate that the
+  // prior row's `source.type` matches what the current branch would
+  // emit. If the prior row's id collides with what the current branch
+  // computes, it WILL be reused even if the prior source disagrees.
+  // Pin that behavior here so a future tightening surfaces in this
+  // test. See ISSUE_ACTIVITY_HISTORY_CLEANUP.md test D-8.
+  it("C-10: same id reused regardless of prior source.type (pinned current behavior)", async () => {
+    const txid = "tx-c10";
+    const received = vtxo({ txid, value: 1000, createdAt: baseDate });
+
+    // Prior row claims the same id but with a wallet_event source — the
+    // current builder would emit a payment / arkade_tx source for this
+    // input set.
+    const ghost: Activity = {
+      id: `arkade:offchain:${txid}`,
+      kind: "wallet_event",
+      direction: "self",
+      timestamp: 0,
+      title: "GHOST-WALLET-EVENT",
+      status: "confirmed",
+      rail: "arkade",
+      source: {
+        type: "wallet_event",
+        eventId: `arkade:offchain:${txid}`,
+      },
+    };
+
+    const result = await buildActivityHistory(
+      [received],
+      [],
+      new Set(),
+      undefined,
+      { network: null, previousActivities: [ghost] },
+    );
+    const row = result.find((a) => a.id === `arkade:offchain:${txid}`);
+    // Pinned current behavior: ghost is reused as-is.
+    expect(row).toBe(ghost);
+  });
 });

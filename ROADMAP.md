@@ -4,7 +4,7 @@ This repository is an Expo-only, iOS/Android self-custodial Arkade wallet app. T
 
 This is a living document: tick items off as they land.
 
-Last updated: 2026-05-20 (Milestone 24: Contract Manager specced)
+Last updated: 2026-05-22 (Milestone 17: Activity Checkpoints revised)
 
 ## Milestones
 
@@ -43,8 +43,8 @@ Last updated: 2026-05-20 (Milestone 24: Contract Manager specced)
   - Harden the password gate (SHA-256 + salt), make all state mutations await persist, add a schema-version guard in hydrate(), and audit screen-level lock guards.
 - [x] Milestone 16: Mainnet Support ([docs/MILESTONE_16.agents.md](./docs/MILESTONE_16.agents.md))
   - Add a network selector (mutinynet / mainnet) to create and restore flows; encode the chosen network in the backup format.
-- [ ] Milestone 17: Portable History Milestones ([docs/MILESTONE_17.agents.md](./docs/MILESTONE_17.agents.md))
-  - Build self-custodial history checkpoints that allow for fast-trust restores without exposing spend-keys.
+- [ ] Milestone 17: Activity Checkpoints ([docs/MILESTONE_17.agents.md](./docs/MILESTONE_17.agents.md))
+  - Freeze settled local Activity history behind safe checkpoints so large wallets refresh by deriving only the live tail.
 - [ ] Milestone 18: Cloud Backup ([docs/MILESTONE_18.agents.md](./docs/MILESTONE_18.agents.md))
   - Add optional cloud transport for the encrypted backup bundle (transport only; format remains local-first).
 - [ ] Milestone 19: Notification Deep-linking ([docs/MILESTONE_19.agents.md](./docs/MILESTONE_19.agents.md))

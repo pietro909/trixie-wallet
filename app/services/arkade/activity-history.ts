@@ -6,10 +6,10 @@ import type {
 } from "@arkade-os/sdk";
 import type { Activity, ActivityDirection } from "../../store/types";
 
-// ExpoIndexerProvider is imported dynamically inside getActivityHistory so
-// tests can import the pure helpers and buildActivityHistory without
-// loading the Expo adapter (which transitively pulls in ESM-only deps
-// that aren't transformed by jest-expo).
+// The Expo adapter (`@arkade-os/sdk/adapters/expo`) is loaded lazily inside
+// `makeTimestampResolver` so the pure helpers and `buildActivityHistory`
+// stay jest-loadable. The lazy load also means refreshes that never hit a
+// timestamp cache miss never pay the cost of constructing the indexer.
 
 // ===== Activity id helpers =====
 
@@ -298,6 +298,73 @@ function buildAssetActivity(args: {
   };
 }
 
+// ===== Timestamp resolver =====
+
+// Minimal indexer surface the resolver depends on. Keeping the type
+// narrow lets the factory stay loadable under jest-expo without dragging
+// in the SDK's ESM-only adapter.
+export type IndexerLike = {
+  getVtxos: (opts: {
+    outpoints: { txid: string; vout: number }[];
+  }) => Promise<{ vtxos: { createdAt: Date }[] }>;
+};
+
+export type TimestampResolverDeps = {
+  getTimestamp: (txid: string) => Promise<number | undefined>;
+  saveTimestamp: (txid: string, ts: number) => Promise<void>;
+  /**
+   * Resolves to a constructed indexer the first time it's invoked.
+   * Construction failures resolve to `null` so the resolver can fall
+   * back without throwing — the builder treats `undefined` as a miss
+   * and uses `v.createdAt + 1`.
+   */
+  loadIndexer: () => Promise<IndexerLike>;
+};
+
+/**
+ * Builds a `getTxCreatedAt(txid)` that consults the persistent timestamp
+ * cache first and only loads/constructs the indexer on a miss. The
+ * indexer load is memoised across calls so repeated misses share one
+ * provider. A cache lookup throw is treated as a miss, matching the
+ * best-effort behavior of the production `tx-cache` helpers.
+ */
+export function makeTimestampResolver(
+  deps: TimestampResolverDeps,
+): (txid: string) => Promise<number | undefined> {
+  let indexerPromise: Promise<IndexerLike | null> | null = null;
+  const loadOnce = (): Promise<IndexerLike | null> => {
+    if (!indexerPromise) {
+      indexerPromise = deps.loadIndexer().then(
+        (idx) => idx,
+        () => null,
+      );
+    }
+    return indexerPromise;
+  };
+  return async (txid: string): Promise<number | undefined> => {
+    let cached: number | undefined;
+    try {
+      cached = await deps.getTimestamp(txid);
+    } catch {
+      cached = undefined;
+    }
+    if (cached !== undefined) return cached;
+    const indexer = await loadOnce();
+    if (!indexer) return undefined;
+    let ts: number | undefined;
+    try {
+      const res = await indexer.getVtxos({
+        outpoints: [{ txid, vout: 0 }],
+      });
+      ts = res.vtxos[0]?.createdAt.getTime();
+    } catch {
+      ts = undefined;
+    }
+    if (ts !== undefined) await deps.saveTimestamp(txid, ts);
+    return ts;
+  };
+}
+
 // ===== Main builder =====
 
 export type GetActivityHistoryOptions = {
@@ -334,22 +401,20 @@ export async function getActivityHistory(
   const contracts = await cm.getContractsWithVtxos();
   const vtxos: VirtualCoin[] = contracts.flatMap((c) => c.vtxos);
   const { boardingTxs, commitmentsToIgnore } = await wallet.getBoardingTxs();
-  const { ExpoIndexerProvider } = await import("@arkade-os/sdk/adapters/expo");
-  // Lazy-loaded with the Expo adapter so the pure helpers/builder remain
-  // jest-loadable without pulling in `storage.ts` (which transitively imports
-  // ESM-only SDK modules not transformed by jest-expo).
+  // Cache helpers load eagerly so a cached timestamp doesn't need to
+  // pull in the ESM-only Expo adapter. The indexer constructor is
+  // deferred until a no-change off-chain send produces a cache miss.
   const { getTimestamp, saveTimestamp } = await import("./tx-cache");
-  const indexer = new ExpoIndexerProvider(arkServerUrl);
-  const getTxCreatedAt = async (txid: string): Promise<number | undefined> => {
-    const cached = await getTimestamp(txid);
-    if (cached !== undefined) return cached;
-    const ts = await indexer
-      .getVtxos({ outpoints: [{ txid, vout: 0 }] })
-      .then((res) => res.vtxos[0]?.createdAt.getTime())
-      .catch(() => undefined);
-    if (ts !== undefined) await saveTimestamp(txid, ts);
-    return ts;
-  };
+  const getTxCreatedAt = makeTimestampResolver({
+    getTimestamp,
+    saveTimestamp,
+    loadIndexer: async () => {
+      const { ExpoIndexerProvider } = await import(
+        "@arkade-os/sdk/adapters/expo"
+      );
+      return new ExpoIndexerProvider(arkServerUrl);
+    },
+  });
   return buildActivityHistory(
     vtxos,
     boardingTxs,
@@ -405,16 +470,38 @@ export async function buildActivityHistory(
     });
   }
 
+  // Single pass over `sorted` builds the commitment id set and four lookup
+  // indexes that replace the per-iteration `sorted.filter(...)` calls below.
+  // Each map preserves sorted order because we iterate `sorted` in order and
+  // append to the bucket. Misses return `[]` via `?? EMPTY`.
   const commitmentIds = new Set<string>();
+  const vtxosBySettledBy = new Map<string, VirtualCoin[]>();
+  const leafVtxosByFirstCommitment = new Map<string, VirtualCoin[]>();
+  const vtxosByArkTxId = new Map<string, VirtualCoin[]>();
+  const vtxosByTxid = new Map<string, VirtualCoin[]>();
+  const pushIndex = (
+    m: Map<string, VirtualCoin[]>,
+    k: string,
+    v: VirtualCoin,
+  ): void => {
+    const existing = m.get(k);
+    if (existing) existing.push(v);
+    else m.set(k, [v]);
+  };
   for (const v of sorted) {
     const leafCommitment = v.virtualStatus.commitmentTxIds?.[0];
     if (v.status.isLeaf && leafCommitment) {
       commitmentIds.add(leafCommitment);
+      pushIndex(leafVtxosByFirstCommitment, leafCommitment, v);
     }
     if (v.settledBy) {
       commitmentIds.add(v.settledBy);
+      pushIndex(vtxosBySettledBy, v.settledBy, v);
     }
+    if (v.arkTxId) pushIndex(vtxosByArkTxId, v.arkTxId, v);
+    if (v.txid) pushIndex(vtxosByTxid, v.txid, v);
   }
+  const EMPTY: VirtualCoin[] = [];
 
   // The SDK marks commitments that consumed on-chain boarding outputs via
   // `commitmentsToIgnore`, but the underlying outspend lookup can lag — when
@@ -439,16 +526,12 @@ export async function buildActivityHistory(
   };
 
   for (const commitmentTxid of commitmentIds) {
-    const spent = sorted.filter((v) => v.settledBy === commitmentTxid);
+    const spent = vtxosBySettledBy.get(commitmentTxid) ?? EMPTY;
     // First-commitment attribution mirrors the SDK
     // (transactionHistory.ts uses commitmentTxIds![0]). A leaf with
     // multiple commitments still surfaces under one group instead of
     // being silently dropped.
-    const created = sorted.filter(
-      (v) =>
-        v.status.isLeaf &&
-        v.virtualStatus.commitmentTxIds?.[0] === commitmentTxid,
-    );
+    const created = leafVtxosByFirstCommitment.get(commitmentTxid) ?? EMPTY;
     const isBoardingMixed = commitmentsToIgnore.has(commitmentTxid);
     const decomp = decomposeCommitmentGroup({
       spent,
@@ -805,7 +888,7 @@ export async function buildActivityHistory(
 
   for (const v of sorted) {
     if (!v.status.isLeaf && v.txid) {
-      const isChangeOfOwnTx = sorted.some((u) => u.arkTxId === v.txid);
+      const isChangeOfOwnTx = vtxosByArkTxId.has(v.txid);
       if (!isChangeOfOwnTx && !offchainReceivesEmitted.has(v.txid)) {
         offchainReceivesEmitted.add(v.txid);
         const assets = collectAssets([v]);
@@ -857,8 +940,8 @@ export async function buildActivityHistory(
     if (v.isSpent && v.arkTxId && !offchainSendsEmitted.has(v.arkTxId)) {
       offchainSendsEmitted.add(v.arkTxId);
       const arkTxId = v.arkTxId;
-      const allSpent = sorted.filter((u) => u.arkTxId === arkTxId);
-      const changes = sorted.filter((u) => u.txid === arkTxId);
+      const allSpent = vtxosByArkTxId.get(arkTxId) ?? EMPTY;
+      const changes = vtxosByTxid.get(arkTxId) ?? EMPTY;
       const hasAssets = subtractAssets(allSpent, changes).length > 0;
 
       // No-change BTC sends are the hottest cache target: their timestamp

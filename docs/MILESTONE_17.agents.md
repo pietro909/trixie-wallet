@@ -1,61 +1,141 @@
-# Milestone 17: Portable History Milestones
+# Milestone 17: Activity Checkpoints
 
 **Status:** Planned
 
 ## Goal
-Build a self-custodial wallet that remains fast to restore and usable at scale by periodically sealing authenticated history milestones. These milestones serve as an encrypted, portable source of truth for wallet history, derivation progress, and event attribution, allowing for a "Fast Trust" restore path without exposing private spend keys.
+Keep large wallets fast to refresh by freezing a verified, local Activity prefix into an internal checkpoint. A checkpoint says: rows at or before the safe frontier are written in stone for this wallet/build; load them from local storage and derive only the live tail.
+
+This milestone does **not** change the existing encrypted full-backup flow. Full reset and backup restore keep behaving exactly as they do today.
 
 ## Context
-Currently, Milestone 6 provides a full wallet backup (including the secret). As the wallet accumulates activity, re-deriving history from the network on a new device becomes a performance bottleneck. This milestone shifts the trust model: the seed remains the source of truth for *funds*, while an encrypted milestone bundle becomes a portable source of truth for *history*.
+Milestone 13 already added the first useful cache layer:
 
-## This milestone should prove:
-- A user can export a "History Milestone" that excludes the private secret (Mnemonic/PrivateKey).
-- The wallet can distinguish between "Verified Restore" (re-sync from network) and "Trusted Restore" (authoritative history from milestone).
-- Milestone generation correctly gates on resolved states (e.g., no pending Boltz swaps).
-- Restore remains functional with a seed phrase alone (fallback path).
+- no-change off-chain send timestamps are cached in `arkade_tx_timestamps`;
+- confirmed Arkade rows can be reused through `previousActivities`;
+- pending/info rows are still recomputed.
+
+That means an indexer-call-only checkpoint is not enough to justify this milestone. The useful version is a stronger local history boundary: frozen rows become an emission source, and the builder does not walk old wallet objects just to rediscover history that can no longer change.
+
+The smaller `getActivityHistory` cleanup is tracked separately in [ISSUE_ACTIVITY_HISTORY_CLEANUP.md](./ISSUE_ACTIVITY_HISTORY_CLEANUP.md). That work can land before checkpoints and should benefit both today's full-history refresh path and this milestone's future live-tail path.
+
+## This Milestone Should Prove
+- The app can create a local **Activity checkpoint** for a settled historical prefix.
+- Wallet refresh loads checkpointed Activity rows immediately and derives only the live tail.
+- Checkpoint creation is blocked by any state whose future lifecycle can still rewrite historical attribution.
+- Full backup, reset, and backup restore remain unchanged.
+- A deleted/corrupted checkpoint only costs performance; it must not block fund recovery or normal history rebuild.
+
+## Non-Goals
+- No `BackupPayload` version bump.
+- No history-only export/import artifact.
+- No Trusted Restore / Verified Restore UX.
+- No changes to `ProfileBackup.tsx` or `RestoreWallet.tsx` for checkpoint portability.
+- No cloud transport.
+- No broad `getActivityHistory` micro-optimization beyond what checkpoint/live-tail integration requires; see the cleanup issue above.
 
 ## Technical Analysis & Critical Areas
 
-### 1. Payload Evolution (v3)
-The backup format must transition from a "Full Identity Snapshot" to a "History Milestone." 
-- **File**: `app/services/backup/serializer.ts`
-- **Change**: Introduce `BackupPayloadV3`. This version explicitly omits the `secret` field and adds `historySnapshot` (compacted activities) and `syncWatermark` (SDK-specific sync indices).
+### 1. Local Checkpoint Storage
+- **File**: add `app/services/arkade/activity-checkpoints.ts`.
+- **Storage**: SQLite, scoped by `walletId`.
+- **Rows**: store checkpoint metadata and sealed Activity rows as JSON.
+- **Metadata** should include:
+  - `walletId`
+  - `network`
+  - `builderVersion`
+  - `createdAt`
+  - `sealedThroughTimestamp`
+  - `sealedActivityIds`
 
-### 2. History Compaction Logic
-- **File**: `app/services/arkade/activity-history.ts`
-- **Logic**: Leverage the existing `previousActivities` cache logic to "seal" terminal rows (Confirmed/Refunded). The compactor must ensure no "Pending" or "Info" rows are authoritative in the bundle.
+`builderVersion` is a hard invalidation knob. While the app is alpha, do not migrate checkpoint shapes; if the Activity builder semantics change, invalidate or wipe checkpoints.
 
-### 3. Dual-Mode Restore
-- **File**: `app/store/useAppStore.ts`
-- **Action**: Update `importBackup` to support a "Merge" state. If a wallet identity is already established via seed, the milestone provides the historical context and balance snapshots to avoid a full scan.
+### 2. Safe Frontier Calculation
+A checkpoint is valid only for a contiguous historical prefix whose causal descendants are terminal. It is not simply all rows older than T.
 
-### 4. Safety Gating
-- **File**: `app/services/arkade/lightning.ts`
-- **Constraint**: Milestone creation must be blocked if `isSwapNonTerminal()` is true. Checkpointing across a Boltz recovery boundary risks state divergence on the new device.
+Compute a proposed frontier from the earliest unresolved/live wallet object:
+
+- non-terminal Boltz swaps block checkpoint creation;
+- unsettled boarding deposits block checkpoint creation, because they can later become `Boarding settled`;
+- live VTXOs at or before the proposed boundary block checkpointing beyond them, because auto-renewal can later spend them and create `VTXO renewed` even when the user has no new activity;
+- recoverable/pending VTXO or swap recovery state blocks checkpointing until resolved;
+- any SDK-exposed settlement/renewal in-flight state blocks checkpointing.
+
+The checkpoint frontier should be no later than the earliest live/unresolved object timestamp minus one. If that leaves no meaningful historical prefix, do not offer checkpoint creation.
+
+### 3. Terminal Row Compaction
+- **File**: `app/services/arkade/activity-history.ts` plus the new checkpoint service.
+- **Rule**: only checkpoint rows that are safe to reuse as authoritative local history.
+- **Initial allowlist**:
+  - Arkade rows with `status === "confirmed"` and matching the safe prefix;
+  - terminal Lightning rows only when their swap status is final and no recovery action remains.
+- **Hard exclusions**:
+  - `pending`
+  - `info`
+  - refundable/action-required chain-swap rows
+  - any row whose source object is at or after the frontier
+
+Do not use the existing `previousActivities` cache as the checkpoint model directly. `previousActivities` is a reuse optimization keyed by rows the current SDK-derived history already emits; checkpoints must be a local emission source for the frozen prefix.
+
+### 4. Refresh Integration
+- **File**: `app/services/arkade/activity-history.ts` and/or `app/services/arkade/runtime.ts`.
+- **Change**: load checkpointed rows first, then derive the live tail after the checkpoint frontier.
+- The final Activity list is `checkpointRows + liveTailRows`, deduped by `activity.id` and sorted by timestamp.
+- Pending rows must always come from the live derivation path.
+- If checkpoint read fails, log the error and fall back to the current full rebuild path.
+- Keep any builder-internal cleanup from [ISSUE_ACTIVITY_HISTORY_CLEANUP.md](./ISSUE_ACTIVITY_HISTORY_CLEANUP.md) reusable by the live-tail path instead of coupling it to checkpoint storage.
+
+The milestone is only worthwhile if old SDK/indexer work is actually skipped. Merely avoiding timestamp indexer calls duplicates Milestone 13 and should not be considered complete.
+
+### 5. UX Prompting
+- **File**: likely `ProfileBackup.tsx` is the wrong home because checkpoints are not backups. Prefer a lightweight prompt from Activity/Profile maintenance surfaces.
+- Trigger only when useful, for example:
+  - Activity count above a threshold;
+  - refresh duration above a threshold;
+  - many no-change off-chain sends;
+  - a large settled prefix exists before the safe frontier.
+- Copy should call this an **Activity checkpoint**, not a backup, restore, milestone file, or portable export.
+
+Example posture: "Your Activity history is large enough to checkpoint. This keeps older settled history local and makes refreshes faster. Full backups are unchanged."
 
 ## Implementation Phasing
 
-### Phase 1: Format & Compactor Foundations
-- Define `BackupPayloadV3` and the version-gated parser.
-- Implement `app/services/backup/compactor.ts` to extract terminal activity rows and timestamps.
-- **Checkpoint**: Unit tests confirm v3 payloads can be parsed without a secret.
+### Phase 1: Checkpoint Model & Safety Frontier
+- Implement `activity-checkpoints.ts` with read/write/delete helpers.
+- Add pure frontier helpers and tests for:
+  - no live state -> checkpoint allowed;
+  - non-terminal swap -> blocked;
+  - unsettled boarding -> blocked;
+  - live VTXO before/at boundary -> frontier moves earlier or blocks;
+  - recoverable/action-required state -> blocked.
+- **Checkpoint**: tests prove no pending/info/action-required rows are written.
 
-### Phase 2: Trusted Restore Path
-- Implement the "Trusted Restore" logic in the store.
-- Update `app/services/arkade/activity-history.ts` to prioritize imported milestone rows during the first post-restore refresh.
-- **Checkpoint**: Manual verification that an empty wallet can be "hydrated" with history from a file.
+### Phase 2: Compaction
+- Add compaction logic that writes terminal Activity rows up to the safe frontier.
+- Persist checkpoint metadata including `builderVersion` and sealed ids.
+- Add invalidation/wipe behavior for builder-version mismatch and wallet reset.
+- **Checkpoint**: unit tests round-trip checkpoint rows and verify corrupted/mismatched checkpoints fall back cleanly.
 
-### Phase 3: UX & Safety Gating
-- Rework `ProfileBackup.tsx` to offer "Save History Milestone" as a privacy-sensitive, non-spendable export.
-- Implement the "Mode Selection" UI in `RestoreWallet.tsx` (Verified vs. Trusted).
-- **Checkpoint**: UI correctly blocks milestone creation during an active submarine swap.
+### Phase 3: Refresh Path
+- Update refresh/history building so checkpoint rows are emitted locally and only the live tail is derived.
+- Deduplicate checkpoint/live rows by `activity.id`.
+- Keep `previousActivities` for the live tail where it still helps.
+- **Checkpoint**: tests prove historical rows are loaded without invoking old timestamp/indexer work and pending rows still transition through live derivation.
+
+### Phase 4: Product Surface
+- Add a gated user action or prompt for creating an Activity checkpoint.
+- Surface blocked reasons when creation is unsafe: pending swap, unsettled boarding, live VTXO frontier, recovery action required.
+- **Checkpoint**: manual verification on a wallet with a large settled prefix shows faster refresh and unchanged full-backup/reset behavior.
 
 ## Product Rules
-- **Privacy First**: The milestone reveals address attribution and behavior; it must warn users about storage choice (local vs. cloud).
-- **No Spend Keys**: v3 Milestones must never contain the seed or private keys.
-- **Resilience**: A corrupted or missing milestone must never block fund recovery via seed.
+- **Local Only**: checkpoints are internal app performance state, not a backup or restore artifact.
+- **No Spend Keys**: checkpoints never contain mnemonic, private key, preimages, or other spend/claim secrets.
+- **Conservative Frontier**: if safety is uncertain, do not checkpoint.
+- **Recoverable Fallback**: checkpoint failure must fall back to current full history rebuild.
+- **Alpha Simplicity**: no checkpoint migrations; invalidate on builder/checkpoint shape changes.
 
 ## Out of Scope
-- Automatic milestone scheduling (deferred).
-- Cloud transport (Milestone 18).
-- Cross-wallet milestone merging (deferred).
+- Exporting Activity checkpoints.
+- Cloud transport.
+- Trusted Restore / Fast Trust restore.
+- Cross-wallet checkpoint merging.
+- Automatic background checkpoint scheduling.

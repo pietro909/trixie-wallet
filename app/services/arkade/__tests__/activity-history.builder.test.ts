@@ -425,6 +425,116 @@ describe("buildActivityHistory — synthetic builder cases (mirrors SDK)", () =>
     ]);
   });
 
+  // D-15 — Pre-index regression: a leaf vtxo carrying multiple
+  // commitmentTxIds is grouped under commitmentTxIds[0] only, mirroring
+  // the SDK's first-commitment attribution. The second commitment must
+  // never produce its own row from this leaf.
+  it("D-15: leaf with multiple commitment ids surfaces only under the first", async () => {
+    const C1 = "cmt-D15-first";
+    const C2 = "cmt-D15-second";
+    const leaf = vtxo({
+      txid: "leaf-D15",
+      value: 500,
+      status: { confirmed: true, isLeaf: true },
+      virtualStatus: { state: "settled", commitmentTxIds: [C1, C2] },
+      createdAt: baseDate,
+    });
+    const activities = await buildActivityHistory([leaf], [], new Set());
+    const ids = activities.map((a) => a.id);
+    expect(ids).toContain(`arkade:batch:${C1}`);
+    expect(ids).not.toContain(`arkade:batch:${C2}`);
+    expect(ids).not.toContain(`arkade:renewal:${C2}`);
+    expect(ids).not.toContain(`arkade:exit:${C2}`);
+    expect(ids).not.toContain(`arkade:settlement:${C2}`);
+  });
+
+  // D-16 — Pre-index regression: multiple vtxos sharing the same
+  // `settledBy` aggregate into a single renewal/exit group with the
+  // right input count. (Catches accidental dedupe in the spent index.)
+  it("D-16: multiple spent vtxos with the same settledBy aggregate into one renewal", async () => {
+    const C = "cmt-D16";
+    const s1 = vtxo({
+      txid: "spent-D16-1",
+      value: 400,
+      settledBy: C,
+      isSpent: true,
+      createdAt: baseDate,
+    });
+    const s2 = vtxo({
+      txid: "spent-D16-2",
+      value: 600,
+      settledBy: C,
+      isSpent: true,
+      createdAt: new Date(baseDate.getTime() + 100),
+    });
+    const leaf = vtxo({
+      txid: "leaf-D16",
+      value: 1000,
+      status: { confirmed: true, isLeaf: true },
+      virtualStatus: { state: "settled", commitmentTxIds: [C] },
+      createdAt: new Date(baseDate.getTime() + 200),
+    });
+
+    const activities = await buildActivityHistory(
+      [s1, s2, leaf],
+      [],
+      new Set(),
+    );
+    const renewal = activities.find((a) => a.id === `arkade:renewal:${C}`);
+    expect(renewal).toBeDefined();
+    expect(renewal?.metadata).toMatchObject({
+      commitmentTxid: C,
+      inputCount: 2,
+      outputCount: 1,
+      renewedAmountSats: 1000,
+    });
+  });
+
+  // D-17 — Pre-index regression: a no-change off-chain send still
+  // resolves its timestamp via `getTxCreatedAt`, and falls through to
+  // `v.createdAt + 1` when the resolver returns `undefined`. Covers the
+  // resolver-miss branch the lazy load path can hit.
+  it("D-17: no-change send falls back to v.createdAt + 1 when resolver returns undefined", async () => {
+    const arkTxId = "no-change-D17";
+    const spent = vtxo({
+      txid: "spent-D17",
+      value: 1000,
+      arkTxId,
+      isSpent: true,
+      createdAt: baseDate,
+    });
+
+    const resolverHit = jest.fn(async () => 999_999);
+    const hitOut = await buildActivityHistory(
+      [spent],
+      [],
+      new Set(),
+      resolverHit,
+    );
+    const sendHit = hitOut.find((a) => a.id === `arkade:offchain:${arkTxId}`);
+    expect(sendHit?.timestamp).toBe(999_999);
+    expect(resolverHit).toHaveBeenCalledWith(arkTxId);
+
+    const resolverMiss = jest.fn(async () => undefined);
+    const missOut = await buildActivityHistory(
+      [spent],
+      [],
+      new Set(),
+      resolverMiss,
+    );
+    const sendMiss = missOut.find((a) => a.id === `arkade:offchain:${arkTxId}`);
+    expect(sendMiss?.timestamp).toBe(baseDate.getTime() + 1);
+    expect(resolverMiss).toHaveBeenCalledWith(arkTxId);
+
+    // No resolver at all → same fallback. (Builder is callable
+    // without a resolver.)
+    const noResolver = await buildActivityHistory([spent], [], new Set());
+    const sendNo = noResolver.find(
+      (a) => a.id === `arkade:offchain:${arkTxId}`,
+    );
+    expect(sendNo?.timestamp).toBe(baseDate.getTime() + 1);
+  });
+
   // D-14 — Two spent vtxos sharing the same arkTxId aggregate into one
   // sent row.
   it("D-14: multiple spent vtxos with the same arkTxId aggregate", async () => {
