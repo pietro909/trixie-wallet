@@ -4,7 +4,7 @@ This repository is an Expo-only, iOS/Android self-custodial Arkade wallet app. T
 
 This is a living document: tick items off as they land.
 
-Last updated: 2026-05-22 (Milestone 17: Activity Checkpoints revised)
+Last updated: 2026-05-22 (Milestone 25: Brand Identity added)
 
 ## Milestones
 
@@ -59,6 +59,8 @@ Last updated: 2026-05-22 (Milestone 17: Activity Checkpoints revised)
   - Move Wallet home Send / Receive into a bottom action dock above the tab bar, preserving premium mobile ergonomics and avoiding content occlusion.
 - [x] Milestone 24: Contract Manager ([docs/MILESTONE_24.agents.md](./docs/MILESTONE_24.agents.md))
   - Replace AddressesScreen with a proper Profile → Contracts section: filterable list of all wallet contracts and a detail view with biometric-gated params and inline label editing.
+- [ ] Milestone 25: Brand Identity ([docs/MILESTONE_25.agents.md](./docs/MILESTONE_25.agents.md))
+  - Replace placeholder Expo scaffold assets with production-quality branded images: app icon, Android adaptive icon layers, monochrome notification icon, and splash screen logo.
 
 ## Relevant Documentation
 
