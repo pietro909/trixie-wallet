@@ -5,12 +5,13 @@ import {
   Inter_700Bold,
   useFonts,
 } from "@expo-google-fonts/inter";
-import { AlertTriangle, WalletMinimal } from "lucide-react-native";
+import { AlertTriangle } from "lucide-react-native";
 import * as React from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import { useAppStore } from "../store/useAppStore";
 import { spacing, typography } from "../theme/theme";
+import { AnimatedSplash } from "./AnimatedSplash";
 import Button from "./Button";
 
 export default function AppStartupGate({
@@ -33,10 +34,15 @@ export default function AppStartupGate({
     Inter_700Bold,
   });
   const [wiping, setWiping] = React.useState(false);
+  const [splashDone, setSplashDone] = React.useState(false);
 
   React.useEffect(() => {
     hydrate();
   }, [hydrate]);
+
+  const handleSplashDone = React.useCallback(() => {
+    setSplashDone(true);
+  }, []);
 
   if (schemaMismatch) {
     return (
@@ -83,38 +89,24 @@ export default function AppStartupGate({
     );
   }
 
-  if (!hydrated || !fontsLoaded) {
-    return (
-      <View
-        style={[styles.container, { backgroundColor: theme.colors.background }]}
-      >
-        <WalletMinimal color={theme.colors.primary} size={64} />
-        <Text style={[styles.title, { color: theme.colors.text }]}>Trixie</Text>
-        <ActivityIndicator
-          color={theme.colors.primary}
-          size="small"
-          style={styles.spinner}
-        />
-      </View>
-    );
-  }
+  const appIsReady = hydrated && fontsLoaded;
 
-  return <>{children}</>;
+  return (
+    <View style={styles.root}>
+      {appIsReady && children}
+      {!splashDone && (
+        <AnimatedSplash
+          isAppReady={appIsReady}
+          onAnimationDone={handleSplashDone}
+        />
+      )}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  title: {
-    fontSize: typography.size["2xl"],
-    fontWeight: typography.weight.bold,
-    marginTop: spacing[4],
-  },
-  spinner: {
-    marginTop: spacing[6],
   },
   mismatchContainer: {
     flex: 1,

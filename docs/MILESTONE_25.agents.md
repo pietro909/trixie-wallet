@@ -8,35 +8,52 @@ Replace the placeholder assets shipped with the Expo scaffold with production-qu
 
 ## Assets Required
 
-All files go under `assets/images/`. All formats are PNG.
+All files go under `assets/images/`. All PNG unless noted.
 
-### `icon.png` — Universal app icon
-- **Size:** 1024×1024 px
-- **Format:** PNG, no transparency (Apple rejects transparent icons)
-- Used by Expo as the iOS icon and the universal fallback.
+### Icons — iOS
 
-### `android-icon-foreground.png` — Android adaptive icon foreground layer
-- **Size:** 1024×1024 px
-- **Format:** PNG with transparent background
-- Logo/mark centered within the inner ~66% (672×672 px) safe zone. The system crops and masks this layer differently per launcher, so the mark must stay inside the safe area.
+#### `icon.png` — primary iOS app icon
+- 1024×1024 px, PNG, no transparency, no rounded corners (iOS applies the mask)
+- Solid #ff007f background, white sparkle centered
 
-### `android-icon-background.png` — Android adaptive icon background layer
-- **Size:** 1024×1024 px
-- **Format:** PNG
-- Solid color or subtle pattern behind the foreground. The config currently has `backgroundColor: "#E6F4FE"` as a fallback; replace with the brand color or a branded image.
+#### `icon-dark.png` — iOS 18 dark mode variant (optional but recommended)
+- 1024×1024 px, PNG, no transparency
+- Darker backdrop (e.g. #1a0010 or pure black) with the brand-pink sparkle, OR keep brand pink slightly muted
 
-### `android-icon-monochrome.png` — Android monochrome icon
-- **Size:** 1024×1024 px
-- **Format:** PNG — white silhouette on transparent background
-- Used for Android notification icons and Android 13 themed/monochrome icons. Also the notification icon in `expo-notifications` config (tinted `#ff007f`).
+#### `icon-tinted.png` — iOS 18 tinted mode variant (optional)
+- 1024×1024 px, PNG, no transparency
+- Grayscale: dark gray background, white sparkle. iOS applies the user-chosen tint.
 
-### `splash-icon.png` — Splash screen logo
-- **Size:** 1024×1024 px recommended (rendered at `imageWidth: 200` with `resizeMode: contain`)
-- **Format:** PNG with transparent background
-- Displayed centered on the splash screen. Background color is `#ffffff` (light) / `#000000` (dark) per the `expo-splash-screen` plugin config.
+### Icons — Android adaptive
 
-## Out of Scope
+#### `android-icon-foreground.png`
+- 1024×1024 px, PNG, transparent background
+- Sparkle centered inside the 672×672 safe zone. Make the sparkle slightly smaller than on iOS — the system zooms adaptive icons ~15%.
 
-- Any code changes — all config wiring is already in place in `app.json`.
-- Animated splash screens.
-- Tablet-specific icon variants.
+#### `android-icon-background.png` (skip if using solid color)
+- 1024×1024 px, PNG. Solid #ff007f.
+- **Recommendation:** drop this file and set `backgroundColor: "#ff007f"` in the adaptive icon config instead. One less asset to maintain.
+
+#### `android-icon-monochrome.png` — Android 13+ themed icons
+- 1024×1024 px, PNG, white-on-transparent
+- Simplified mark: large main sparkle only, no companion (it'll smudge at small sizes)
+
+### Notification icon
+
+#### `notification-icon.png`
+- 96×96 px minimum (ship 256×256 for safety), PNG, white-on-transparent
+- Just the main sparkle, simplified, thicker strokes. Tinted #ff007f at runtime by `expo-notifications`.
+
+### Splash screen
+
+#### `splash-icon.png` — static fallback / first frame
+- 1024×1024 px, PNG, transparent background
+- The sparkle at its final state. Used by `expo-splash-screen` for the native splash before JS loads.
+
+#### Animated splash — handled in JS (see `components/AnimatedSplash.tsx`)
+- The native splash (`splash-icon.png` on #ff007f) shows during cold start
+- Once JS is ready, an in-app animated component takes over and runs the entrance, then hides the native splash via `SplashScreen.hideAsync()`
+
+### Web (only for landing page, we DO NOT support web)
+
+#### `favicon.png` — 48×48 px PNG, brand-pink background, white sparkle
