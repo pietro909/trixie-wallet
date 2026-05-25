@@ -1,9 +1,10 @@
 # Milestone 26: Loading Feedback & Sync Visibility
 
-**Status:** All phases complete. Phase 1 delivered (sync-state primitive +
-Wallet/Activity surfaces); Phase 2 delivered (Send & Receive motion polish);
-Phase 3 delivered (expressive loaders for backup export & support-bundle
-generation).
+**Status:** Delivered (2026-05-25). Phase 1 in commit `6830f53` (sync-state
+primitive + Wallet/Activity surfaces); Phases 2 & 3 in commit `5fd9b77`
+(Send & Receive motion polish; expressive loaders for backup export &
+support-bundle generation). Manual on-device pass (iOS + Android) still
+outstanding — see the per-phase Verification notes below.
 
 ## Goal
 
