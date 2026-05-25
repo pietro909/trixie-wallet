@@ -1,7 +1,9 @@
 # Milestone 26: Loading Feedback & Sync Visibility
 
-**Status:** Open. Phase 1 delivered (sync-state primitive + Wallet/Activity
-surfaces); Phases 2 and 3 remain.
+**Status:** All phases complete. Phase 1 delivered (sync-state primitive +
+Wallet/Activity surfaces); Phase 2 delivered (Send & Receive motion polish);
+Phase 3 delivered (expressive loaders for backup export & support-bundle
+generation).
 
 ## Goal
 
@@ -74,7 +76,7 @@ piece of state.
 ## Selected Direction
 
 Three phases, ordered by urgency. Each phase is self-contained and can ship
-independently. Phase 1 is the driver and should land first.
+independently. Phase 1 is **Complete** (landed in commit `6830f53`).
 
 ### Phase 1 — Sync-state primitive + Wallet/Activity surfaces ✅ Delivered
 
@@ -118,7 +120,7 @@ In [`app/screens/WalletScreen.tsx`](../app/screens/WalletScreen.tsx):
 - Subscribe to `_syncState` via `useAppStore`.
 - Render a `SyncPill` near the balance card title (absolute positioned or
   flex-row with the title) when `_syncState.kind === "syncing"`.
-- Pill should fade in/out (250ms) and use `theme.colors.surfaceSubtle`
+- Pill should fade in/out (`theme.motion.duration.slow`) and use `theme.colors.surfaceSubtle`
   background + `theme.colors.textMuted` label.
 - Label can be static "Syncing…" or dynamic based on `stage`. Dynamic
   is preferred for accessibility.
@@ -133,27 +135,29 @@ In [`app/screens/ActivityScreen.tsx`](../app/screens/ActivityScreen.tsx):
 - When the list is non-empty, render the same `SyncPill` as Wallet,
   pinned to the header or as a header component in the `FlatList`.
 
-### Phase 2 — Send & Receive motion polish
+### Phase 2 — Send & Receive motion polish ✅ Delivered
 
 Discretionary; lands after Phase 1.
 
-- **SendReview fee entrance** ([`app/screens/send/SendReviewScreen.tsx`](../app/screens/send/SendReviewScreen.tsx)):
-  Apply a subtle entrance animation (slide-up + opacity, 200ms) to the fee and
-  total rows when their respective loading states (`lightningFeeLoading`,
-  `onchainFeeLoading`, `chainSwapLoading`) flip from `true` to `false`.
-- **Receive QR pulse** ([`app/screens/receive/ReceiveQRScreen.tsx`](../app/screens/receive/ReceiveQRScreen.tsx)):
-  Replace the full-screen `lnurlPending` spinner with a soft pulse on the QR
-  placeholder border. For Boltz hold invoices (Lightning receive), add a pulse
-  to the QR card while the invoice is being generated and the swap status is
-  not yet `pending`.
-- **SendResult icon tuning** ([`app/screens/send/SendResultScreen.tsx`](../app/screens/send/SendResultScreen.tsx)):
-  Enhance the existing spring animation (`scale 0.7 -> 1`) with a slight overshoot
-  and a simultaneous opacity fade. Ensure `Haptics` trigger exactly at the
-  peak of the scale.
-- **Constraint:** no animation may delay tap response. All animations must be
-  decorative, running on the UI thread via Reanimated.
+- **SendReview entrance choreography** ([`app/screens/send/SendReviewScreen.tsx`](../app/screens/send/SendReviewScreen.tsx)):
+  Instead of values "popping" into existence, let the resolved totals and
+  conditional fee quotes perform a graceful entrance. Always-present fee
+  rows should continue showing their "Estimating..." labels to preserve
+  honest progress, while their final numeric states arrive with a subtle
+  motion signature.
+- **Receive QR pulse & placeholder** ([`app/screens/receive/ReceiveQRScreen.tsx`](../app/screens/receive/ReceiveQRScreen.tsx)):
+  Banish the full-screen spinner. Replace it with a `QRPlaceholder` — a
+  clean, rounded square that pulses its border opacity (0.4 to 1.0) while
+  waiting for the LNURL session string to resolve. Align the pulse rhythm exactly with the
+  `SyncPill` (1200ms round-trip, quad-in-out easing).
+- **SendResult Reanimated refactor** ([`app/screens/send/SendResultScreen.tsx`](../app/screens/send/SendResultScreen.tsx)):
+  Upgrade from legacy `Animated` to `Reanimated`. Replace the flat spring
+  with a bouncy `withSpring` overshoot. Synchronize the corresponding `Success` or `Error` haptic to
+  fire exactly at the apex of the bounce.
+- **Constraint:** Animations must be "air-like" — decorative and non-blocking.
+  Touch targets must remain static and responsive.
 
-### Phase 3 — Expressive loaders for long-running ops
+### Phase 3 — Expressive loaders for long-running ops ✅ Delivered
 
 Replace flat overlays with motion-forward loaders.
 
@@ -170,7 +174,71 @@ Replace flat overlays with motion-forward loaders.
   exist, not a fake timer. If the operation does not expose hooks, fall back
   to a single honest label.
 
-## Implementation Plan (Phase 1 only)
+#### What shipped (Phase 3)
+
+- **Backup export:** Replaced the full-screen `LoadingOverlay` with a localized
+  `BackupProgress` block inside the backup card — a `ShieldCheck` that pulses
+  opacity + scale on the shared 1200ms quad-in-out rhythm (matching `SyncPill` /
+  `QRPlaceholder`), with `exportPhase`-driven labels ("Encrypting…", "Saving to
+  device…", "Opening share sheet…") and a polite live-region announcement. The
+  password form now renders only in the `form` phase and the Save/Share buttons
+  only in `dispatch`, so the loader is the single source of busy feedback per
+  phase.
+- **Support bundle:** `buildSupportBundle(onProgress?)` now reports four coarse
+  stages (`server` → `swaps` → `wallet` → `assembling`) at the real async-work
+  boundaries. `ProfileRecovery` shows the live stage label in place of
+  "Preparing bundle…"; `AdvancedScreen`'s `RawRow` shows it via a new
+  `busyLabel` prop (swapped into the row subtitle while busy).
+- **Honesty deviation from the suggested labels:** the spec's
+  "Exporting database…" / "Compressing…" describe work `buildSupportBundle` does
+  not perform (it assembles an in-memory JSON snapshot — no DB export, no
+  compression). Per the "Honest progress only" Product Rule and the
+  real-lifecycle-hooks note above, the stages use truthful labels for the work
+  that actually runs (server probe, swap/recovery scan, wallet/VTXO read,
+  assembly) instead.
+
+#### Verification (Phase 3)
+
+- `pnpm check`, `pnpm test` (351 passing), and `tsc --noEmit` all clean.
+- **Manual Verification (iOS + Android):** _pending on-device pass_ — confirm the
+  backup `ShieldCheck` pulses through all three phase labels and the support-bundle
+  stage labels advance (most visible on a wallet with Lightning/recovery state).
+
+## Implementation Plan (Phase 2)
+
+### 1. SendResult Refactor
+- Convert `SendResultScreen.tsx` to use `react-native-reanimated`.
+- Define a `scale` shared value (init 0.7).
+- Use `withSpring(1, { damping: 8, stiffness: 100 })` for the "overshoot" pop.
+- Trigger the appropriate `Success` or `Error` haptic in a `useEffect` using a timed approximation of the spring apex (~150ms for the requested spring params; re-tune if damping/stiffness change).
+
+### 2. SendReview Entrance
+- Create an `AnimatedRow` wrapper in `SendReviewScreen.tsx`.
+- Use `useAnimatedStyle` to map a `visible` prop to `opacity` (0 -> 1) and
+  `translateY` (10 -> 0) using `theme.motion.duration.slow`.
+- Wrap the conditionally-mounted Total rows (the Lightning Total and the
+  chainswap Total).
+- Trigger the entrance animation when they mount upon loading completion.
+- For the always-present Network Fee row, apply a subtle numeric fade-in
+  transition only for the value text when it flips from "Estimating..." to a
+  final number, preserving the loading label visibility.
+
+### 3. Receive QR Pulse
+- Create a `QRPlaceholder` component (232x232 rounded square, matching the `QRCode` dimensions and aligned to its inner position within the padded card).
+- Implement a `borderOpacity` shared value with a repeat-sequence loop:
+  - `withTiming(1, { duration: 600, easing: Easing.inOut(Easing.quad) })`
+  - `withTiming(0.4, { duration: 600, easing: Easing.inOut(Easing.quad) })`
+- Replace the `ActivityIndicator` in the `lnurlPending` branch with the `QRPlaceholder`.
+
+### 4. Verification
+- `pnpm check` and `pnpm test` clean. ✅ (also `tsc --noEmit` clean)
+- **Manual Verification (iOS + Android):** _pending on-device pass_
+  - **SendReview:** Confirm that Totals slide up smoothly and the Fee row resolves without flickering or hiding the "Estimating..." labels.
+  - **ReceiveQR:** Confirm the `QRPlaceholder` pulses during LNURL session setup and disappears exactly when the QR code renders.
+  - **SendResult:** Confirm the icon pop feels "springy" (not linear) and the haptic fires at the peak of the expansion, not at the start.
+
+
+## Implementation Plan (Phase 1 complete)
 
 Phases 2 and 3 will get their own implementation plans when prioritized.
 

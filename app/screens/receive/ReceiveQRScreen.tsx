@@ -16,7 +16,6 @@ import {
 } from "lucide-react-native";
 import * as React from "react";
 import {
-  ActivityIndicator,
   Animated,
   Pressable,
   ScrollView,
@@ -26,6 +25,14 @@ import {
   View,
 } from "react-native";
 import QRCode from "react-native-qrcode-svg";
+import Reanimated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useToast } from "../../components/ToastProvider";
 import { useFormatSats } from "../../hooks/useFormatSats";
@@ -131,6 +138,38 @@ function CopyRow({
         />
       </Pressable>
     </Animated.View>
+  );
+}
+
+/**
+ * Pulsing stand-in shown while the LNURL session string resolves. Matches the
+ * QR's 232×232 footprint and breathes its border opacity (0.4 → 1.0) on the
+ * same 1200ms quad-in-out rhythm as the SyncPill dot, keeping loading motion
+ * consistent across the app. Replaces the old full-screen spinner.
+ */
+function QRPlaceholder() {
+  const theme = useResolvedTheme();
+  const pulse = useSharedValue(0.4);
+  React.useEffect(() => {
+    pulse.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 600, easing: Easing.inOut(Easing.quad) }),
+        withTiming(0.4, { duration: 600, easing: Easing.inOut(Easing.quad) }),
+      ),
+      -1,
+      false,
+    );
+  }, [pulse]);
+  const style = useAnimatedStyle(() => ({ opacity: pulse.value }));
+  return (
+    <Reanimated.View
+      accessibilityLabel="Generating QR code"
+      style={[
+        styles.qrPlaceholder,
+        { borderColor: theme.colors.border },
+        style,
+      ]}
+    />
   );
 }
 
@@ -415,15 +454,26 @@ export default function ReceiveQRScreen() {
         edges={["bottom"]}
         style={[styles.container, { backgroundColor: theme.colors.background }]}
       >
-        <View style={styles.errorWrap}>
-          <ActivityIndicator color={theme.colors.primary} size="large" />
-          <Text style={[styles.errorTitle, { color: theme.colors.text }]}>
-            Opening LNURL session…
-          </Text>
-          <Text style={[styles.errorBody, { color: theme.colors.textMuted }]}>
-            Connecting to the LNURL server to issue a payment request.
-          </Text>
-        </View>
+        <ScrollView contentContainerStyle={styles.content}>
+          <View
+            style={[
+              styles.qrCard,
+              {
+                backgroundColor: theme.colors.card,
+                borderColor: theme.colors.border,
+                ...theme.shadow("card"),
+              },
+            ]}
+          >
+            <QRPlaceholder />
+            <Text style={[styles.destination, { color: theme.colors.text }]}>
+              Opening LNURL session…
+            </Text>
+            <Text style={[styles.amount, { color: theme.colors.textSubtle }]}>
+              Connecting to the LNURL server to issue a payment request.
+            </Text>
+          </View>
+        </ScrollView>
       </SafeAreaView>
     );
   }
@@ -729,6 +779,12 @@ const styles = StyleSheet.create({
     padding: spacing[4],
     backgroundColor: "#ffffff",
     borderRadius: radius.md,
+  },
+  qrPlaceholder: {
+    width: 232,
+    height: 232,
+    borderRadius: radius.md,
+    borderWidth: 2,
   },
   destination: {
     marginTop: spacing[4],

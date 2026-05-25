@@ -9,7 +9,12 @@ import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { CheckCircle2, Copy, XCircle } from "lucide-react-native";
 import * as React from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Button from "../../components/Button";
 import { useToast } from "../../components/ToastProvider";
@@ -89,20 +94,24 @@ export default function SendResultScreen() {
     assetDetails?.metadata?.ticker ??
     (params.assetId ? truncatedAssetId(params.assetId) : "");
 
-  const scale = React.useRef(new Animated.Value(0.7)).current;
+  const scale = useSharedValue(0.7);
+  const iconStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
   React.useEffect(() => {
-    Animated.spring(scale, {
-      toValue: 1,
-      useNativeDriver: true,
-      speed: 14,
-      bounciness: 8,
-    }).start();
-    Haptics.notificationAsync(
-      ok
-        ? Haptics.NotificationFeedbackType.Success
-        : Haptics.NotificationFeedbackType.Error,
-    );
+    // Bouncy overshoot pop. The success/error haptic fires on a short delay so
+    // it lands at the apex of the spring rather than at t=0; ~150ms matches the
+    // overshoot peak for damping 8 / stiffness 100 — re-tune if those change.
+    scale.value = withSpring(1, { damping: 8, stiffness: 100 });
+    const apex = setTimeout(() => {
+      Haptics.notificationAsync(
+        ok
+          ? Haptics.NotificationFeedbackType.Success
+          : Haptics.NotificationFeedbackType.Error,
+      );
+    }, 150);
+    return () => clearTimeout(apex);
   }, [ok, scale]);
 
   function goHome() {
@@ -139,7 +148,7 @@ export default function SendResultScreen() {
       style={[styles.container, { backgroundColor: theme.colors.background }]}
     >
       <View style={styles.content}>
-        <Animated.View style={{ transform: [{ scale }] }}>
+        <Animated.View style={iconStyle}>
           {ok ? (
             <CheckCircle2 color={theme.colors.success} size={96} />
           ) : (

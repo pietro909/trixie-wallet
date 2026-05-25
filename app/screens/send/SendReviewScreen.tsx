@@ -7,6 +7,12 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { AlertTriangle, ArrowUpRight, Info } from "lucide-react-native";
 import * as React from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AssetAvatar from "../../components/AssetAvatar";
 import Button from "../../components/Button";
@@ -46,7 +52,7 @@ import {
 } from "../../services/sendExecutor";
 import { satsToFiat } from "../../store/mock";
 import { useAppStore } from "../../store/useAppStore";
-import { radius, spacing, typography } from "../../theme/theme";
+import { motion, radius, spacing, typography } from "../../theme/theme";
 
 const ON_CHAIN_TIMING_NOTICE =
   "On-chain sends are settled by Arkade in the next batch round and confirmed on-chain afterwards.";
@@ -61,19 +67,41 @@ function Row({
   value,
   mono,
   emphasis,
+  pending,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   emphasis?: boolean;
+  /**
+   * When the row's value is still resolving (showing a loading label like
+   * "Estimating…"). The loading label stays fully visible; only the final
+   * value fades in once `pending` flips back to false.
+   */
+  pending?: boolean;
 }) {
   const theme = useResolvedTheme();
+  const valueOpacity = useSharedValue(1);
+  const wasPending = React.useRef(pending ?? false);
+  React.useEffect(() => {
+    // Ease the resolved figure in only on the loading → resolved transition.
+    // While pending the opacity holds at 1 so the "Estimating…" label reads
+    // clearly; the brief fade is reserved for the final number arriving.
+    if (wasPending.current && !pending) {
+      valueOpacity.value = withSequence(
+        withTiming(0, { duration: 0 }),
+        withTiming(1, { duration: motion.duration.slow }),
+      );
+    }
+    wasPending.current = pending ?? false;
+  }, [pending, valueOpacity]);
+  const valueStyle = useAnimatedStyle(() => ({ opacity: valueOpacity.value }));
   return (
     <View style={[rowStyles.row, { borderBottomColor: theme.colors.divider }]}>
       <Text style={[rowStyles.label, { color: theme.colors.textMuted }]}>
         {label}
       </Text>
-      <Text
+      <Animated.Text
         style={[
           rowStyles.value,
           {
@@ -84,13 +112,39 @@ function Row({
             fontFamily: mono ? typography.fontFamily.mono : undefined,
             fontSize: emphasis ? typography.size.md : typography.size.sm,
           },
+          valueStyle,
         ]}
         numberOfLines={1}
       >
         {value}
-      </Text>
+      </Animated.Text>
     </View>
   );
+}
+
+/**
+ * Entrance wrapper for conditionally-mounted rows (the resolved Total lines).
+ * On mount it eases from slightly-low + transparent to its resting position so
+ * the total "arrives" gracefully once its quote resolves rather than popping in.
+ */
+function AnimatedRow({
+  visible = true,
+  children,
+}: {
+  visible?: boolean;
+  children: React.ReactNode;
+}) {
+  const progress = useSharedValue(0);
+  React.useEffect(() => {
+    progress.value = withTiming(visible ? 1 : 0, {
+      duration: motion.duration.slow,
+    });
+  }, [visible, progress]);
+  const style = useAnimatedStyle(() => ({
+    opacity: progress.value,
+    transform: [{ translateY: (1 - progress.value) * 10 }],
+  }));
+  return <Animated.View style={style}>{children}</Animated.View>;
 }
 
 const rowStyles = StyleSheet.create({
@@ -535,13 +589,16 @@ export default function SendReviewScreen() {
                       ? `${formatSats(lightningFee.feeSats)} ${unitLabel}`
                       : "Unavailable"
                 }
+                pending={lightningFeeLoading}
               />
               {lightningFee ? (
-                <Row
-                  label="Total"
-                  value={`${formatSats(amountSats + lightningFee.feeSats)} ${unitLabel}`}
-                  emphasis
-                />
+                <AnimatedRow>
+                  <Row
+                    label="Total"
+                    value={`${formatSats(amountSats + lightningFee.feeSats)} ${unitLabel}`}
+                    emphasis
+                  />
+                </AnimatedRow>
               ) : null}
             </>
           ) : null}
@@ -652,6 +709,11 @@ export default function SendReviewScreen() {
                           ? `${formatSats(chainSwapFee)} ${unitLabel}`
                           : "—"
                 }
+                pending={
+                  bitcoinRail === "collab"
+                    ? onchainFeeLoading
+                    : chainSwapLoading
+                }
               />
               {bitcoinRail === "collab" && collabFee != null ? (
                 <Text
@@ -661,11 +723,13 @@ export default function SendReviewScreen() {
                 </Text>
               ) : null}
               {bitcoinRail === "chainswap" && chainSwapFee != null ? (
-                <Row
-                  label="Total"
-                  value={`${formatSats(amountSats + chainSwapFee)} ${unitLabel}`}
-                  emphasis
-                />
+                <AnimatedRow>
+                  <Row
+                    label="Total"
+                    value={`${formatSats(amountSats + chainSwapFee)} ${unitLabel}`}
+                    emphasis
+                  />
+                </AnimatedRow>
               ) : null}
             </>
           ) : null}

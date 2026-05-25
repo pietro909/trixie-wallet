@@ -23,6 +23,24 @@ import {
 
 export const BUNDLE_SCHEMA_VERSION = 1 as const;
 
+/**
+ * Coarse, honest stages of `buildSupportBundle`. Each value is reported just
+ * before the matching block of real async work begins, so the UI label tracks
+ * actual lifecycle progress rather than a timer. Kept deliberately coarse —
+ * the bundle assembles an in-memory snapshot, so finer granularity would be
+ * dishonest (no DB export or compression happens). Ordered as emitted.
+ */
+export type BundleStage = "server" | "swaps" | "wallet" | "assembling";
+
+export const BUNDLE_STAGE_LABEL: Record<BundleStage, string> = {
+  server: "Contacting server…",
+  swaps: "Collecting swap & recovery state…",
+  wallet: "Reading wallet state…",
+  assembling: "Assembling bundle…",
+};
+
+export type BundleProgress = (stage: BundleStage) => void;
+
 export type SupportBundle = {
   schemaVersion: typeof BUNDLE_SCHEMA_VERSION;
   /** ms since epoch when the bundle was assembled. */
@@ -213,7 +231,9 @@ async function countCachedAssetMetadata(): Promise<number> {
   }
 }
 
-export async function buildSupportBundle(): Promise<SupportBundle> {
+export async function buildSupportBundle(
+  onProgress?: BundleProgress,
+): Promise<SupportBundle> {
   const state = useAppStore.getState();
   const wallet = state.wallet;
   const { sdkVersion, boltzSwapVersion, commit, tag, describe } = readExtra();
@@ -222,6 +242,7 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
   const lightningSupported =
     isLightningSupportedForNetwork(networkForLightning);
 
+  onProgress?.("server");
   let serverInfo: Record<string, unknown> | null = null;
   let serverInfoFetchError: string | null = null;
   try {
@@ -244,6 +265,7 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
     }
   }
 
+  onProgress?.("swaps");
   let swapMetadataCount = 0;
   if (wallet) {
     try {
@@ -365,6 +387,7 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
     }
   }
 
+  onProgress?.("wallet");
   const swapPollMetrics = await readBgTaskMetrics(SWAP_BACKGROUND_TASK_NAME);
 
   let vtxoSummary: SupportBundle["vtxos"] = null;
@@ -412,6 +435,7 @@ export async function buildSupportBundle(): Promise<SupportBundle> {
     }
   }
 
+  onProgress?.("assembling");
   return {
     schemaVersion: BUNDLE_SCHEMA_VERSION,
     generatedAt: Date.now(),

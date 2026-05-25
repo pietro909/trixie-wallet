@@ -37,7 +37,11 @@ import {
 import { defaultDelegatorUrlForNetwork } from "../services/arkade/network";
 import { SWAP_BACKGROUND_TASK_NAME } from "../services/arkade/swap-background";
 import type { BgTaskMetrics } from "../services/diagnostics/bg-task-metrics";
-import { buildSupportBundle } from "../services/diagnostics/bundle";
+import {
+  BUNDLE_STAGE_LABEL,
+  type BundleStage,
+  buildSupportBundle,
+} from "../services/diagnostics/bundle";
 import {
   deleteBundleTempFile,
   saveBundleFile,
@@ -96,6 +100,9 @@ export default function AdvancedScreen() {
 
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const [busyKey, setBusyKey] = React.useState<string | null>(null);
+  const [bundleStage, setBundleStage] = React.useState<BundleStage | null>(
+    null,
+  );
   const [authVisible, setAuthVisible] = React.useState(false);
   const serverInfo = networkState.serverInfo;
   const detectedNetwork = networkState.detectedNetwork;
@@ -133,7 +140,7 @@ export default function AdvancedScreen() {
   async function withBundle<T>(
     fn: (b: { uri: string; filename: string }) => Promise<T>,
   ): Promise<T> {
-    const bundle = await buildSupportBundle();
+    const bundle = await buildSupportBundle(setBundleStage);
     const written = writeBundleToTemp({
       bundle,
       basename: bundleBasename(),
@@ -158,6 +165,7 @@ export default function AdvancedScreen() {
       );
     } finally {
       setBusyKey(null);
+      setBundleStage(null);
     }
   }
 
@@ -178,13 +186,14 @@ export default function AdvancedScreen() {
       );
     } finally {
       setBusyKey(null);
+      setBundleStage(null);
     }
   }
 
   async function copySupportBundle() {
     setBusyKey("bundle");
     try {
-      const bundle = await buildSupportBundle();
+      const bundle = await buildSupportBundle(setBundleStage);
       await Clipboard.setStringAsync(JSON.stringify(bundle, null, 2));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       showToast("Support bundle copied", "success");
@@ -195,6 +204,7 @@ export default function AdvancedScreen() {
       );
     } finally {
       setBusyKey(null);
+      setBundleStage(null);
     }
   }
 
@@ -770,6 +780,7 @@ export default function AdvancedScreen() {
           label="Support bundle"
           hint="Wallet, server, recovery counts, and recent error events. Redacted — safe to share."
           busy={busyKey === "bundle"}
+          busyLabel={bundleStage ? BUNDLE_STAGE_LABEL[bundleStage] : undefined}
           onPress={presentBundleActions}
         />
       </View>
@@ -1250,6 +1261,7 @@ function RawRow({
   label,
   hint,
   busy,
+  busyLabel,
   disabled,
   onPress,
 }: {
@@ -1257,10 +1269,13 @@ function RawRow({
   label: string;
   hint: string;
   busy?: boolean;
+  /** Live stage label shown in place of the hint while `busy`. */
+  busyLabel?: string;
   disabled?: boolean;
   onPress: () => void | Promise<void>;
 }) {
   const isInert = disabled || busy;
+  const subtitle = busy && busyLabel ? busyLabel : hint;
   return (
     <Pressable
       onPress={onPress}
@@ -1299,7 +1314,7 @@ function RawRow({
           style={[styles.endpointSubtitle, { color: theme.colors.textSubtle }]}
           numberOfLines={2}
         >
-          {hint}
+          {subtitle}
         </Text>
       </View>
       <View style={styles.rawAction}>

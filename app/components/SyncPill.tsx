@@ -58,8 +58,10 @@ export function SyncPill({
   }, [stage]);
 
   React.useEffect(() => {
-    opacity.value = withTiming(visible ? 1 : 0, { duration: 250 });
-  }, [visible, opacity]);
+    opacity.value = withTiming(visible ? 1 : 0, {
+      duration: theme.motion.duration.slow,
+    });
+  }, [visible, opacity, theme.motion.duration.slow]);
 
   // Gentle dot pulse while visible; idle (steady) otherwise. Runs on the UI
   // thread so it never competes with the JS refresh work it's reporting on.
@@ -74,9 +76,9 @@ export function SyncPill({
         false,
       );
     } else {
-      dot.value = withTiming(0.4, { duration: 250 });
+      dot.value = withTiming(0.4, { duration: theme.motion.duration.slow });
     }
-  }, [visible, dot]);
+  }, [visible, dot, theme.motion.duration.slow]);
 
   const containerStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
   const dotStyle = useAnimatedStyle(() => ({ opacity: dot.value }));

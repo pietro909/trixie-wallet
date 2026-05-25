@@ -30,7 +30,11 @@ import type {
   RecoveryScan,
   RecoverySeverity,
 } from "../services/arkade/recovery";
-import { buildSupportBundle } from "../services/diagnostics/bundle";
+import {
+  BUNDLE_STAGE_LABEL,
+  type BundleStage,
+  buildSupportBundle,
+} from "../services/diagnostics/bundle";
 import {
   deleteBundleTempFile,
   saveBundleFile,
@@ -135,6 +139,9 @@ export default function ProfileRecovery() {
   const [scan, setScan] = React.useState<RecoveryScan | null>(null);
   const [scanning, setScanning] = React.useState(false);
   const [bundleBusy, setBundleBusy] = React.useState(false);
+  const [bundleStage, setBundleStage] = React.useState<BundleStage | null>(
+    null,
+  );
   const [now, setNow] = React.useState(() => Math.floor(Date.now() / 1000));
   const [authVisible, setAuthVisible] = React.useState(false);
 
@@ -182,7 +189,7 @@ export default function ProfileRecovery() {
             void (async () => {
               setBundleBusy(true);
               try {
-                const bundle = await buildSupportBundle();
+                const bundle = await buildSupportBundle(setBundleStage);
                 const written = writeBundleToTemp({
                   bundle,
                   basename: bundleBasename(),
@@ -208,6 +215,7 @@ export default function ProfileRecovery() {
                 );
               } finally {
                 setBundleBusy(false);
+                setBundleStage(null);
               }
             })();
           },
@@ -218,7 +226,7 @@ export default function ProfileRecovery() {
             void (async () => {
               setBundleBusy(true);
               try {
-                const bundle = await buildSupportBundle();
+                const bundle = await buildSupportBundle(setBundleStage);
                 const written = writeBundleToTemp({
                   bundle,
                   basename: bundleBasename(),
@@ -235,6 +243,7 @@ export default function ProfileRecovery() {
                 );
               } finally {
                 setBundleBusy(false);
+                setBundleStage(null);
               }
             })();
           },
@@ -245,7 +254,7 @@ export default function ProfileRecovery() {
             void (async () => {
               setBundleBusy(true);
               try {
-                const bundle = await buildSupportBundle();
+                const bundle = await buildSupportBundle(setBundleStage);
                 await Clipboard.setStringAsync(JSON.stringify(bundle, null, 2));
                 Haptics.notificationAsync(
                   Haptics.NotificationFeedbackType.Success,
@@ -258,6 +267,7 @@ export default function ProfileRecovery() {
                 );
               } finally {
                 setBundleBusy(false);
+                setBundleStage(null);
               }
             })();
           },
@@ -537,7 +547,11 @@ export default function ProfileRecovery() {
               disabled={bundleBusy}
             >
               <Text style={[styles.linkText, { color: theme.colors.primary }]}>
-                {bundleBusy ? "Preparing bundle…" : "Export support bundle"}
+                {bundleBusy
+                  ? bundleStage
+                    ? BUNDLE_STAGE_LABEL[bundleStage]
+                    : "Preparing bundle…"
+                  : "Export support bundle"}
               </Text>
             </Pressable>
           </View>

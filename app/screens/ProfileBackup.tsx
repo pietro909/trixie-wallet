@@ -20,10 +20,17 @@ import {
   TextInput,
   View,
 } from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AuthGate from "../components/AuthGate";
 import Button from "../components/Button";
-import LoadingOverlay from "../components/LoadingOverlay";
 import { useToast } from "../components/ToastProvider";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import { privateKeyHexToNsec } from "../services/arkade/identity";
@@ -31,7 +38,7 @@ import { readSecret, type StoredSecret } from "../services/arkade/secret-store";
 import { BackupError } from "../services/backup/crypto";
 import { saveBackupFile, shareBackupFile } from "../services/backup/storage";
 import { type BackupHealth, useAppStore } from "../store/useAppStore";
-import { radius, spacing, typography } from "../theme/theme";
+import { type AppTheme, radius, spacing, typography } from "../theme/theme";
 
 type ExportPhase =
   | "idle"
@@ -77,6 +84,60 @@ function backupTextForSecret(secret: StoredSecret): string | null {
   } catch {
     return null;
   }
+}
+
+type BusyExportPhase = "encrypting" | "saving" | "sharing";
+
+const BACKUP_PHASE_LABEL: Record<BusyExportPhase, string> = {
+  encrypting: "Encrypting… keep the app open",
+  saving: "Saving to device…",
+  sharing: "Opening share sheet…",
+};
+
+/**
+ * Localized export-progress loader: a softly pulsing ShieldCheck plus the
+ * current phase label, rendered inside the backup card. Replaces the
+ * full-screen LoadingOverlay so feedback stays where the action is. The
+ * 1200ms quad-in-out pulse matches the SyncPill / QRPlaceholder rhythm for a
+ * consistent loading signature across the app, and announces politely for
+ * assistive tech.
+ */
+function BackupProgress({
+  phase,
+  theme,
+}: {
+  phase: BusyExportPhase;
+  theme: AppTheme;
+}) {
+  const pulse = useSharedValue(0.4);
+  React.useEffect(() => {
+    pulse.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 600, easing: Easing.inOut(Easing.quad) }),
+        withTiming(0.4, { duration: 600, easing: Easing.inOut(Easing.quad) }),
+      ),
+      -1,
+      false,
+    );
+  }, [pulse]);
+  const iconStyle = useAnimatedStyle(() => ({
+    opacity: pulse.value,
+    transform: [{ scale: 0.92 + pulse.value * 0.08 }],
+  }));
+  return (
+    <View
+      style={styles.backupProgress}
+      accessibilityLiveRegion="polite"
+      accessibilityLabel={BACKUP_PHASE_LABEL[phase]}
+    >
+      <Animated.View style={iconStyle}>
+        <ShieldCheck color={theme.colors.primary} size={40} />
+      </Animated.View>
+      <Text style={[styles.backupProgressLabel, { color: theme.colors.text }]}>
+        {BACKUP_PHASE_LABEL[phase]}
+      </Text>
+    </View>
+  );
 }
 
 export default function ProfileBackup() {
@@ -345,7 +406,7 @@ export default function ProfileBackup() {
               />
             ) : null}
 
-            {exportPhase === "form" || exportPhase === "encrypting" ? (
+            {exportPhase === "form" ? (
               <View style={styles.form}>
                 <Text style={[styles.formLabel, { color: theme.colors.text }]}>
                   Choose a password (min 8 characters)
@@ -381,7 +442,6 @@ export default function ProfileBackup() {
                   placeholder="Backup password"
                   placeholderTextColor={theme.colors.placeholder}
                   secureTextEntry
-                  editable={exportPhase !== "encrypting"}
                   style={[
                     styles.input,
                     {
@@ -402,7 +462,6 @@ export default function ProfileBackup() {
                   placeholder="Confirm password"
                   placeholderTextColor={theme.colors.placeholder}
                   secureTextEntry
-                  editable={exportPhase !== "encrypting"}
                   style={[
                     styles.input,
                     {
@@ -426,24 +485,25 @@ export default function ProfileBackup() {
                     variant="ghost"
                     theme={theme}
                     onPress={cancelExport}
-                    disabled={exportPhase === "encrypting"}
                     style={styles.formActionBtn}
                   />
                   <Button
                     label="Encrypt"
                     theme={theme}
                     onPress={submitExport}
-                    loading={exportPhase === "encrypting"}
-                    disabled={exportPhase === "encrypting"}
                     style={styles.formActionBtn}
                   />
                 </View>
               </View>
             ) : null}
 
-            {exportPhase === "dispatch" ||
+            {exportPhase === "encrypting" ||
             exportPhase === "saving" ||
             exportPhase === "sharing" ? (
+              <BackupProgress phase={exportPhase} theme={theme} />
+            ) : null}
+
+            {exportPhase === "dispatch" ? (
               <View style={styles.form}>
                 <View
                   style={[
@@ -464,10 +524,6 @@ export default function ProfileBackup() {
                     label="Save to device"
                     theme={theme}
                     onPress={handleSave}
-                    loading={exportPhase === "saving"}
-                    disabled={
-                      exportPhase === "saving" || exportPhase === "sharing"
-                    }
                     icon={<Download color={theme.colors.onPrimary} size={18} />}
                     style={styles.dispatchBtn}
                   />
@@ -476,21 +532,11 @@ export default function ProfileBackup() {
                     variant="secondary"
                     theme={theme}
                     onPress={handleShare}
-                    loading={exportPhase === "sharing"}
-                    disabled={
-                      exportPhase === "saving" || exportPhase === "sharing"
-                    }
                     icon={<Share2 color={theme.colors.text} size={18} />}
                     style={styles.dispatchBtn}
                   />
                 </View>
-                <Pressable
-                  onPress={discardPrepared}
-                  disabled={
-                    exportPhase === "saving" || exportPhase === "sharing"
-                  }
-                  style={styles.discardBtn}
-                >
+                <Pressable onPress={discardPrepared} style={styles.discardBtn}>
                   <Text
                     style={[
                       styles.discardText,
@@ -637,21 +683,6 @@ export default function ProfileBackup() {
           </View>
         ) : null}
       </ScrollView>
-      <LoadingOverlay
-        visible={
-          exportPhase === "encrypting" ||
-          exportPhase === "saving" ||
-          exportPhase === "sharing"
-        }
-        message={
-          exportPhase === "encrypting"
-            ? "Encrypting backup… keep the app open"
-            : exportPhase === "saving"
-              ? "Saving to device…"
-              : "Opening share sheet…"
-        }
-        theme={theme}
-      />
       <AuthGate
         visible={authVisible}
         title={authTitle}
@@ -782,6 +813,17 @@ const styles = StyleSheet.create({
   },
   exportBtn: {
     marginTop: spacing[2],
+  },
+  backupProgress: {
+    alignItems: "center",
+    gap: spacing[3],
+    paddingVertical: spacing[5],
+    marginTop: spacing[2],
+  },
+  backupProgressLabel: {
+    fontSize: typography.size.sm,
+    fontWeight: typography.weight.medium,
+    textAlign: "center",
   },
   form: {
     marginTop: spacing[2],
