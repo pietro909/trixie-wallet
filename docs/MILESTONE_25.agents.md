@@ -1,6 +1,6 @@
 # Milestone 25: Brand Identity
 
-**Status:** Open.
+**Status:** Delivered (2026-05-25, commit `30ac8e4`). Branded assets installed under `assets/images/`, native Android project regenerated via `npx expo prebuild --clean`, JS animated splash (`app/components/AnimatedSplash.tsx` + `Sparkle.tsx`) wired into `AppStartupGate`. iOS prebuild deferred — see Issue 4 in [ISSUES.md](../ISSUES.md).
 
 ## Goal
 
