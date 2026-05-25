@@ -2,6 +2,28 @@ export type ThemePref = "system" | "light" | "dark";
 export type FiatCurrency = "EUR" | "USD" | "GBP";
 export type BitcoinUnit = "sats" | "btc" | "auto";
 
+/**
+ * Coarse stages of `refreshWallet`'s inner sequence. Each value names a phase
+ * the store can actually distinguish from the others — no fake granularity.
+ * Surfaced through {@link SyncState} so the Wallet and Activity screens can
+ * tell the user roughly what the cold-start refresh is doing.
+ */
+export type SyncStage =
+  | "snapshot" // refreshWalletSnapshot — VTXOs, balances, and history
+  | "lightning" // maybeEnsureLightning — opening Lightning subsystems
+  | "activities" // buildActivities — local merge of activity sources
+  | "notify"; // diffAndNotifyActivities — emitting notifications
+
+/**
+ * Store-readable signal for "is the wallet refresh running, and at which
+ * stage". Lifecycle metadata only — never persisted (same treatment as
+ * `_hydrated`). `startedAt` is captured once when a syncing session begins and
+ * stays stable across the re-entrant refresh loop.
+ */
+export type SyncState =
+  | { kind: "idle" }
+  | { kind: "syncing"; stage: SyncStage; startedAt: number };
+
 export type ActivityDirection = "in" | "out" | "self" | "none";
 export type ActivityStatus =
   | "pending"

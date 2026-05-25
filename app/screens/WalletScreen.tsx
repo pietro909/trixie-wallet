@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ActivityRow from "../components/ActivityRow";
 import AssetCard from "../components/AssetCard";
 import Button from "../components/Button";
+import { SyncPill } from "../components/SyncPill";
 import { useAssetMetadata } from "../hooks/useAssetMetadata";
 import { useFormatSats } from "../hooks/useFormatSats";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
@@ -156,6 +157,7 @@ export default function WalletScreen() {
   const wallet = useAppStore((s) => s.wallet);
   const fiatCurrency = useAppStore((s) => s.preferences.fiatCurrency);
   const refreshWallet = useAppStore((s) => s.refreshWallet);
+  const syncState = useAppStore((s) => s._syncState);
   const detectedNetwork = useAppStore((s) => s.network.detectedNetwork);
   const importedAssetIds = useAppStore((s) => s.assets.importedAssetIds);
   const { format: formatSats, label: unitLabel } = useFormatSats();
@@ -248,6 +250,12 @@ export default function WalletScreen() {
             { backgroundColor: theme.colors.card, ...theme.shadow("card") },
           ]}
         >
+          <SyncPill
+            visible={syncState.kind === "syncing" && !refreshing}
+            stage={syncState.kind === "syncing" ? syncState.stage : null}
+            theme={theme}
+            style={styles.syncPill}
+          />
           <Text
             style={[styles.walletLabel, { color: theme.colors.textSubtle }]}
           >
@@ -507,6 +515,11 @@ const styles = StyleSheet.create({
     padding: spacing[6],
     borderRadius: radius.lg,
     alignItems: "center",
+  },
+  syncPill: {
+    position: "absolute",
+    top: spacing[3],
+    right: spacing[3],
   },
   walletLabel: {
     fontSize: typography.size.sm,

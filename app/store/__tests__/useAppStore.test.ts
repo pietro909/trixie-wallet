@@ -102,6 +102,12 @@ jest.mock("../../services/arkade/runtime", () => ({
   ensureWallet: jest.fn(),
   disposeWallet: jest.fn(),
   setIncomingFundsListener: jest.fn(),
+  refreshWalletSnapshot: jest.fn(),
+}));
+
+jest.mock("../notify-diff", () => ({
+  clearNotifyState: jest.fn(),
+  diffAndNotifyActivities: jest.fn(async () => {}),
 }));
 
 // The SDK's seed-identity path pulls in @bitcoinerlab/descriptors-scure, which
@@ -194,14 +200,28 @@ jest.mock("../../services/paymentParser", () => ({
 }));
 
 import {
+  ensureLightning,
+  getLightningActivitySources,
+} from "../../services/arkade/lightning";
+import {
   MAINNET_ARK_SERVER_URL,
   MUTINYNET_ARK_SERVER_URL,
 } from "../../services/arkade/network";
-import { ensureWallet } from "../../services/arkade/runtime";
+import {
+  ensureWallet,
+  refreshWalletSnapshot,
+} from "../../services/arkade/runtime";
+import { diffAndNotifyActivities } from "../notify-diff";
 import { LEGACY_STORAGE_KEYS, STORAGE_KEY } from "../storage-keys";
+import type { SyncState } from "../types";
 import { generateSalt, hashPassword, useAppStore } from "../useAppStore";
 
 const ensureWalletMock = ensureWallet as jest.Mock;
+const refreshWalletSnapshotMock = refreshWalletSnapshot as jest.Mock;
+const getLightningActivitySourcesMock =
+  getLightningActivitySources as jest.Mock;
+const ensureLightningMock = ensureLightning as jest.Mock;
+const diffAndNotifyActivitiesMock = diffAndNotifyActivities as jest.Mock;
 
 describe("useAppStore security utilities", () => {
   describe("hashPassword", () => {
@@ -769,5 +789,80 @@ describe("useAppStore.exportBackup — contract labels", () => {
     };
     expect(built.version).toBe(3);
     expect(built.contractLabels).toEqual([{ script: "s1", label: "Primary" }]);
+  });
+});
+
+describe("useAppStore.refreshWallet — _syncState transitions", () => {
+  function stageOf(s: SyncState): string {
+    return s.kind === "syncing" ? s.stage : "idle";
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    useAppStore.setState({
+      wallet: makeWalletMetadata(),
+      security: { isLocked: false, biometricsEnabled: false },
+      _syncState: { kind: "idle" },
+    });
+    refreshWalletSnapshotMock.mockResolvedValue({
+      publicKeyHex: "00",
+      arkAddress: "tark1example",
+      boardingAddress: "tb1example",
+      balance: { available: 0, total: 0, boardingTotal: 0, assets: [] },
+      activities: [],
+    });
+    ensureLightningMock.mockResolvedValue(undefined);
+    getLightningActivitySourcesMock.mockResolvedValue({
+      swaps: [],
+      metadata: [],
+    });
+    diffAndNotifyActivitiesMock.mockResolvedValue(undefined);
+  });
+
+  it("walks snapshot → lightning → activities → notify, then settles idle", async () => {
+    const seen: SyncState[] = [];
+    const unsub = useAppStore.subscribe((s, prev) => {
+      if (s._syncState !== prev._syncState) seen.push(s._syncState);
+    });
+
+    await useAppStore.getState().refreshWallet();
+    unsub();
+
+    expect(seen.map(stageOf)).toEqual([
+      "snapshot",
+      "lightning",
+      "activities",
+      "notify",
+      "idle",
+    ]);
+    // Final resting state is idle.
+    expect(useAppStore.getState()._syncState).toEqual({ kind: "idle" });
+  });
+
+  it("keeps startedAt stable across every syncing stage", async () => {
+    const startedAts = new Set<number>();
+    const unsub = useAppStore.subscribe((s, prev) => {
+      if (s._syncState !== prev._syncState && s._syncState.kind === "syncing") {
+        startedAts.add(s._syncState.startedAt);
+      }
+    });
+
+    await useAppStore.getState().refreshWallet();
+    unsub();
+
+    // One continuous syncing window — all stages share a single origin.
+    expect(startedAts.size).toBe(1);
+  });
+
+  it("resets to idle even when the snapshot stage throws", async () => {
+    refreshWalletSnapshotMock.mockRejectedValueOnce(new Error("network down"));
+
+    await expect(useAppStore.getState().refreshWallet()).rejects.toThrow(
+      "network down",
+    );
+
+    expect(useAppStore.getState()._syncState).toEqual({ kind: "idle" });
+    // The failed run never reached the notify stage.
+    expect(diffAndNotifyActivitiesMock).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 # Milestone 26: Loading Feedback & Sync Visibility
 
-**Status:** Open.
+**Status:** Open. Phase 1 delivered (sync-state primitive + Wallet/Activity
+surfaces); Phases 2 and 3 remain.
 
 ## Goal
 
@@ -19,14 +20,15 @@ On a cold start, the splash fades cleanly and the Wallet screen renders fast,
 but the app is unresponsive for roughly 3 seconds afterwards. Nothing on
 screen indicates that work is happening. The hidden work is
 `useAppStore.refreshWallet` (defined at
-[`app/store/useAppStore.ts:1225`](../app/store/useAppStore.ts)), kicked off
-by [`WalletScreen.tsx:179-184`](../app/screens/WalletScreen.tsx) on mount.
+[`app/store/useAppStore.ts`](../app/store/useAppStore.ts)), kicked off
+by [`WalletScreen.tsx`](../app/screens/WalletScreen.tsx) on mount.
 That refresh chains:
 
-1. `refreshWalletSnapshot` — VTXOs, balances, server snapshot.
+1. `refreshWalletSnapshot` — VTXOs, balances, and the expensive
+   `getActivityHistory` pass (timestamp resolution, decomposition).
 2. `maybeEnsureLightning` — opens Lightning subsystems if needed.
-3. `buildActivities` (in `app/services/arkade/activity-history.ts`, ~1174 LOC)
-   — timestamp resolution, commitment decomposition, asset classification.
+3. `buildActivities` (local helper in `useAppStore.ts`) — merges
+   Lightning and swap activity sources.
 4. `diffAndNotifyActivities` — emits user-visible notifications for new rows.
 
 Each stage is awaited sequentially, but no in-flight signal is exposed to the
@@ -45,9 +47,10 @@ piece of state.
 - **Send / Receive:** flows work, but transitions are flat. No motion that
   conveys "the app heard you and is working on it" beyond the standard
   `Button` press animation.
-- **Backup / support-bundle export:** uses generic `LoadingOverlay` with a
-  spinner and static label. Operations take seconds; the overlay does not
-  reflect progress.
+- **Backup / support-bundle export:** Backup uses `LoadingOverlay` with
+  dynamic labels driven by `exportPhase`, but the layout remains generic.
+  Support-bundle generation uses button-level busy states with no stage
+  feedback. Both operations take seconds without reflecting progress.
 - **Pull-to-refresh** on Wallet and Activity already shows the native
   `RefreshControl` indicator, so that path is fine. The gap is everywhere a
   refresh is *automatic*.
@@ -73,7 +76,7 @@ piece of state.
 Three phases, ordered by urgency. Each phase is self-contained and can ship
 independently. Phase 1 is the driver and should land first.
 
-### Phase 1 — Sync-state primitive + Wallet/Activity surfaces
+### Phase 1 — Sync-state primitive + Wallet/Activity surfaces ✅ Delivered
 
 Add a single source of truth for "is the wallet syncing" on the store, then
 surface it on Wallet and Activity.
@@ -84,9 +87,9 @@ In [`app/store/types.ts`](../app/store/types.ts):
 
 ```ts
 export type SyncStage =
-  | "snapshot"   // refreshWalletSnapshot — VTXOs, balances, server info
+  | "snapshot"   // refreshWalletSnapshot — VTXOs, balances, and history
   | "lightning"  // maybeEnsureLightning — opening Lightning subsystems
-  | "activities" // buildActivities — timestamps + decomposition
+  | "activities" // buildActivities — local merge of activity sources
   | "notify";    // diffAndNotifyActivities — emitting notifications
 
 export type SyncState =
@@ -96,14 +99,13 @@ export type SyncState =
 
 In [`app/store/useAppStore.ts`](../app/store/useAppStore.ts):
 
-- Add `_syncState: SyncState` to `AppState`, default `{ kind: "idle" }`.
+- Add `_syncState: SyncState` to `StoreState` (beside `_hydrated`), default `{ kind: "idle" }`.
 - Do **not** persist `_syncState` — it is lifecycle metadata, same treatment
   as `_hydrated` and `_schemaMismatch`. Strip it from the persisted payload
   in `persist()`.
 - Wrap each `await` in `refreshWallet`'s inner sequence with
   `set({ _syncState: { kind: "syncing", stage, startedAt } })` before, and
-  reset to `{ kind: "idle" }` in the outer `.finally()` (next to the existing
-  `refreshInFlight = null`).
+  reset to `{ kind: "idle" }` in the outer `.finally()`.
 - The re-entrant pattern (`refreshPending` loop) keeps the state as
   `syncing` across consecutive runs, only flipping to `idle` once the
   outer promise settles. That is correct: the user sees "syncing" until
@@ -114,48 +116,58 @@ In [`app/store/useAppStore.ts`](../app/store/useAppStore.ts):
 In [`app/screens/WalletScreen.tsx`](../app/screens/WalletScreen.tsx):
 
 - Subscribe to `_syncState` via `useAppStore`.
-- Render a small "Syncing…" pill near the balance card title when
-  `_syncState.kind === "syncing"`. Pill should fade in/out (250ms) and use
-  `theme.colors.surfaceSubtle` background + `theme.colors.textMuted` label.
-- Optionally swap the pill label per stage: "Syncing balance", "Syncing
-  activity", "Notifying" — but only if all four labels test well; otherwise
-  collapse to a single "Syncing…".
+- Render a `SyncPill` near the balance card title (absolute positioned or
+  flex-row with the title) when `_syncState.kind === "syncing"`.
+- Pill should fade in/out (250ms) and use `theme.colors.surfaceSubtle`
+  background + `theme.colors.textMuted` label.
+- Label can be static "Syncing…" or dynamic based on `stage`. Dynamic
+  is preferred for accessibility.
 
 #### Activity surface
 
 In [`app/screens/ActivityScreen.tsx`](../app/screens/ActivityScreen.tsx):
 
-- When `_syncState.stage === "activities"` and the list is empty, render
+- When `_syncState.kind === "syncing"` and the list is empty, render
   3–5 skeleton rows (use the existing `Skeleton` component from
   `app/components/Skeleton.tsx`).
-- When the list is non-empty, render the same "Syncing…" pill as Wallet,
-  pinned to the header.
+- When the list is non-empty, render the same `SyncPill` as Wallet,
+  pinned to the header or as a header component in the `FlatList`.
 
 ### Phase 2 — Send & Receive motion polish
 
 Discretionary; lands after Phase 1.
 
-- Subtle entrance animation on the SendReview screen when fee preview arrives
-  (slide-up + opacity, 200ms).
-- Receive QR screen: a soft pulse on the QR border while the underlying
-  invoice is being generated (Boltz hold invoice creation can take 1-3s).
-- SendResult screen success animation: scale the success icon in with a
-  slight bounce (already partially done — verify and tune).
-- Constraint: no animation may delay tap response. All animations must be
+- **SendReview fee entrance** ([`app/screens/send/SendReviewScreen.tsx`](../app/screens/send/SendReviewScreen.tsx)):
+  Apply a subtle entrance animation (slide-up + opacity, 200ms) to the fee and
+  total rows when their respective loading states (`lightningFeeLoading`,
+  `onchainFeeLoading`, `chainSwapLoading`) flip from `true` to `false`.
+- **Receive QR pulse** ([`app/screens/receive/ReceiveQRScreen.tsx`](../app/screens/receive/ReceiveQRScreen.tsx)):
+  Replace the full-screen `lnurlPending` spinner with a soft pulse on the QR
+  placeholder border. For Boltz hold invoices (Lightning receive), add a pulse
+  to the QR card while the invoice is being generated and the swap status is
+  not yet `pending`.
+- **SendResult icon tuning** ([`app/screens/send/SendResultScreen.tsx`](../app/screens/send/SendResultScreen.tsx)):
+  Enhance the existing spring animation (`scale 0.7 -> 1`) with a slight overshoot
+  and a simultaneous opacity fade. Ensure `Haptics` trigger exactly at the
+  peak of the scale.
+- **Constraint:** no animation may delay tap response. All animations must be
   decorative, running on the UI thread via Reanimated.
 
 ### Phase 3 — Expressive loaders for long-running ops
 
 Replace flat overlays with motion-forward loaders.
 
-- **Backup export** (`app/screens/ProfileBackup.tsx`): swap the generic
-  spinner for an animated icon (e.g., a slowly rotating Lock or
-  ShieldCheck from `lucide-react-native`) plus rotating label copy
-  ("Encrypting…", "Packing…", "Ready").
-- **Support-bundle export** (`app/services/diagnostics/…`): same pattern
-  with a FileText icon.
+- **Backup export progress** ([`app/screens/ProfileBackup.tsx`](../app/screens/ProfileBackup.tsx)):
+  The screen already handles `exportPhase` labels; transition the UI to a
+  localized animation in the backup card while phasing out `LoadingOverlay`. The loader should cycle through labels based on `exportPhase`:
+  "Encrypting…", "Saving to device…", "Opening share sheet…". Use an animated
+  `ShieldCheck` from `lucide-react-native`.
+- **Support-bundle progress** ([`app/services/diagnostics/bundle.ts`](../app/services/diagnostics/bundle.ts)):
+  Refactor `buildSupportBundle` to accept a progress callback. Update the
+  UI to show granular stages: "Collecting logs…", "Exporting database…",
+  "Compressing…".
 - The label rotation should be driven by real lifecycle hooks where they
-  exist, not a fake timer. If the export does not expose hooks, fall back
+  exist, not a fake timer. If the operation does not expose hooks, fall back
   to a single honest label.
 
 ## Implementation Plan (Phase 1 only)
@@ -167,28 +179,38 @@ Phases 2 and 3 will get their own implementation plans when prioritized.
 - Update [`app/store/types.ts`](../app/store/types.ts) to add `SyncStage`
   and `SyncState`.
 - Update [`app/store/useAppStore.ts`](../app/store/useAppStore.ts):
-  - Add `_syncState: SyncState` to `AppState`.
+  - Add `_syncState: SyncState` to `StoreState` (beside `_hydrated`).
   - Initialize with `{ kind: "idle" }` in the default state.
-  - In `refreshWallet`, wrap each stage with the appropriate
-    `set({ _syncState: { kind: "syncing", stage, startedAt: Date.now() } })`
-    before the `await`.
-  - Reset to `{ kind: "idle" }` in the `.finally()` block at line 1291.
-  - Exclude `_syncState` from `persist()` (already excludes `_hydrated`,
-    `_schemaMismatch` — follow the same pattern).
+  - In `refreshWalletOnce`, wrap `refreshWalletSnapshot` with stage `"snapshot"`.
+  - Wrap `maybeEnsureLightning` with stage `"lightning"`.
+  - Wrap `buildActivities` with stage `"activities"`.
+  - In the outer `refreshInFlight` block, wrap `diffAndNotifyActivities` with
+    stage `"notify"`.
+  - Reset to `{ kind: "idle" }` in the `.finally()` block.
+  - Exclude `_syncState` from `persist()` (follow the `_hydrated` pattern).
+- **Unit Testing:** Add a test case to `app/store/__tests__/useAppStore.test.ts`.
+  Mock imported dependencies (`refreshWalletSnapshot`, `ensureLightning`,
+  `isLightningSupportedForNetwork`, `getLightningActivitySources`,
+  `mergeActivities`, and `diffAndNotifyActivities`) and verify that `_syncState`
+  correctly transitions through all stages and returns to `idle`.
 
 ### 2. Wallet surface
 
-- Add a `SyncPill` component (local to `WalletScreen.tsx` for now; promote
-  to `app/components/` only if a third surface adopts it).
+- Add a `SyncPill` component.
 - Subscribe to `useAppStore((s) => s._syncState)`.
-- Render above or beside the balance card title; fade in/out via
+- Render in the balance card near the wallet label; fade in/out via
   Reanimated `withTiming(opacity, { duration: 250 })`.
+- **Accessibility:** Ensure the pill uses `accessibilityLiveRegion="polite"` and
+  provides a clear `accessibilityLabel` mapping the `stage` to user-facing text.
 
 ### 3. Activity surface
 
-- Reuse the `SyncPill`.
-- Render 3–5 `Skeleton` rows when the list is empty and
-  `_syncState.stage === "activities"`.
+- Reuse the `SyncPill` as a floating indicator or header item.
+- Render 3–5 `Skeleton` rows when the list is empty, `_syncState.kind === "syncing"`,
+  and `!refreshing` (to avoid overlap with native Pull-to-Refresh).
+- **Skeleton Layout:** Each skeleton row should approximate the height and
+  internal layout of `ActivityRow.tsx` (avatar placeholder + two-line text
+  placeholders) to provide a smooth transition when real data arrives.
 
 ### 4. Verification
 
@@ -198,14 +220,11 @@ Phases 2 and 3 will get their own implementation plans when prioritized.
   - Sync pill appears within ~100ms of Wallet mount.
   - Pill stays for the duration of the refresh (~3s on the test wallet)
     and disappears when refresh settles.
-  - Pulling to refresh from the Wallet header still works — the pill should
-    *not* fight the `RefreshControl`. Decide: hide the pill while
-    `RefreshControl.refreshing` is true, or let both coexist. Pick one and
-    document it.
+  - Pulling to refresh from the Wallet header still works — hide the pill
+    while `RefreshControl.refreshing` is true to avoid double indicators.
 - Activity-screen cold open on a wallet with empty cached activities:
   - Skeleton rows render immediately.
-  - Replaced by real rows when `_syncState.stage` advances past
-    `"activities"`.
+  - Replaced by real rows when `_syncState.kind` flips to `"idle"`.
 
 ## Out of Scope
 

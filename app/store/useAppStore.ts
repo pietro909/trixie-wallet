@@ -158,6 +158,8 @@ import type {
   LightningResumeState,
   LightningResumeTrigger,
   NotificationPreferences,
+  SyncStage,
+  SyncState,
   ThemePref,
   WalletBehavior,
 } from "./types";
@@ -390,6 +392,13 @@ type StoreState = AppState & {
    * not run against the empty in-memory defaults.
    */
   _schemaMismatch: boolean;
+  /**
+   * In-flight signal for `refreshWallet`. `{ kind: "idle" }` when no refresh is
+   * running; `{ kind: "syncing", stage, startedAt }` for the duration of the
+   * (re-entrant) refresh loop. Lifecycle metadata — not persisted, same as
+   * `_hydrated` / `_schemaMismatch`.
+   */
+  _syncState: SyncState;
   /** Per-row spinner gate, keyed by `RecoveryItem.id`. */
   recoveringIds: Set<string>;
   /** Per-row error display, keyed by `RecoveryItem.id`. */
@@ -901,6 +910,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
   ...DEFAULT_STATE,
   _hydrated: false,
   _schemaMismatch: false,
+  _syncState: { kind: "idle" },
   recoveringIds: new Set<string>(),
   rowErrors: {},
 
@@ -1228,13 +1238,23 @@ export const useAppStore = create<StoreState>((set, get) => ({
       return refreshInFlight;
     }
 
+    // Captured once so the syncing session has a stable origin across the
+    // re-entrant `refreshPending` loop — the UI sees one continuous "syncing"
+    // window, not a new one per queued run.
+    const startedAt = Date.now();
+    const markStage = (stage: SyncStage) => {
+      set({ _syncState: { kind: "syncing", stage, startedAt } });
+    };
+
     const refreshWalletOnce = async () => {
       const metadata = get().wallet;
       if (!metadata) return;
+      markStage("snapshot");
       const snapshot = await refreshWalletSnapshot(
         metadata,
         get().walletBehavior,
       );
+      markStage("lightning");
       await maybeEnsureLightning(
         metadata,
         get().walletBehavior,
@@ -1249,6 +1269,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
       // information the SwapManager hasn't already saved. The resume path keeps
       // an explicit `refreshSwapsStatus()` because at resume time the WS may
       // not yet be connected.
+      markStage("activities");
       const activities = await buildActivities(
         metadata.id,
         snapshot.activities,
@@ -1275,6 +1296,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
 
       const wallet = get().wallet;
       if (wallet && !lastError) {
+        markStage("notify");
         await diffAndNotifyActivities(
           wallet.id,
           baselineActivities,
@@ -1290,6 +1312,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
       if (lastError) throw lastError;
     })().finally(() => {
       refreshInFlight = null;
+      set({ _syncState: { kind: "idle" } });
     });
 
     return refreshInFlight;
