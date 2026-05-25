@@ -23,10 +23,10 @@ import { scheduleLocalNotification } from "../notifications";
 import { decideNotification } from "../notifications/policy";
 import { buildIdentityFromSecret } from "./identity";
 import { isMainnetForNetworkName } from "./network";
-import { markSwapsAsNotifiedBulk, recordSwapMetadata } from "./swap-storage";
-import { isTerminalSwapStatus } from "./swap-mappers";
 import { readSecret } from "./secret-store";
 import { getSharedSqlExecutor } from "./storage";
+import { isTerminalSwapStatus } from "./swap-mappers";
+import { markSwapsAsNotifiedBulk } from "./swap-storage";
 
 export const SWAP_BACKGROUND_TASK_NAME = "trixie-boltz-swap-poll";
 const SWAP_BACKGROUND_INTERVAL_MINUTES = 15;
@@ -227,7 +227,7 @@ function newTaskId(): string {
   return `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 }
 
-async function markRecentlySettledSwapsAsNotified(walletId: string) {
+async function markRecentlySettledSwapsAsNotified(_walletId: string) {
   const repo = createSwapRepository();
   const swaps = await repo.getAllSwaps();
   const terminalIds = swaps

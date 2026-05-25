@@ -1,5 +1,5 @@
-import type { Activity } from "../../store/types";
 import { toastEmitter } from "../../services/toast-emitter";
+import type { Activity } from "../../store/types";
 import { clearNotifyState, diffAndNotifyActivities } from "../notify-diff";
 
 jest.mock("../../services/notifications", () => ({
@@ -13,7 +13,7 @@ jest.mock("../../services/notifications", () => ({
       category: "swaps" | "payments",
       snapshot?: { payments: boolean; swaps: boolean } | null,
     ) => {
-      if (snapshot !== undefined) return snapshot != null && snapshot[category];
+      if (snapshot !== undefined) return snapshot?.[category] ?? false;
       return true;
     },
   ),

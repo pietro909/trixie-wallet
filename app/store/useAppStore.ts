@@ -134,10 +134,6 @@ import {
 } from "../services/diagnostics/persisted";
 import { recordError } from "../services/diagnostics/recorder";
 import {
-  clearNotifyState,
-  diffAndNotifyActivities,
-} from "./notify-diff";
-import {
   isBitcoinAddressForNetwork,
   networkNameOrNull,
 } from "../services/paymentParser";
@@ -145,6 +141,7 @@ import {
   auditBalanceIntegrity,
   computePendingTotals,
 } from "../services/wallet-balance";
+import { clearNotifyState, diffAndNotifyActivities } from "./notify-diff";
 import { LEGACY_STORAGE_KEYS, STORAGE_KEY } from "./storage-keys";
 import type {
   Activity,

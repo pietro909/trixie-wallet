@@ -175,7 +175,11 @@ export async function recordSwapMetadata(
       input.invoiceAmountSats ?? null,
       input.arkadeAmountSats ?? null,
       input.paymentHash ?? null,
-      input.backgroundNotified != null ? (input.backgroundNotified ? 1 : 0) : null,
+      input.backgroundNotified != null
+        ? input.backgroundNotified
+          ? 1
+          : 0
+        : null,
       input.restoredAt ?? null,
       now,
       now,

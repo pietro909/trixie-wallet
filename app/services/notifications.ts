@@ -158,11 +158,11 @@ export async function shouldNotify(
   category: "swaps" | "payments",
   snapshot?: NotificationPrefsSnapshot,
 ) {
-  if (snapshot !== undefined) return snapshot != null && snapshot[category];
+  if (snapshot !== undefined) return snapshot?.[category] ?? false;
   // Match the store-side opt-in default: only notify when the user has
   // explicitly enabled notifications AND the category is on. Missing prefs,
   // missing storage, or a parse error all collapse to "no", because we
   // never want to surface notifications the user did not consent to.
   const prefs = await fetchNotificationPrefs();
-  return prefs != null && prefs[category];
+  return prefs?.[category] ?? false;
 }
