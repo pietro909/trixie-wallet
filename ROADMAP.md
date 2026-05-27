@@ -63,6 +63,8 @@ Last updated: 2026-05-25 (Milestone 25 delivered; Milestone 26: Loading Feedback
   - Replace placeholder Expo scaffold assets with production-quality branded images: app icon, Android adaptive icon layers, monochrome notification icon, and splash screen logo.
 - [ ] Milestone 26: Loading Feedback & Sync Visibility ([docs/MILESTONE_26.agents.md](./docs/MILESTONE_26.agents.md))
   - Surface in-flight refresh state on Wallet and Activity (driver: ~3s cold-start gap), then a motion-polish pass on send/receive, then expressive loaders for backup and support-bundle export.
+- [ ] Milestone 27: Localization & Internationalization (i18n) ([docs/MILESTONE_27.agents.md](./docs/MILESTONE_27.agents.md))
+  - Remove hardcoded English strings, introduce a robust localization framework (i18next + expo-localization), and ensure locale-aware number/date formatting throughout the app.
 
 ## Relevant Documentation
 
