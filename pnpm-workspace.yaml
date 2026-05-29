@@ -1,3 +1,5 @@
+allowBuilds:
+  msgpackr-extract: true
 minimumReleaseAgeExclude:
   - '@arkade-os/*'
 peerDependencyRules:

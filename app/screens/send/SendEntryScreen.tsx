@@ -367,7 +367,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   reticleWrap: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -386,7 +386,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 4,
   },
   scannerLoading: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0,0,0,0.35)",
     alignItems: "center",
     justifyContent: "center",

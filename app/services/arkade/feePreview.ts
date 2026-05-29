@@ -52,6 +52,7 @@ function decodeDestinationScript(
   for (const name of ordered) {
     try {
       const addr = Address(networks[name]).decode(destinationAddress);
+      if (!addr) continue;
       return hex.encode(OutScript.encode(addr));
     } catch {
       // try next
