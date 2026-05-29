@@ -212,9 +212,9 @@ async function countCachedAssetMetadata(): Promise<number> {
       k.startsWith("trixie:asset-metadata:"),
     );
     if (cacheKeys.length === 0) return 0;
-    const entries = await AsyncStorage.multiGet(cacheKeys);
+    const entries = await AsyncStorage.getMany(cacheKeys);
     let total = 0;
-    for (const [, raw] of entries) {
+    for (const raw of Object.values(entries)) {
       if (!raw) continue;
       try {
         const parsed = JSON.parse(raw);

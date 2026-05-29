@@ -10,7 +10,7 @@ import {
 } from "../bg-task-metrics";
 
 jest.mock("@react-native-async-storage/async-storage", () =>
-  require("@react-native-async-storage/async-storage/jest/async-storage-mock"),
+  require("@react-native-async-storage/async-storage/jest"),
 );
 
 const TASK = "test-task";

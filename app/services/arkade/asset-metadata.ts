@@ -143,7 +143,7 @@ export async function clearAssetMetadata(network?: string): Promise<void> {
   }
   const keys = await AsyncStorage.getAllKeys();
   const matches = keys.filter((k) => k.startsWith("trixie:asset-metadata:"));
-  if (matches.length > 0) await AsyncStorage.multiRemove(matches);
+  if (matches.length > 0) await AsyncStorage.removeMany(matches);
 }
 
 /**
