@@ -67,6 +67,9 @@
     "experiments": {
       "reactCompiler": true
     },
+    "autolinking": {
+      "exclude": ["@expo/dom-webview"]
+    },
     "extra": {
       "versions": {
         "sdk": "0.4.22",
