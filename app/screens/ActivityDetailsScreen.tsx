@@ -1,12 +1,15 @@
 import { type RouteProp, useRoute } from "@react-navigation/native";
+import * as Clipboard from "expo-clipboard";
+import * as Haptics from "expo-haptics";
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  Copy,
   FileQuestion,
   Repeat,
 } from "lucide-react-native";
 import type * as React from "react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import Button from "../components/Button";
 import CopyableField from "../components/CopyableField";
@@ -21,6 +24,7 @@ import {
   type Section,
   type SectionRow,
 } from "../services/activity-details/buildSections";
+import { collectSwapMetadataExport } from "../services/activity-details/swapMetadataExport";
 import { statusAmountColor, statusVisuals } from "../services/activity-status";
 import type { Activity } from "../store/types";
 import { useAppStore } from "../store/useAppStore";
@@ -121,6 +125,7 @@ export default function ActivityDetailsScreen() {
   const recoveringIds = useAppStore((s) => s.recoveringIds);
   const rowErrors = useAppStore((s) => s.rowErrors);
   const { showToast } = useToast();
+  const [copyingMetadata, setCopyingMetadata] = useState(false);
   const { format: formatSats, label: unitLabel } = useFormatSats();
   const assetIds = useMemo(
     () =>
@@ -218,6 +223,7 @@ export default function ActivityDetailsScreen() {
   const dirLabel = directionLabel(activity.direction);
   const rail = railLabel(activity.rail);
 
+  const isBoltzSwap = activity.source.type === "boltz_swap";
   const refundableChainSwap =
     activity.source.type === "boltz_swap" &&
     activity.source.swapType === "chain" &&
@@ -225,6 +231,26 @@ export default function ActivityDetailsScreen() {
   const refunding = recoveryRowId != null && recoveringIds.has(recoveryRowId);
   const refundError =
     recoveryRowId != null ? rowErrors[recoveryRowId] : undefined;
+  async function handleCopyMetadata() {
+    // Re-narrow inside this hoisted closure — the `!activity` early return
+    // above does not flow into it.
+    if (!activity) return;
+    setCopyingMetadata(true);
+    try {
+      const data = await collectSwapMetadataExport(activity);
+      if (!data) {
+        showToast("No swap metadata to copy", "error");
+        return;
+      }
+      await Clipboard.setStringAsync(JSON.stringify(data, null, 2));
+      Haptics.selectionAsync().catch(() => {});
+      showToast("Swap metadata copied", "success");
+    } catch {
+      showToast("Could not copy metadata", "error");
+    } finally {
+      setCopyingMetadata(false);
+    }
+  }
   function handleRefund() {
     if (!chainSwapId) return;
     Alert.alert(
@@ -329,6 +355,29 @@ export default function ActivityDetailsScreen() {
           ) : null}
         </View>
       ) : null}
+
+      {isBoltzSwap ? (
+        <View style={styles.copyMetaCard}>
+          <Button
+            label="Copy metadata"
+            theme={theme}
+            variant="secondary"
+            loading={copyingMetadata}
+            disabled={copyingMetadata}
+            icon={<Copy color={theme.colors.text} size={18} />}
+            accessibilityLabel="Copy swap metadata as JSON"
+            onPress={() => {
+              void handleCopyMetadata();
+            }}
+          />
+          <Text
+            style={[styles.copyMetaHint, { color: theme.colors.textSubtle }]}
+          >
+            Copies all data for this swap as JSON, including secrets like the
+            preimage. Share only with people you trust.
+          </Text>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -349,6 +398,15 @@ const styles = StyleSheet.create({
   refundError: {
     fontSize: typography.size.xs,
     lineHeight: typography.size.xs * 1.4,
+  },
+  copyMetaCard: {
+    marginTop: spacing[4],
+    gap: spacing[2],
+  },
+  copyMetaHint: {
+    fontSize: typography.size.xs,
+    lineHeight: typography.size.xs * 1.4,
+    textAlign: "center",
   },
   summary: {
     padding: spacing[6],

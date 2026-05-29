@@ -434,6 +434,26 @@ export async function restoreBoltzSwaps(swaps: BoltzSwap[]): Promise<void> {
 }
 
 /**
+ * Returns the full Boltz swap object for `swapId` from the local repository,
+ * or null when no row matches. Reads through a fresh repository handle (like
+ * `snapshotBoltzSwaps`) so it works even when the Lightning service has not
+ * been initialized this session.
+ *
+ * WARNING: the returned object carries secret material — the proof-of-payment
+ * `preimage` and the raw Boltz request/response — that is deliberately kept
+ * out of `Activity.metadata` (see `swap-mappers.ts`). Treat the result as
+ * sensitive; it is only assembled for the manual "Copy metadata" support
+ * action on the Activity detail screen.
+ */
+export async function getBoltzSwapById(
+  swapId: string,
+): Promise<BoltzSwap | null> {
+  const repo = createSwapRepository();
+  const all = await repo.getAllSwaps();
+  return all.find((s) => s.id === swapId) ?? null;
+}
+
+/**
  * Returns the timestamp of the most recent Boltz swap row, in milliseconds
  * since epoch. Null when no rows exist.
  *
