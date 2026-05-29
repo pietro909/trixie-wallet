@@ -6,7 +6,7 @@ Self-custodial Arkade wallet for iOS and Android, built with Expo. See [ROADMAP.
 
 ## Stack
 
-Expo SDK 55 · React Native 0.83 · React 19.2 · TypeScript 6 · pnpm 10 · Biome 2.
+Expo SDK 56 · React Native 0.85 · React 19.2 · TypeScript 6 · pnpm 10 · Biome 2.
 
 iOS and Android only — no web target.
 

@@ -37,7 +37,7 @@ Tests live under `app/services/arkade/__tests__/` (Jest via `jest-expo`). Servic
 
 ## Architecture
 
-**Expo SDK 55 + React Native 0.83 + React 19.2** native app, **iOS and Android only** (no web target).
+**Expo SDK 56 + React Native 0.85 + React 19.2** native app, **iOS and Android only** (no web target).
 
 ### Entry point
 
@@ -51,7 +51,7 @@ The active entry is `index.ts` → `App.tsx`, which mounts:
         <RootStack />
 ```
 
-> **Known oddity:** `app/_layout.tsx` exists from the Expo Router scaffolding but is unreachable — `package.json` `main` points at `./index.ts`, not Expo Router's auto-entry. Tracked in [ISSUES.md](./ISSUES.md).
+> **Note:** The entry point is `index.ts` → `App.tsx`. Expo Router was removed in the SDK 56 upgrade — the project routes via `@react-navigation/native-stack` directly.
 
 ### Navigation
 
@@ -99,7 +99,7 @@ Expo's file suffix convention is available for platform overrides (`.ios.tsx`, `
 ### Key dependencies
 
 - `zustand` — state management
-- `@react-native-async-storage/async-storage` (v2.x — Expo SDK 55 expects 2.2.0; do **not** bump to v3 until SDK catches up)
+- `@react-native-async-storage/async-storage` (v3.x — upgraded alongside SDK 56; use `getMany`/`setMany`/`removeMany` not the old `multi*` API)
 - `@expo-google-fonts/inter` — typography
 - `react-native-reanimated` — animations
 - `react-native-gesture-handler` — gesture recognition
