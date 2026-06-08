@@ -2,7 +2,7 @@
 
 Open items and follow-ups that do not yet belong to a milestone. If an issue grows into a scoped implementation effort, move it into a dedicated milestone doc under `docs/`.
 
-Last updated: 2026-05-27
+Last updated: 2026-06-01
 
 Resolved scoped efforts move under `docs/` with a `# RESOLVED` prefix — see [docs/ISSUE_PUSH_NOTIFICATIONS_SEMANTIC.md](./docs/ISSUE_PUSH_NOTIFICATIONS_SEMANTIC.md) for the former Issue 1 (notification classification and copy).
 
@@ -127,4 +127,27 @@ The app persists the wallet's compressed public key as `wallet.publicKeyHex`, bu
 - No schema change is required if the x-only key is computed at render time.
 - The smallest useful UI change is to extend the existing `ProfileBackup` Identifiers section with `Public key (x-only)`.
 - A stronger debugging-oriented change is to also add a wallet identity block to `AdvancedScreen`, near the existing server details and support bundle controls.
+
+## Issue 8: Handle Swaps From Legacy Boltz Endpoint
+
+### Summary
+Some historical Arkade swaps were created against the legacy Boltz endpoint `https://api.ark.boltz.exchange`. The wallet must continue to identify, restore, classify, and recover those swaps even though new mainnet swap traffic should use the primary Boltz endpoint `https://api.boltz.exchange`.
+
+### Current Behavior
+- Newer mainnet swaps are expected to live on the primary Boltz endpoint.
+- Older swaps may only be known by the legacy Arkade-specific endpoint.
+- A restored legacy chain swap can appear expired/refundable in local recovery state, but the actual refund may still fail if the corresponding Arkade VHTLC is not found or if required refund material is incomplete.
+- Users can see confusing recovery rows unless the UI clearly distinguishes actionable legacy swaps from support-only historical records.
+
+### Expected Behavior
+- Swap restore and status refresh should check the primary endpoint first, then fall back to the legacy endpoint only for swap-not-found responses.
+- Recovery should show a refund action for a legacy swap only when:
+  - the legacy endpoint knows the swap,
+  - local refund material is complete,
+  - the reconstructed Arkade VHTLC exists and is unspent.
+- If any of those checks fail, Recovery should not show a runnable refund button and should offer a support bundle instead.
+- Activity Details should use the same readiness checks as Profile -> Recovery so both surfaces agree.
+
+### Notes
+This is related to Issue 5, but tracks the user-visible legacy-swap recovery behavior specifically: old Boltz records are not enough by themselves to prove that an Arkade refund is possible. The wallet must prove there is an unspent local VHTLC before presenting a refund action.
 

@@ -1,4 +1,4 @@
-import { Transaction, type ExtendedVirtualCoin } from "@arkade-os/sdk";
+import { type ExtendedVirtualCoin, Transaction } from "@arkade-os/sdk";
 import { base64 } from "@scure/base";
 import { ArkadeError, toArkadeError } from "./errors";
 import { getWallet } from "./runtime";

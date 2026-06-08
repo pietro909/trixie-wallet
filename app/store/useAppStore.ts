@@ -1955,8 +1955,17 @@ export const useAppStore = create<StoreState>((set, get) => ({
             break;
           }
           try {
-            await refundChainSwapById(swapId);
-            actedSuccessfully = true;
+            const outcome = await refundChainSwapById(swapId);
+            if (outcome.swept > 0) {
+              actedSuccessfully = true;
+            } else if (outcome.skipped > 0) {
+              rowError = { type: "deferred_locktime" };
+            } else {
+              rowError = {
+                type: "message",
+                message: "Nothing was swept; scan again later.",
+              };
+            }
           } catch (e) {
             recordError(
               "swap",

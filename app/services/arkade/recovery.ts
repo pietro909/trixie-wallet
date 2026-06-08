@@ -14,10 +14,13 @@ import type { Activity, ArkadeWalletMetadata } from "../../store/types";
 import { recordError } from "../diagnostics/recorder";
 import { toArkadeError } from "./errors";
 import {
+  canAttemptArkChainRefund,
   getLightning,
   getLightningActivitySources,
+  inspectArkChainRefundVhtlc,
   isLightningSupportedForNetwork,
   refreshSwapsStatus,
+  resolveChainSwapRecoveryEndpoint,
 } from "./lightning";
 import { discoverPendingTxs, type PendingTx } from "./pending-tx-recovery";
 import type { LocalSwapMetadata } from "./swap-storage";
@@ -66,6 +69,10 @@ export type RecoveryItem = {
   /** Pending-finalize rows only. */
   checkpointCount?: number;
   restoredAt?: number | null;
+  endpointSource?: "primary" | "legacy";
+  endpointState?: "resolved" | "not_found" | "unknown";
+  materialState?: "complete" | "incomplete";
+  vhtlcState?: "unspent" | "not_found" | "spent" | "unknown";
   linkState: RecoveryLinkState;
   /**
    * Ordered list of actions; the first entry drives the primary button on
@@ -148,6 +155,19 @@ function submarineTitle(
 function chainTitle(swap: BoltzChainSwap, refundable: boolean): string {
   if (refundable) return "Bitcoin send — refund available";
   return `Bitcoin send (${swap.status})`;
+}
+
+function sortRecoveryItems(items: RecoveryItem[]): void {
+  const severityRank: Record<RecoverySeverity, number> = {
+    actionable: 0,
+    attention: 1,
+    info: 2,
+  };
+  items.sort((a, b) => {
+    const s = severityRank[a.severity] - severityRank[b.severity];
+    if (s !== 0) return s;
+    return b.createdAt - a.createdAt;
+  });
 }
 
 function isArkToBtcChain(swap: BoltzChainSwap): boolean {
@@ -367,16 +387,7 @@ export function classifyRecovery(input: ClassifyInput): RecoveryScan {
   }
 
   // Stable sort: actionable first (newest), then attention, then info.
-  const severityRank: Record<RecoverySeverity, number> = {
-    actionable: 0,
-    attention: 1,
-    info: 2,
-  };
-  items.sort((a, b) => {
-    const s = severityRank[a.severity] - severityRank[b.severity];
-    if (s !== 0) return s;
-    return b.createdAt - a.createdAt;
-  });
+  sortRecoveryItems(items);
 
   return {
     scannedAt: Date.now(),
@@ -384,6 +395,135 @@ export function classifyRecovery(input: ClassifyInput): RecoveryScan {
     counts,
     manager: input.manager,
   };
+}
+
+function supportOnlyChainItem(
+  item: RecoveryItem,
+  detail: string,
+): RecoveryItem {
+  return {
+    ...item,
+    severity: "attention",
+    actions: ["support_bundle"],
+    detail,
+  };
+}
+
+export async function enrichChainRecoveryItems(
+  scan: RecoveryScan,
+  swaps: BoltzSwap[],
+): Promise<RecoveryScan> {
+  const byId = new Map<string, BoltzChainSwap>();
+  for (const swap of swaps) {
+    if (swap.type === "chain") byId.set(swap.id, swap);
+  }
+
+  const counts = { ...scan.counts };
+  const items: RecoveryItem[] = [];
+  for (const item of scan.items) {
+    if (
+      item.type !== "chain" ||
+      !item.swapId ||
+      !item.actions.includes("refund_chain_ark")
+    ) {
+      items.push(item);
+      continue;
+    }
+
+    const short = shortId(item.swapId);
+    const swap = byId.get(item.swapId);
+    if (!swap) {
+      bumpCount(counts, "chain.material.incomplete");
+      items.push({
+        ...supportOnlyChainItem(
+          item,
+          `Swap ${short} expired, but local refund details are incomplete`,
+        ),
+        materialState: "incomplete",
+      });
+      continue;
+    }
+
+    const materialComplete = canAttemptArkChainRefund(swap);
+    bumpCount(
+      counts,
+      materialComplete
+        ? "chain.material.complete"
+        : "chain.material.incomplete",
+    );
+    if (!materialComplete) {
+      items.push({
+        ...supportOnlyChainItem(
+          item,
+          `Swap ${short} expired, but local refund details are incomplete`,
+        ),
+        materialState: "incomplete",
+      });
+      continue;
+    }
+
+    const endpoint = await resolveChainSwapRecoveryEndpoint(item.swapId);
+    if (endpoint.kind === "not_found") {
+      bumpCount(counts, "chain.endpoint.not_found");
+      items.push({
+        ...supportOnlyChainItem(
+          item,
+          `Swap ${short} is not known by the configured Boltz endpoints`,
+        ),
+        endpointState: "not_found",
+        materialState: "complete",
+      });
+      continue;
+    }
+    if (endpoint.kind === "unknown") {
+      bumpCount(counts, "chain.endpoint.unknown");
+      items.push({
+        ...supportOnlyChainItem(
+          item,
+          `Swap ${short} could not be verified with Boltz`,
+        ),
+        endpointState: "unknown",
+        materialState: "complete",
+      });
+      continue;
+    }
+    bumpCount(counts, `chain.endpoint.${endpoint.source}`);
+
+    const vhtlc = await inspectArkChainRefundVhtlc(swap);
+    if (vhtlc.kind !== "unspent") {
+      bumpCount(counts, `chain.vhtlc.${vhtlc.kind}`);
+      let detail = `Swap ${short} could not be verified locally`;
+      if (vhtlc.kind === "not_found") {
+        detail = `Swap ${short} expired, but no refundable Arkade VHTLC was found`;
+      } else if (vhtlc.kind === "spent") {
+        detail = `Swap ${short} expired, but the Arkade VHTLC is already spent`;
+      }
+      items.push({
+        ...supportOnlyChainItem(item, detail),
+        endpointSource: endpoint.source,
+        endpointState: "resolved",
+        materialState: "complete",
+        vhtlcState: vhtlc.kind,
+      });
+      continue;
+    }
+
+    bumpCount(counts, "chain.vhtlc.unspent");
+    items.push({
+      ...item,
+      detail:
+        endpoint.source === "legacy"
+          ? `${item.detail} - legacy endpoint`
+          : item.detail,
+      endpointSource: endpoint.source,
+      endpointState: "resolved",
+      materialState: "complete",
+      vhtlcState: "unspent",
+    });
+  }
+
+  sortRecoveryItems(items);
+  return { ...scan, items, counts };
 }
 
 async function readManagerStats(): Promise<RecoveryManagerStats | undefined> {
@@ -492,7 +632,7 @@ export async function scanRecoveryState(
     readManagerStats(),
   ]);
 
-  return classifyRecovery({
+  const scan = classifyRecovery({
     walletId: metadata.id,
     swaps: sources.swaps,
     metadata: sources.metadata,
@@ -501,6 +641,7 @@ export async function scanRecoveryState(
     activities,
     manager,
   });
+  return enrichChainRecoveryItems(scan, sources.swaps);
 }
 
 /**
@@ -516,7 +657,7 @@ export async function lookupSubmarineRecovery(
       type: "submarine",
     });
     const target = all.find((s) => s.id === swapId);
-    if (!target || target.type !== "submarine") return null;
+    if (target?.type !== "submarine") return null;
     const info = await lightning.inspectSubmarineRecovery(target);
     return { swap: target, info };
   } catch (e) {

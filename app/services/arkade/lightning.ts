@@ -1,11 +1,10 @@
 import {
-  type ArkadeSwaps,
+  ArkadeSwaps,
   type ArkToBtcResponse,
   type BoltzChainSwap,
   type BoltzReverseSwap,
   type BoltzSubmarineSwap,
   type BoltzSwap,
-  BoltzSwapProvider,
   type ChainFeesResponse,
   type CreateLightningInvoiceRequest,
   type CreateLightningInvoiceResponse,
@@ -19,15 +18,29 @@ import {
   type LimitsResponse,
   type SendLightningPaymentRequest,
   type SendLightningPaymentResponse,
+  type SwapRepository,
+  updateReverseSwapStatus,
+  updateSubmarineSwapStatus,
 } from "@arkade-os/boltz-swap";
 import { ExpoArkadeSwaps } from "@arkade-os/boltz-swap/expo";
-import type { ArkTransaction, NetworkName } from "@arkade-os/sdk";
+import type { ArkTransaction, NetworkName, VirtualCoin } from "@arkade-os/sdk";
+import { hex } from "@scure/base";
 import type {
   ArkadeWalletMetadata,
   LightningResumeTrigger,
   WalletBehavior,
 } from "../../store/types";
 import { recordError } from "../diagnostics/recorder";
+import {
+  asBoltzNetwork,
+  type BoltzSwapEndpointNotFound,
+  boltzApiUrlForNetwork,
+  boltzApiUrlsForNetwork,
+  boltzPrimaryApiUrlForNetwork,
+  createBoltzSwapProvider,
+  isLightningSupportedForNetwork,
+  resolveBoltzSwapEndpoint,
+} from "./boltz-endpoints";
 import { ArkadeError, toArkadeError } from "./errors";
 import { ensureWallet, getWallet } from "./runtime";
 import { getSharedSqlExecutor } from "./storage";
@@ -52,31 +65,11 @@ import {
   recordSwapMetadata,
 } from "./swap-storage";
 
-const BOLTZ_API_URLS: Partial<Record<NetworkName, string>> = {
-  bitcoin: "https://api.ark.boltz.exchange",
-  mutinynet: "https://api.boltz.mutinynet.arkade.sh",
-  signet: "https://boltz.signet.arkade.sh",
-  regtest: "http://localhost:9069",
-};
-
 type LightningInstance = ArkadeSwaps | ExpoArkadeSwaps;
 
-function asBoltzNetwork(network: string): NetworkName | null {
-  const n = network.toLowerCase() as NetworkName;
-  return BOLTZ_API_URLS[n] != null ? n : null;
-}
+type ChainArkRefundOutcome = { swept: number; skipped: number };
 
-export function boltzApiUrlForNetwork(network: string): string | null {
-  const n = asBoltzNetwork(network);
-  return n ? (BOLTZ_API_URLS[n] ?? null) : null;
-}
-
-export function isLightningSupportedForNetwork(
-  network: string | null | undefined,
-): boolean {
-  if (!network) return false;
-  return asBoltzNetwork(network) != null;
-}
+export { boltzApiUrlForNetwork, isLightningSupportedForNetwork };
 
 let activeWalletId: string | null = null;
 let activeNetwork: string | null = null;
@@ -222,7 +215,7 @@ async function buildInstance(
   swapBackgroundEnabled: boolean,
 ): Promise<LightningInstance> {
   const network = asBoltzNetwork(metadata.network);
-  const apiUrl = network ? BOLTZ_API_URLS[network] : null;
+  const apiUrl = boltzPrimaryApiUrlForNetwork(metadata.network);
   if (!network || !apiUrl) {
     throw new ArkadeError(
       "lightning_unavailable",
@@ -230,7 +223,7 @@ async function buildInstance(
     );
   }
   const wallet = await ensureWallet({ metadata, behavior });
-  const swapProvider = new BoltzSwapProvider({ apiUrl, network });
+  const swapProvider = createBoltzSwapProvider({ apiUrl, network });
   const swapRepository = createSwapRepository();
   let instance: LightningInstance;
   try {
@@ -564,13 +557,13 @@ export async function quoteSubmarineSwapFee(
   network: string,
   amountSats: number,
 ): Promise<SubmarineFeeQuote | null> {
-  const apiUrl = boltzApiUrlForNetwork(network);
+  const apiUrl = boltzPrimaryApiUrlForNetwork(network);
   const boltzNetwork = asBoltzNetwork(network);
   if (!apiUrl || !boltzNetwork) return null;
   try {
     let fees = feesCache?.network === network ? feesCache.fees : null;
     if (!fees) {
-      const provider = new BoltzSwapProvider({
+      const provider = createBoltzSwapProvider({
         apiUrl,
         network: boltzNetwork,
       });
@@ -618,7 +611,7 @@ export async function quoteArkToBtcChainSwap(
   network: string,
   amountSats: number,
 ): Promise<ChainSwapQuote | null> {
-  const apiUrl = boltzApiUrlForNetwork(network);
+  const apiUrl = boltzPrimaryApiUrlForNetwork(network);
   const boltzNetwork = asBoltzNetwork(network);
   if (!apiUrl || !boltzNetwork) return null;
   try {
@@ -626,7 +619,10 @@ export async function quoteArkToBtcChainSwap(
     let limits =
       chainLimitsCache?.network === network ? chainLimitsCache.limits : null;
     if (!fees || !limits) {
-      const provider = new BoltzSwapProvider({ apiUrl, network: boltzNetwork });
+      const provider = createBoltzSwapProvider({
+        apiUrl,
+        network: boltzNetwork,
+      });
       const [f, l] = await Promise.all([
         provider.getChainFees("ARK", "BTC"),
         provider.getChainLimits("ARK", "BTC"),
@@ -680,39 +676,204 @@ export async function waitAndClaimChainSwap(
   }
 }
 
+export type ChainSwapRecoveryEndpointState =
+  | { kind: "resolved"; source: "primary" | "legacy"; apiUrl: string }
+  | { kind: "not_found" }
+  | { kind: "unknown"; error: string };
+
+export type ChainRefundReadiness =
+  | "ready"
+  | "missing_material"
+  | "endpoint_not_found"
+  | "not_refundable"
+  | "not_found"
+  | "unknown";
+
+export type ChainRefundVhtlcState =
+  | { kind: "unspent"; totalCount: number; unspentCount: number }
+  | { kind: "not_found" }
+  | { kind: "spent"; totalCount: number }
+  | { kind: "unknown"; error: string };
+
+function normalizeToXOnlyHex(
+  keyHex: string,
+  label: string,
+  swapId: string,
+): string {
+  const clean = keyHex.trim().toLowerCase();
+  if (/^[0-9a-f]{64}$/.test(clean)) return clean;
+  if (/^(02|03)[0-9a-f]{64}$/.test(clean)) return clean.slice(2);
+  throw new Error(`Swap ${swapId}: invalid ${label} public key length`);
+}
+
+function isArkToBtcChainSwap(swap: BoltzChainSwap): boolean {
+  return swap.request.from === "ARK" && swap.request.to === "BTC";
+}
+
+export function canAttemptArkChainRefund(swap: BoltzChainSwap): boolean {
+  return (
+    swap.type === "chain" &&
+    isArkToBtcChainSwap(swap) &&
+    typeof swap.request.preimageHash === "string" &&
+    swap.request.preimageHash.length > 0 &&
+    typeof swap.response.lockupDetails?.lockupAddress === "string" &&
+    swap.response.lockupDetails.lockupAddress.length > 0 &&
+    typeof swap.response.lockupDetails?.serverPublicKey === "string" &&
+    swap.response.lockupDetails.serverPublicKey.length > 0 &&
+    swap.response.lockupDetails?.timeouts != null
+  );
+}
+
+export async function resolveChainSwapRecoveryEndpoint(
+  swapId: string,
+): Promise<ChainSwapRecoveryEndpointState> {
+  try {
+    if (!activeNetwork) {
+      return { kind: "unknown", error: "Lightning network is not initialized" };
+    }
+    const result = await resolveBoltzSwapEndpoint({
+      network: activeNetwork,
+      swapId,
+    });
+    if ("kind" in result) return { kind: "not_found" };
+    return {
+      kind: "resolved",
+      source: result.source,
+      apiUrl: result.apiUrl,
+    };
+  } catch (e) {
+    return {
+      kind: "unknown",
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+export async function inspectArkChainRefundVhtlc(
+  swap: BoltzChainSwap,
+): Promise<ChainRefundVhtlcState> {
+  if (!canAttemptArkChainRefund(swap)) {
+    return { kind: "unknown", error: "Chain swap is missing refund details" };
+  }
+  try {
+    const [lightning, wallet] = await Promise.all([
+      getLightning(),
+      getWallet(),
+    ]);
+    const arkInfo = await wallet.arkProvider.getInfo();
+    const ourXOnlyPublicKey = normalizeToXOnlyHex(
+      hex.encode(await wallet.identity.xOnlyPublicKey()),
+      "user",
+      swap.id,
+    );
+    const serverXOnlyPublicKey = normalizeToXOnlyHex(
+      arkInfo.signerPubkey,
+      "server",
+      swap.id,
+    );
+    const boltzXOnlyPublicKey = normalizeToXOnlyHex(
+      swap.response.lockupDetails.serverPublicKey,
+      "boltz",
+      swap.id,
+    );
+    const timeouts = swap.response.lockupDetails.timeouts;
+    if (!timeouts) {
+      return {
+        kind: "unknown",
+        error: "Chain swap is missing refund timeouts",
+      };
+    }
+    const { vhtlcAddress, vhtlcScript } = lightning.createVHTLCScript({
+      network: arkInfo.network,
+      preimageHash: hex.decode(swap.request.preimageHash),
+      serverPubkey: serverXOnlyPublicKey,
+      senderPubkey: ourXOnlyPublicKey,
+      receiverPubkey: boltzXOnlyPublicKey,
+      timeoutBlockHeights: timeouts,
+    });
+    if (swap.response.lockupDetails.lockupAddress !== vhtlcAddress) {
+      return { kind: "unknown", error: "VHTLC address mismatch" };
+    }
+    const { vtxos } = await wallet.indexerProvider.getVtxos({
+      scripts: [hex.encode(vhtlcScript.pkScript)],
+    });
+    if (vtxos.length === 0) return { kind: "not_found" };
+    const unspent = (vtxos as VirtualCoin[]).filter((vtxo) => !vtxo.isSpent);
+    if (unspent.length === 0) {
+      return { kind: "spent", totalCount: vtxos.length };
+    }
+    return {
+      kind: "unspent",
+      totalCount: vtxos.length,
+      unspentCount: unspent.length,
+    };
+  } catch (e) {
+    return {
+      kind: "unknown",
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+export async function getChainRefundReadinessById(
+  swapId: string,
+): Promise<ChainRefundReadiness> {
+  const swaps = await getLightning().catch(() => null);
+  if (!swaps) return "unknown";
+  const all = await swaps.swapRepository.getAllSwaps({ type: "chain" });
+  const target = all.find((s) => s.id === swapId);
+  if (target?.type !== "chain") return "not_found";
+  if (!isArkToBtcChainSwap(target) || !isChainSwapRefundable(target)) {
+    return "not_refundable";
+  }
+  if (!canAttemptArkChainRefund(target)) return "missing_material";
+  if (!activeNetwork) return "unknown";
+  try {
+    const endpoint = await resolveBoltzSwapEndpoint({
+      network: activeNetwork,
+      swapId,
+    });
+    if ("kind" in endpoint) return "endpoint_not_found";
+  } catch {
+    return "unknown";
+  }
+  const vhtlc = await inspectArkChainRefundVhtlc(target);
+  return vhtlc.kind === "unspent" ? "ready" : "not_refundable";
+}
+
 export async function refundChainSwap(
   pendingSwap: BoltzChainSwap,
-): Promise<void> {
-  const swaps = await getLightning();
+): Promise<ChainArkRefundOutcome> {
   try {
-    await swaps.refundArk(pendingSwap);
+    return await refundChainSwapThroughResolvedEndpoint(pendingSwap);
   } catch (e) {
     throw toArkadeError("swap_refund_failed", "Chain swap refund failed", e);
   }
 }
 
-/**
- * Look up a chain swap by id and call `refundArk`. Re-checks refundability
- * and ARK→BTC direction so a stale Recovery row or Activity flag cannot
- * drive a refund on a no-longer-actionable swap.
- */
-export async function refundChainSwapById(swapId: string): Promise<void> {
+async function refundChainSwapThroughResolvedEndpoint(
+  target: BoltzChainSwap,
+): Promise<ChainArkRefundOutcome> {
   const swaps = await getLightning();
-  const all = await swaps.swapRepository.getAllSwaps({ type: "chain" });
-  const target = all.find((s) => s.id === swapId);
-  if (!target || target.type !== "chain") {
+  if (!activeNetwork) {
     throw new ArkadeError(
       "swap_refund_failed",
-      "Chain swap not found in local repository",
+      "Lightning network is not initialized",
     );
   }
-  if (target.request.from !== "ARK" || target.request.to !== "BTC") {
+  const network = asBoltzNetwork(activeNetwork);
+  if (!network) {
+    throw new ArkadeError(
+      "swap_refund_failed",
+      `Boltz is not configured for ${activeNetwork}`,
+    );
+  }
+  if (!isArkToBtcChainSwap(target)) {
     throw new ArkadeError(
       "swap_refund_failed",
       "Chain swap is not an ARK→BTC refund target",
     );
   }
-  // SDK type guard narrows the false branch to `never`; capture status first.
   const targetStatus = target.status;
   if (!isChainSwapRefundable(target)) {
     throw new ArkadeError(
@@ -720,9 +881,85 @@ export async function refundChainSwapById(swapId: string): Promise<void> {
       `Chain swap is no longer refundable (status ${targetStatus})`,
     );
   }
+  if (!canAttemptArkChainRefund(target)) {
+    throw new ArkadeError(
+      "swap_refund_failed",
+      "Chain swap is missing refund details on this device",
+    );
+  }
+
+  const vhtlc = await inspectArkChainRefundVhtlc(target);
+  if (vhtlc.kind === "not_found") {
+    throw new ArkadeError(
+      "swap_refund_failed",
+      "No refundable Arkade VHTLC was found for this swap",
+    );
+  }
+  if (vhtlc.kind === "spent") {
+    throw new ArkadeError(
+      "swap_refund_failed",
+      "The Arkade VHTLC for this swap is already spent",
+    );
+  }
+  if (vhtlc.kind === "unknown") {
+    throw new ArkadeError(
+      "swap_refund_failed",
+      `Chain swap refund readiness could not be verified: ${vhtlc.error}`,
+    );
+  }
+
+  const endpoint = await resolveBoltzSwapEndpoint({
+    network: activeNetwork,
+    swapId: target.id,
+  });
+  if ("kind" in endpoint) {
+    throw new ArkadeError(
+      "swap_refund_failed",
+      "Chain swap was not found on primary or legacy Boltz endpoints",
+    );
+  }
+  if (endpoint.source === "primary") {
+    return swaps.refundArk(target);
+  }
+
+  const wallet = await getWallet();
+  const temporary = await ArkadeSwaps.create({
+    wallet,
+    swapProvider: createBoltzSwapProvider({
+      network,
+      apiUrl: endpoint.apiUrl,
+    }),
+    swapRepository: swaps.swapRepository,
+    swapManager: false,
+  });
   try {
-    await swaps.refundArk(target);
+    return await temporary.refundArk(target);
+  } finally {
+    await temporary.dispose().catch(() => {});
+  }
+}
+
+/**
+ * Look up a chain swap by id and call refundArk. Re-checks refundability,
+ * endpoint ownership, local material, and VHTLC presence so stale Recovery
+ * rows cannot drive a doomed refund attempt.
+ */
+export async function refundChainSwapById(
+  swapId: string,
+): Promise<ChainArkRefundOutcome> {
+  const swaps = await getLightning();
+  const all = await swaps.swapRepository.getAllSwaps({ type: "chain" });
+  const target = all.find((s) => s.id === swapId);
+  if (target?.type !== "chain") {
+    throw new ArkadeError(
+      "swap_refund_failed",
+      "Chain swap not found in local repository",
+    );
+  }
+  try {
+    return await refundChainSwapThroughResolvedEndpoint(target);
   } catch (e) {
+    if (e instanceof ArkadeError) throw e;
     throw toArkadeError("swap_refund_failed", "Chain swap refund failed", e);
   }
 }
@@ -881,66 +1118,263 @@ async function recordRestoredLightningMetadata(args: {
   await Promise.allSettled(writes);
 }
 
+type RestoredEndpointSwaps = {
+  source: "primary" | "legacy";
+  apiUrl: string;
+  reverseSwaps: BoltzReverseSwap[];
+  submarineSwaps: BoltzSubmarineSwap[];
+  chainSwaps: BoltzChainSwap[];
+};
+
+async function restoreLightningActivityFromLegacyEndpoint(args: {
+  wallet: Awaited<ReturnType<typeof getWallet>>;
+  swapRepository: SwapRepository;
+  network: NetworkName;
+  apiUrl: string;
+}): Promise<RestoredEndpointSwaps> {
+  const temporary = await ArkadeSwaps.create({
+    wallet: args.wallet,
+    swapProvider: createBoltzSwapProvider({
+      network: args.network,
+      apiUrl: args.apiUrl,
+    }),
+    swapRepository: args.swapRepository,
+    swapManager: false,
+  });
+  try {
+    const result = await temporary.restoreSwaps();
+    return {
+      source: "legacy",
+      apiUrl: args.apiUrl,
+      reverseSwaps: result.reverseSwaps,
+      submarineSwaps: result.submarineSwaps,
+      chainSwaps: result.chainSwaps,
+    };
+  } finally {
+    await temporary.dispose().catch(() => {});
+  }
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+type ChainSwapDetails = BoltzChainSwap["response"]["lockupDetails"];
+type ChainSwapResponseWithOptionalClaim = BoltzChainSwap["response"] & {
+  claimDetails?: ChainSwapDetails;
+};
+type ChainSwapWithLocalFields = BoltzChainSwap & {
+  ephemeralKey?: string;
+  toAddress?: string;
+  response: ChainSwapResponseWithOptionalClaim;
+};
+
+function mergeChainSwap(
+  primary: BoltzChainSwap,
+  incoming: BoltzChainSwap,
+): BoltzChainSwap {
+  const primaryLocal = primary as ChainSwapWithLocalFields;
+  const incomingLocal = incoming as ChainSwapWithLocalFields;
+  const primaryResponse = primaryLocal.response;
+  const incomingResponse = incomingLocal.response;
+  const merged: ChainSwapWithLocalFields = {
+    ...primaryLocal,
+    request: { ...primaryLocal.request },
+    response: {
+      ...primaryResponse,
+      lockupDetails: { ...(primaryResponse.lockupDetails ?? {}) },
+    },
+  };
+
+  if (primaryResponse.claimDetails || incomingResponse.claimDetails) {
+    merged.response.claimDetails = {
+      ...(primaryResponse.claimDetails ?? {}),
+    } as ChainSwapDetails;
+  }
+
+  if (
+    merged.response.lockupDetails.timeouts == null &&
+    incomingResponse.lockupDetails?.timeouts != null
+  ) {
+    merged.response.lockupDetails.timeouts =
+      incomingResponse.lockupDetails.timeouts;
+  }
+  if (
+    merged.response.claimDetails &&
+    merged.response.claimDetails.timeouts == null &&
+    incomingResponse.claimDetails?.timeouts != null
+  ) {
+    merged.response.claimDetails.timeouts =
+      incomingResponse.claimDetails.timeouts;
+  }
+
+  merged.preimage =
+    firstString(primaryLocal.preimage, incomingLocal.preimage) ?? "";
+  merged.ephemeralKey =
+    firstString(primaryLocal.ephemeralKey, incomingLocal.ephemeralKey) ?? "";
+  const toAddress = firstString(
+    primaryLocal.toAddress,
+    incomingLocal.toAddress,
+  );
+  if (toAddress) merged.toAddress = toAddress;
+
+  const preimageHash = firstString(
+    primaryLocal.request.preimageHash,
+    incomingLocal.request.preimageHash,
+  );
+  if (preimageHash) merged.request.preimageHash = preimageHash;
+  merged.request.claimPublicKey =
+    firstString(
+      primaryLocal.request.claimPublicKey,
+      incomingLocal.request.claimPublicKey,
+    ) ?? "";
+  merged.request.refundPublicKey =
+    firstString(
+      primaryLocal.request.refundPublicKey,
+      incomingLocal.request.refundPublicKey,
+    ) ?? "";
+  return merged;
+}
+
+function mergeRestoredEndpointSwaps(endpointResults: RestoredEndpointSwaps[]): {
+  reverseSwaps: BoltzReverseSwap[];
+  submarineSwaps: BoltzSubmarineSwap[];
+  chainSwaps: BoltzChainSwap[];
+} {
+  const reverse = new Map<string, BoltzReverseSwap>();
+  const submarine = new Map<string, BoltzSubmarineSwap>();
+  const chain = new Map<string, BoltzChainSwap>();
+
+  for (const result of endpointResults) {
+    for (const swap of result.reverseSwaps) {
+      if (!reverse.has(swap.id)) reverse.set(swap.id, swap);
+    }
+    for (const swap of result.submarineSwaps) {
+      if (!submarine.has(swap.id)) submarine.set(swap.id, swap);
+    }
+    for (const swap of result.chainSwaps) {
+      const prior = chain.get(swap.id);
+      chain.set(swap.id, prior ? mergeChainSwap(prior, swap) : swap);
+    }
+  }
+
+  return {
+    reverseSwaps: [...reverse.values()],
+    submarineSwaps: [...submarine.values()],
+    chainSwaps: [...chain.values()],
+  };
+}
+
 export async function restoreLightningActivity(
   walletId?: string,
 ): Promise<LightningRestoreSummary> {
   const swaps = await getLightning();
-  try {
-    const restoredAt = Date.now();
-    const result = await swaps.restoreSwaps();
-    const restoredSwaps: BoltzSwap[] = [
-      ...result.reverseSwaps,
-      ...result.submarineSwaps,
-      ...result.chainSwaps,
-    ];
-    await Promise.allSettled(
-      restoredSwaps.map((swap) => swaps.swapRepository.saveSwap(swap)),
-    );
-    if (walletId) {
-      await recordRestoredLightningMetadata({
-        walletId,
-        restoredAt,
-        reverseSwaps: result.reverseSwaps,
-        submarineSwaps: result.submarineSwaps,
-        chainSwaps: result.chainSwaps,
-      });
-      // Seed-only restore: there is no backup file to source `walletTxId`
-      // from, so the merge logic in `swap-mappers.ts` would render the
-      // underlying Arkade payment row instead of (or alongside) the Lightning
-      // row. Run the history-match linkage once per restored reverse/
-      // submarine swap to recover the `walletTxId` where it's unambiguous.
-      let history: ArkTransaction[] = [];
-      try {
-        const wallet = await getWallet();
-        history = await wallet.getTransactionHistory();
-      } catch (e) {
-        recordError(
-          "swap",
-          `restore_linkage_history_unavailable: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-      if (history.length > 0) {
-        const linkageTargets: BoltzSwap[] = [
-          ...result.reverseSwaps,
-          ...result.submarineSwaps,
-        ];
-        await Promise.allSettled(
-          linkageTargets.map((swap) => attemptSwapLinkage(swap, history)),
-        );
-      }
-    }
-    return {
-      reverseCount: result.reverseSwaps.length,
-      submarineCount: result.submarineSwaps.length,
-      chainCount: result.chainSwaps.length,
-    };
-  } catch (e) {
-    throw toArkadeError(
+  const networkName = activeNetwork ? asBoltzNetwork(activeNetwork) : null;
+  if (!activeNetwork || !networkName) {
+    throw new ArkadeError(
       "swap_restore_failed",
-      "Failed to restore Lightning activity",
-      e,
+      "Boltz is not configured for the active network",
     );
   }
+
+  const restoredAt = Date.now();
+  const wallet = await getWallet();
+  const endpointResults: RestoredEndpointSwaps[] = [];
+  const endpointErrors: string[] = [];
+  const [primaryApiUrl, ...legacyApiUrls] =
+    boltzApiUrlsForNetwork(activeNetwork);
+
+  try {
+    const result = await swaps.restoreSwaps();
+    endpointResults.push({
+      source: "primary",
+      apiUrl: primaryApiUrl,
+      reverseSwaps: result.reverseSwaps,
+      submarineSwaps: result.submarineSwaps,
+      chainSwaps: result.chainSwaps,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    endpointErrors.push(`primary ${primaryApiUrl}: ${message}`);
+    recordError("swap", `restore_primary_failed: ${message}`);
+  }
+
+  for (const apiUrl of legacyApiUrls) {
+    try {
+      endpointResults.push(
+        await restoreLightningActivityFromLegacyEndpoint({
+          wallet,
+          swapRepository: swaps.swapRepository,
+          network: networkName,
+          apiUrl,
+        }),
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      endpointErrors.push(`legacy ${apiUrl}: ${message}`);
+      recordError("swap", `restore_legacy_failed: ${message}`);
+    }
+  }
+
+  if (endpointResults.length === 0) {
+    throw new ArkadeError(
+      "swap_restore_failed",
+      "Boltz restore failed for all configured endpoints",
+    );
+  }
+
+  const result = mergeRestoredEndpointSwaps(endpointResults);
+  const restoredSwaps: BoltzSwap[] = [
+    ...result.reverseSwaps,
+    ...result.submarineSwaps,
+    ...result.chainSwaps,
+  ];
+  await Promise.allSettled(
+    restoredSwaps.map((swap) => swaps.swapRepository.saveSwap(swap)),
+  );
+
+  if (walletId) {
+    await recordRestoredLightningMetadata({
+      walletId,
+      restoredAt,
+      reverseSwaps: result.reverseSwaps,
+      submarineSwaps: result.submarineSwaps,
+      chainSwaps: result.chainSwaps,
+    });
+
+    let history: ArkTransaction[] = [];
+    try {
+      history = await wallet.getTransactionHistory();
+    } catch (e) {
+      recordError(
+        "swap",
+        "restore_linkage_history_unavailable: " +
+          (e instanceof Error ? e.message : String(e)),
+      );
+    }
+    if (history.length > 0) {
+      const linkageTargets: BoltzSwap[] = [
+        ...result.reverseSwaps,
+        ...result.submarineSwaps,
+      ];
+      await Promise.allSettled(
+        linkageTargets.map((swap) => attemptSwapLinkage(swap, history)),
+      );
+    }
+  }
+
+  if (endpointErrors.length > 0) {
+    recordError("swap", `restore_partial_errors: ${endpointErrors.length}`);
+  }
+
+  return {
+    reverseCount: result.reverseSwaps.length,
+    submarineCount: result.submarineSwaps.length,
+    chainCount: result.chainSwaps.length,
+  };
 }
 
 export type LightningResumeSummary = {
@@ -1111,25 +1545,90 @@ export async function resumeLightningSwaps(args: {
   };
 }
 
+function isEndpointNotFound(
+  result: Awaited<ReturnType<typeof resolveBoltzSwapEndpoint>>,
+): result is BoltzSwapEndpointNotFound {
+  return "kind" in result && result.kind === "not_found";
+}
+
+async function refreshOneSwapStatus(swap: BoltzSwap): Promise<void> {
+  if (!activeInstance || !activeNetwork) return;
+  if (swap.type === "reverse" && isReverseFinalStatus(swap.status)) return;
+  if (swap.type === "submarine" && isSubmarineFinalStatus(swap.status)) return;
+  if (swap.type === "chain" && isChainFinalStatus(swap.status)) return;
+
+  try {
+    const result = await resolveBoltzSwapEndpoint({
+      network: activeNetwork,
+      swapId: swap.id,
+    });
+    if (isEndpointNotFound(result)) {
+      recordError(
+        "swap",
+        `refresh_swap_status_not_found: ${swap.type} ${swap.id}`,
+      );
+      return;
+    }
+    if (swap.type === "reverse") {
+      await updateReverseSwapStatus(
+        swap,
+        result.status,
+        activeInstance.swapRepository.saveSwap.bind(
+          activeInstance.swapRepository,
+        ),
+      );
+      return;
+    }
+    if (swap.type === "submarine") {
+      await updateSubmarineSwapStatus(
+        swap,
+        result.status,
+        activeInstance.swapRepository.saveSwap.bind(
+          activeInstance.swapRepository,
+        ),
+      );
+      return;
+    }
+    await activeInstance.swapRepository.saveSwap({
+      ...swap,
+      status: result.status,
+    });
+  } catch (e) {
+    recordError(
+      "swap",
+      "refresh_swap_status_failed: " +
+        swap.type +
+        " " +
+        swap.id +
+        ": " +
+        (e instanceof Error ? e.message : String(e)),
+    );
+  }
+}
+
 /**
  * Pull the latest Boltz status for every non-final swap in the local repo.
  *
  * The SwapManager normally receives status updates over WebSocket and falls
  * back to polling every 30s. But if the WS dropped while the app was
- * backgrounded — or if Boltz pushed `invoice.settled` in between — the local
- * swap row can stay stuck at `transaction.confirmed` until the next poll
- * cycle. Calling this on pull-to-refresh closes that gap so titles/statuses
- * line up with reality immediately.
+ * backgrounded — or if Boltz pushed invoice.settled in between — the local
+ * swap row can stay stuck until the next poll cycle. Calling this on
+ * pull-to-refresh closes that gap so titles/statuses line up with reality.
  *
  * Best-effort: returns silently when Lightning is not initialized or the
  * Boltz API is unreachable. Callers should not block their critical path on
  * the result.
  */
 export async function refreshSwapsStatus(): Promise<void> {
-  if (!activeInstance) return;
+  if (!activeInstance || !activeNetwork) return;
   try {
-    await activeInstance.refreshSwapsStatus();
-  } catch {
-    // best-effort; the next polling cycle will catch up
+    const swaps = await activeInstance.swapRepository.getAllSwaps();
+    await Promise.allSettled(swaps.map((swap) => refreshOneSwapStatus(swap)));
+  } catch (e) {
+    recordError(
+      "swap",
+      "refresh_swaps_status_failed: " +
+        (e instanceof Error ? e.message : String(e)),
+    );
   }
 }
