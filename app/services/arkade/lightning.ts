@@ -41,6 +41,7 @@ import {
   isLightningSupportedForNetwork,
   resolveBoltzSwapEndpoint,
 } from "./boltz-endpoints";
+import { mergeChainSwap } from "./chain-swap-merge";
 import { ArkadeError, toArkadeError } from "./errors";
 import { ensureWallet, getWallet } from "./runtime";
 import { getSharedSqlExecutor } from "./storage";
@@ -1153,90 +1154,6 @@ async function restoreLightningActivityFromLegacyEndpoint(args: {
   } finally {
     await temporary.dispose().catch(() => {});
   }
-}
-
-function firstString(...values: unknown[]): string | undefined {
-  for (const value of values) {
-    if (typeof value === "string" && value.length > 0) return value;
-  }
-  return undefined;
-}
-
-type ChainSwapDetails = BoltzChainSwap["response"]["lockupDetails"];
-type ChainSwapResponseWithOptionalClaim = BoltzChainSwap["response"] & {
-  claimDetails?: ChainSwapDetails;
-};
-type ChainSwapWithLocalFields = BoltzChainSwap & {
-  ephemeralKey?: string;
-  toAddress?: string;
-  response: ChainSwapResponseWithOptionalClaim;
-};
-
-function mergeChainSwap(
-  primary: BoltzChainSwap,
-  incoming: BoltzChainSwap,
-): BoltzChainSwap {
-  const primaryLocal = primary as ChainSwapWithLocalFields;
-  const incomingLocal = incoming as ChainSwapWithLocalFields;
-  const primaryResponse = primaryLocal.response;
-  const incomingResponse = incomingLocal.response;
-  const merged: ChainSwapWithLocalFields = {
-    ...primaryLocal,
-    request: { ...primaryLocal.request },
-    response: {
-      ...primaryResponse,
-      lockupDetails: { ...(primaryResponse.lockupDetails ?? {}) },
-    },
-  };
-
-  if (primaryResponse.claimDetails || incomingResponse.claimDetails) {
-    merged.response.claimDetails = {
-      ...(primaryResponse.claimDetails ?? {}),
-    } as ChainSwapDetails;
-  }
-
-  if (
-    merged.response.lockupDetails.timeouts == null &&
-    incomingResponse.lockupDetails?.timeouts != null
-  ) {
-    merged.response.lockupDetails.timeouts =
-      incomingResponse.lockupDetails.timeouts;
-  }
-  if (
-    merged.response.claimDetails &&
-    merged.response.claimDetails.timeouts == null &&
-    incomingResponse.claimDetails?.timeouts != null
-  ) {
-    merged.response.claimDetails.timeouts =
-      incomingResponse.claimDetails.timeouts;
-  }
-
-  merged.preimage =
-    firstString(primaryLocal.preimage, incomingLocal.preimage) ?? "";
-  merged.ephemeralKey =
-    firstString(primaryLocal.ephemeralKey, incomingLocal.ephemeralKey) ?? "";
-  const toAddress = firstString(
-    primaryLocal.toAddress,
-    incomingLocal.toAddress,
-  );
-  if (toAddress) merged.toAddress = toAddress;
-
-  const preimageHash = firstString(
-    primaryLocal.request.preimageHash,
-    incomingLocal.request.preimageHash,
-  );
-  if (preimageHash) merged.request.preimageHash = preimageHash;
-  merged.request.claimPublicKey =
-    firstString(
-      primaryLocal.request.claimPublicKey,
-      incomingLocal.request.claimPublicKey,
-    ) ?? "";
-  merged.request.refundPublicKey =
-    firstString(
-      primaryLocal.request.refundPublicKey,
-      incomingLocal.request.refundPublicKey,
-    ) ?? "";
-  return merged;
 }
 
 function mergeRestoredEndpointSwaps(endpointResults: RestoredEndpointSwaps[]): {

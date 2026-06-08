@@ -397,8 +397,9 @@ Update `restoreLightningActivity(walletId)`:
 4. Call every configured endpoint even if primary restore fails. Restore is best-effort and historical recovery is the point. Record every failure with endpoint host and source. If all endpoints fail, throw `ArkadeError("swap_restore_failed", "Boltz restore failed for all configured endpoints")` after recording the failures.
 5. Merge swaps by id with deterministic precedence:
    - Primary object wins by default.
-   - If primary object lacks `response.lockupDetails.timeouts` and legacy object has it, merge that field into the primary object.
-   - If primary object lacks `response.claimDetails.timeouts` and legacy object has it, merge that field too.
+   - If primary object lacks fields in `response.lockupDetails` and legacy object has them, merge those fields into the primary object.
+   - If primary object lacks fields in `response.claimDetails` and legacy object has them, merge those fields too.
+   - For conflicting detail fields, keep primary endpoint values.
    - Keep first non-empty `preimage`, `ephemeralKey`, `toAddress`, and request pubkeys.
 6. Save merged swaps once with `swapRepository.saveSwap`.
 7. Record restored metadata once per merged swap id.
