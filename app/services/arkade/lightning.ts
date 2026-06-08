@@ -127,17 +127,20 @@ type LinkageProfile = {
  * states or refunded submarine swaps — those should remain separately
  * visible instead of being collapsed into a successful Lightning row.
  */
-function linkageProfileFor(swap: BoltzSwap): LinkageProfile | null {
+function linkageProfileFor(
+  swap: BoltzSwap,
+  meta: LocalSwapMetadata | null,
+): LinkageProfile | null {
   if (swap.type === "reverse") {
     if (isReverseFailedStatus(swap.status)) return null;
-    const amount = swap.response.onchainAmount;
+    const amount = meta?.arkadeAmountSats ?? swap.response.onchainAmount;
     if (amount == null) return null;
     return { direction: "in", amountSats: amount };
   }
   if (swap.type === "submarine") {
     if (isSubmarineFailedStatus(swap.status)) return null;
     if (swap.refunded) return null;
-    const amount = swap.response.expectedAmount;
+    const amount = meta?.arkadeAmountSats ?? swap.response.expectedAmount;
     if (amount == null) return null;
     return { direction: "out", amountSats: amount };
   }
@@ -171,10 +174,10 @@ async function attemptSwapLinkage(
   swap: BoltzSwap,
   history?: ArkTransaction[],
 ): Promise<void> {
-  const profile = linkageProfileFor(swap);
-  if (!profile) return;
   const meta = await getSwapMetadata(swap.id).catch(() => null);
   if (!meta || meta.walletTxId) return;
+  const profile = linkageProfileFor(swap, meta);
+  if (!profile) return;
   let txHistory: ArkTransaction[];
   if (history) {
     txHistory = history;

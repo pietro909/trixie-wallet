@@ -15,6 +15,7 @@ import {
 } from "@arkade-os/boltz-swap";
 import type { Activity, ActivityStatus } from "../../store/types";
 import { boltzApiUrlForNetwork } from "./lightning";
+import { LINKAGE_LOOKAHEAD_MS, LINKAGE_LOOKBACK_MS } from "./swap-linkage";
 import type { LocalSwapMetadata } from "./swap-storage";
 
 export type ActivitySources = {
@@ -364,6 +365,129 @@ function chainSwapMetadata(
   return out;
 }
 
+function addLinkedPaymentIds(ids: Set<string>, txid: string): void {
+  ids.add(`arkade:offchain:${txid}`);
+  ids.add(`arkade:batch:${txid}`);
+  ids.add(`arkade:boarding:${txid}`);
+  ids.add(`arkade:exit:${txid}`);
+  // Intentionally NOT included: arkade:renewal, arkade:settlement,
+  // arkade:asset — wallet-event rows must remain visible.
+}
+
+function positiveAmount(value: number | null | undefined): number | null {
+  if (typeof value !== "number") return null;
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value;
+}
+
+function counterpartDirection(swap: BoltzSwap): "in" | "out" | null {
+  if (swap.type === "reverse") {
+    if (isReverseFailedStatus(swap.status)) return null;
+    return "in";
+  }
+  if (swap.type === "submarine") {
+    if (swap.refunded || isSubmarineFailedStatus(swap.status)) return null;
+    return "out";
+  }
+  return null;
+}
+
+function counterpartArkadeAmounts(
+  swap: BoltzSwap,
+  meta: LocalSwapMetadata | undefined,
+): Set<number> {
+  const amounts = new Set<number>();
+  const add = (amount: number | null | undefined): void => {
+    const valid = positiveAmount(amount);
+    if (valid != null) amounts.add(valid);
+  };
+
+  if (swap.type === "reverse") {
+    add(meta?.arkadeAmountSats);
+    add(swap.response.onchainAmount);
+  } else if (swap.type === "submarine") {
+    add(meta?.arkadeAmountSats);
+    add(swap.response.expectedAmount);
+  }
+
+  return amounts;
+}
+
+function isArkadePaymentCounterpart(
+  activity: Activity,
+  direction: "in" | "out",
+  amounts: Set<number>,
+  lowerBoundMs: number,
+  upperBoundMs: number,
+): boolean {
+  if (activity.kind !== "payment") return false;
+  if (activity.rail !== "arkade") return false;
+  if (activity.direction !== direction) return false;
+  if (activity.amountSats == null || !amounts.has(activity.amountSats)) {
+    return false;
+  }
+  if (activity.timestamp < lowerBoundMs) return false;
+  if (activity.timestamp > upperBoundMs) return false;
+
+  if (direction === "in") {
+    return (
+      activity.id.startsWith("arkade:offchain:") ||
+      activity.id.startsWith("arkade:batch:")
+    );
+  }
+  return (
+    activity.id.startsWith("arkade:offchain:") ||
+    activity.id.startsWith("arkade:exit:")
+  );
+}
+
+function inferUnlinkedCounterpartActivityIds(
+  sources: ActivitySources,
+  metaById: Map<string, LocalSwapMetadata>,
+): Set<string> {
+  const candidatesBySwap = new Map<string, string[]>();
+  const candidateUseCounts = new Map<string, number>();
+
+  for (const swap of sources.swaps) {
+    const meta = metaById.get(swap.id);
+    if (meta?.walletTxId) continue;
+
+    const direction = counterpartDirection(swap);
+    if (!direction) continue;
+
+    const amounts = counterpartArkadeAmounts(swap, meta);
+    if (amounts.size === 0) continue;
+
+    const swapCreatedAtMs = swap.createdAt * 1000;
+    const lowerBoundMs = swapCreatedAtMs - LINKAGE_LOOKBACK_MS;
+    const upperBoundMs =
+      Math.max(Date.now(), swapCreatedAtMs) + LINKAGE_LOOKAHEAD_MS;
+    const candidates = sources.arkadeActivities
+      .filter((activity) =>
+        isArkadePaymentCounterpart(
+          activity,
+          direction,
+          amounts,
+          lowerBoundMs,
+          upperBoundMs,
+        ),
+      )
+      .map((activity) => activity.id);
+
+    if (candidates.length !== 1) continue;
+    candidatesBySwap.set(swap.id, candidates);
+    const id = candidates[0];
+    candidateUseCounts.set(id, (candidateUseCounts.get(id) ?? 0) + 1);
+  }
+
+  const inferred = new Set<string>();
+  for (const candidates of candidatesBySwap.values()) {
+    const id = candidates[0];
+    if (candidateUseCounts.get(id) === 1) inferred.add(id);
+  }
+  return inferred;
+}
+
 /**
  * Merge Arkade Activities (built by `getActivityHistory`), Boltz swap rows,
  * and the local linkage table into a single user-facing Activity list.
@@ -376,22 +500,19 @@ function chainSwapMetadata(
  *   linked raw txid is expanded into all candidate Arkade payment id forms.
  * - Wallet-event rows (renewal, settlement, asset) are never suppressed by
  *   Lightning linkage — those are not Lightning-equivalent payments.
- * - When a swap row is unlinked, both the swap row (id `swap:${swapId}`) and
- *   any Arkade rows coexist; the linkage handshake populates the linkage as
- *   txids become known.
+ * - When a swap row is unlinked but exactly one Arkade payment matches its
+ *   credited Arkade amount and time window, the Arkade row is suppressed as
+ *   the swap counterpart. Ambiguous unlinked matches stay visible until the
+ *   linkage handshake populates the txid.
  */
 export function mergeActivities(sources: ActivitySources): Activity[] {
   const metaById = metadataBySwapId(sources.metadata);
   const linkedActivityIds = new Set<string>();
   for (const m of sources.metadata) {
-    if (!m.walletTxId) continue;
-    const t = m.walletTxId;
-    linkedActivityIds.add(`arkade:offchain:${t}`);
-    linkedActivityIds.add(`arkade:batch:${t}`);
-    linkedActivityIds.add(`arkade:boarding:${t}`);
-    linkedActivityIds.add(`arkade:exit:${t}`);
-    // Intentionally NOT included: arkade:renewal, arkade:settlement,
-    // arkade:asset — wallet-event rows must remain visible.
+    if (m.walletTxId) addLinkedPaymentIds(linkedActivityIds, m.walletTxId);
+  }
+  for (const id of inferUnlinkedCounterpartActivityIds(sources, metaById)) {
+    linkedActivityIds.add(id);
   }
   const ctx: ProjectionContext = { network: sources.network };
   const swapActivities: Activity[] = sources.swaps.map((swap) =>
