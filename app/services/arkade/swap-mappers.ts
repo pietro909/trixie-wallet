@@ -31,10 +31,23 @@ type ProjectionContext = {
   network: string | null;
 };
 
+type CounterpartProjection = {
+  activity: Activity;
+};
+
 function reverseSwapStatus(status: BoltzSwapStatus): ActivityStatus {
   if (isReverseSuccessStatus(status)) return "confirmed";
   if (isReverseFailedStatus(status)) return "failed";
   return "pending";
+}
+
+function reverseStatusWithCounterpart(
+  status: ActivityStatus,
+  counterpart: CounterpartProjection | undefined,
+): ActivityStatus {
+  if (status !== "pending") return status;
+  if (counterpart?.activity.status === "confirmed") return "confirmed";
+  return status;
 }
 
 function chainSwapStatus(status: BoltzSwapStatus): ActivityStatus {
@@ -76,8 +89,10 @@ function submarineSwapStatus(swap: BoltzSubmarineSwap): ActivityStatus {
  * - `invoice.settled`: fully settled. Title reads "Lightning received".
  * - Failed / expired terminal states: dedicated titles.
  *
- * Status (`ActivityStatus`) remains `"pending"` until `invoice.settled` so
- * the user still sees a Pending tag while the on-chain claim settles.
+ * Status (`ActivityStatus`) remains `"pending"` until `invoice.settled`,
+ * unless the wallet history already shows the matching inbound Arkade payment
+ * confirmed. In that case the user has received funds, even if the local Boltz
+ * row is still stale.
  */
 function reverseTitle(
   swap: BoltzReverseSwap,
@@ -209,6 +224,37 @@ function baseLightningMetadata(
   return out;
 }
 
+function walletTxIdFromActivity(activity: Activity): string | null {
+  if (activity.source.type === "arkade_tx") return activity.source.walletTxId;
+
+  const metadata = activity.metadata;
+  const walletTxId = metadata?.walletTxId;
+  if (typeof walletTxId === "string" && walletTxId.length > 0) {
+    return walletTxId;
+  }
+  const arkTxid = metadata?.arkTxid;
+  if (typeof arkTxid === "string" && arkTxid.length > 0) return arkTxid;
+  const commitmentTxid = metadata?.commitmentTxid;
+  if (typeof commitmentTxid === "string" && commitmentTxid.length > 0) {
+    return commitmentTxid;
+  }
+  const boardingTxid = metadata?.boardingTxid;
+  if (typeof boardingTxid === "string" && boardingTxid.length > 0) {
+    return boardingTxid;
+  }
+  return null;
+}
+
+function withCounterpartMetadata(
+  metadata: NonNullable<Activity["metadata"]>,
+  counterpart: CounterpartProjection | undefined,
+): NonNullable<Activity["metadata"]> {
+  if (!counterpart || metadata.walletTxId != null) return metadata;
+  const walletTxId = walletTxIdFromActivity(counterpart.activity);
+  if (!walletTxId) return metadata;
+  return { ...metadata, walletTxId };
+}
+
 function reverseLightningMetadata(
   swap: BoltzReverseSwap,
   meta: LocalSwapMetadata | undefined,
@@ -274,11 +320,15 @@ function mapSwapToActivity(
   swap: BoltzSwap,
   meta: LocalSwapMetadata | undefined,
   ctx: ProjectionContext,
+  counterpart: CounterpartProjection | undefined,
 ): Activity {
   const baseId = meta?.walletTxId ?? `swap:${swap.id}`;
   const timestampMs = swap.createdAt * 1000;
   if (swap.type === "reverse") {
-    const status = reverseSwapStatus(swap.status);
+    const status = reverseStatusWithCounterpart(
+      reverseSwapStatus(swap.status),
+      counterpart,
+    );
     return {
       id: baseId,
       kind: "lightning_swap",
@@ -294,7 +344,10 @@ function mapSwapToActivity(
         swapId: swap.id,
         swapType: "reverse",
       },
-      metadata: reverseLightningMetadata(swap, meta, ctx),
+      metadata: withCounterpartMetadata(
+        reverseLightningMetadata(swap, meta, ctx),
+        counterpart,
+      ),
     };
   }
   if (swap.type === "submarine") {
@@ -314,7 +367,10 @@ function mapSwapToActivity(
         swapId: swap.id,
         swapType: "submarine",
       },
-      metadata: submarineLightningMetadata(swap, meta, ctx),
+      metadata: withCounterpartMetadata(
+        submarineLightningMetadata(swap, meta, ctx),
+        counterpart,
+      ),
     };
   }
   // Chain swap (ARK → BTC out): a Bitcoin-rail row with the destination
@@ -336,7 +392,10 @@ function mapSwapToActivity(
       swapId: swap.id,
       swapType: "chain",
     },
-    metadata: chainSwapMetadata(chainSwap, meta, ctx),
+    metadata: withCounterpartMetadata(
+      chainSwapMetadata(chainSwap, meta, ctx),
+      counterpart,
+    ),
   };
 }
 
@@ -366,12 +425,29 @@ function chainSwapMetadata(
 }
 
 function addLinkedPaymentIds(ids: Set<string>, txid: string): void {
-  ids.add(`arkade:offchain:${txid}`);
-  ids.add(`arkade:batch:${txid}`);
-  ids.add(`arkade:boarding:${txid}`);
-  ids.add(`arkade:exit:${txid}`);
+  for (const id of linkedPaymentActivityIds(txid)) ids.add(id);
   // Intentionally NOT included: arkade:renewal, arkade:settlement,
   // arkade:asset — wallet-event rows must remain visible.
+}
+
+function linkedPaymentActivityIds(txid: string): string[] {
+  return [
+    `arkade:offchain:${txid}`,
+    `arkade:batch:${txid}`,
+    `arkade:boarding:${txid}`,
+    `arkade:exit:${txid}`,
+  ];
+}
+
+function linkedCounterpartActivity(
+  byId: Map<string, Activity>,
+  txid: string,
+): Activity | undefined {
+  for (const id of linkedPaymentActivityIds(txid)) {
+    const activity = byId.get(id);
+    if (activity) return activity;
+  }
+  return undefined;
 }
 
 function positiveAmount(value: number | null | undefined): number | null {
@@ -441,11 +517,11 @@ function isArkadePaymentCounterpart(
   );
 }
 
-function inferUnlinkedCounterpartActivityIds(
+function inferUnlinkedCounterpartActivities(
   sources: ActivitySources,
   metaById: Map<string, LocalSwapMetadata>,
-): Set<string> {
-  const candidatesBySwap = new Map<string, string[]>();
+): Map<string, Activity> {
+  const candidatesBySwap = new Map<string, Activity[]>();
   const candidateUseCounts = new Map<string, number>();
 
   for (const swap of sources.swaps) {
@@ -462,28 +538,28 @@ function inferUnlinkedCounterpartActivityIds(
     const lowerBoundMs = swapCreatedAtMs - LINKAGE_LOOKBACK_MS;
     const upperBoundMs =
       Math.max(Date.now(), swapCreatedAtMs) + LINKAGE_LOOKAHEAD_MS;
-    const candidates = sources.arkadeActivities
-      .filter((activity) =>
-        isArkadePaymentCounterpart(
-          activity,
-          direction,
-          amounts,
-          lowerBoundMs,
-          upperBoundMs,
-        ),
-      )
-      .map((activity) => activity.id);
+    const candidates = sources.arkadeActivities.filter((activity) =>
+      isArkadePaymentCounterpart(
+        activity,
+        direction,
+        amounts,
+        lowerBoundMs,
+        upperBoundMs,
+      ),
+    );
 
     if (candidates.length !== 1) continue;
     candidatesBySwap.set(swap.id, candidates);
-    const id = candidates[0];
+    const id = candidates[0].id;
     candidateUseCounts.set(id, (candidateUseCounts.get(id) ?? 0) + 1);
   }
 
-  const inferred = new Set<string>();
-  for (const candidates of candidatesBySwap.values()) {
-    const id = candidates[0];
-    if (candidateUseCounts.get(id) === 1) inferred.add(id);
+  const inferred = new Map<string, Activity>();
+  for (const [swapId, candidates] of candidatesBySwap) {
+    const activity = candidates[0];
+    if (candidateUseCounts.get(activity.id) === 1) {
+      inferred.set(swapId, activity);
+    }
   }
   return inferred;
 }
@@ -507,16 +583,35 @@ function inferUnlinkedCounterpartActivityIds(
  */
 export function mergeActivities(sources: ActivitySources): Activity[] {
   const metaById = metadataBySwapId(sources.metadata);
+  const arkadeActivityById = new Map(
+    sources.arkadeActivities.map((activity) => [activity.id, activity]),
+  );
   const linkedActivityIds = new Set<string>();
+  const counterpartBySwapId = new Map<string, CounterpartProjection>();
   for (const m of sources.metadata) {
-    if (m.walletTxId) addLinkedPaymentIds(linkedActivityIds, m.walletTxId);
+    if (!m.walletTxId) continue;
+    addLinkedPaymentIds(linkedActivityIds, m.walletTxId);
+    const activity = linkedCounterpartActivity(
+      arkadeActivityById,
+      m.walletTxId,
+    );
+    if (activity) counterpartBySwapId.set(m.swapId, { activity });
   }
-  for (const id of inferUnlinkedCounterpartActivityIds(sources, metaById)) {
-    linkedActivityIds.add(id);
+  for (const [swapId, activity] of inferUnlinkedCounterpartActivities(
+    sources,
+    metaById,
+  )) {
+    linkedActivityIds.add(activity.id);
+    counterpartBySwapId.set(swapId, { activity });
   }
   const ctx: ProjectionContext = { network: sources.network };
   const swapActivities: Activity[] = sources.swaps.map((swap) =>
-    mapSwapToActivity(swap, metaById.get(swap.id), ctx),
+    mapSwapToActivity(
+      swap,
+      metaById.get(swap.id),
+      ctx,
+      counterpartBySwapId.get(swap.id),
+    ),
   );
   const arkadeActivities: Activity[] = sources.arkadeActivities.filter(
     (a) => !linkedActivityIds.has(a.id),

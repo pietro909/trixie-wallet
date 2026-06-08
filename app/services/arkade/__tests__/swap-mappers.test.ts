@@ -33,7 +33,10 @@ jest.mock("../lightning", () => ({
   boltzApiUrlForNetwork: jest.fn(() => "https://boltz.example"),
 }));
 
-import type { BoltzReverseSwap } from "@arkade-os/boltz-swap";
+import type {
+  BoltzReverseSwap,
+  BoltzSubmarineSwap,
+} from "@arkade-os/boltz-swap";
 import type { Activity } from "../../../store/types";
 import { mergeActivities } from "../swap-mappers";
 import type { LocalSwapMetadata } from "../swap-storage";
@@ -61,6 +64,25 @@ function reverseSwap(
   } as BoltzReverseSwap;
 }
 
+function submarineSwap(
+  overrides: Partial<BoltzSubmarineSwap> = {},
+): BoltzSubmarineSwap {
+  return {
+    id: "lnurl-send-swap-1",
+    type: "submarine",
+    status: "invoice.pending",
+    createdAt: T0_SECONDS,
+    refunded: false,
+    request: {
+      invoice: "lnbc1000n1...",
+    },
+    response: {
+      expectedAmount: 1190,
+    },
+    ...overrides,
+  } as BoltzSubmarineSwap;
+}
+
 function swapMeta(
   overrides: Partial<LocalSwapMetadata> = {},
 ): LocalSwapMetadata {
@@ -73,6 +95,27 @@ function swapMeta(
     arkadeAmountSats: 1190,
     walletTxId: null,
     paymentHash: "00".repeat(32),
+    linkSource: null,
+    backgroundNotified: false,
+    restoredAt: null,
+    createdAt: T0_MS,
+    updatedAt: T0_MS,
+    ...overrides,
+  };
+}
+
+function submarineMeta(
+  overrides: Partial<LocalSwapMetadata> = {},
+): LocalSwapMetadata {
+  return {
+    swapId: "lnurl-send-swap-1",
+    walletId: "wallet-1",
+    direction: "out",
+    createdForFlow: "lnurl_send",
+    invoiceAmountSats: 1000,
+    arkadeAmountSats: 1190,
+    walletTxId: null,
+    paymentHash: "11".repeat(32),
     linkSource: null,
     backgroundNotified: false,
     restoredAt: null,
@@ -98,8 +141,24 @@ function arkadeReceive(overrides: Partial<Activity> = {}): Activity {
   };
 }
 
+function arkadeSend(overrides: Partial<Activity> = {}): Activity {
+  return {
+    id: "arkade:exit:commit-1",
+    kind: "payment",
+    direction: "out",
+    amountSats: 1190,
+    timestamp: T0_MS + 1000,
+    title: "Arkade sent",
+    status: "confirmed",
+    rail: "arkade",
+    source: { type: "arkade_tx", walletTxId: "commit-1" },
+    metadata: { commitmentTxid: "commit-1" },
+    ...overrides,
+  };
+}
+
 describe("mergeActivities", () => {
-  it("suppresses an unlinked LNURL receive counterpart using the credited Arkade amount", () => {
+  it("confirms an unlinked LNURL receive when its Arkade counterpart is confirmed", () => {
     const activities = mergeActivities({
       arkadeActivities: [arkadeReceive()],
       swaps: [reverseSwap()],
@@ -113,13 +172,53 @@ describe("mergeActivities", () => {
       title: "LNURL received",
       direction: "in",
       amountSats: 1190,
-      status: "pending",
+      status: "confirmed",
     });
     expect(activities[0].metadata).toMatchObject({
       createdForFlow: "lnurl_receive",
       invoiceAmountSats: 1197,
       arkadeAmountSats: 1190,
       lightningFeeSats: 7,
+      walletTxId: "commit-1",
+    });
+  });
+
+  it("confirms a linked LNURL receive even when Boltz status is still pending", () => {
+    const activities = mergeActivities({
+      arkadeActivities: [arkadeReceive()],
+      swaps: [reverseSwap()],
+      metadata: [swapMeta({ walletTxId: "commit-1" })],
+      network: "bitcoin",
+    });
+
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      id: "commit-1",
+      title: "LNURL received",
+      direction: "in",
+      amountSats: 1190,
+      status: "confirmed",
+    });
+    expect(activities[0].metadata).toMatchObject({
+      walletTxId: "commit-1",
+    });
+  });
+
+  it("keeps a submarine LNURL send pending after only the Arkade lockup matches", () => {
+    const activities = mergeActivities({
+      arkadeActivities: [arkadeSend()],
+      swaps: [submarineSwap()],
+      metadata: [submarineMeta()],
+      network: "bitcoin",
+    });
+
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      id: "swap:lnurl-send-swap-1",
+      title: "LNURL payment",
+      direction: "out",
+      amountSats: 1190,
+      status: "pending",
     });
   });
 
