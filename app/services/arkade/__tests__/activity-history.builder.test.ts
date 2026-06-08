@@ -103,8 +103,8 @@ describe("buildActivityHistory — synthetic builder cases (mirrors SDK)", () =>
     expect(row.kind).toBe("wallet_event");
     expect(row.direction).toBe("in");
     expect(row.title).toBe("Asset received");
-    // Post B.5 D-2 fix: preconfirmed asset receives are pending.
-    expect(row.status).toBe("pending");
+    // Asset-bearing Arkade receives share the off-chain fast-finality policy.
+    expect(row.status).toBe("confirmed");
     expect(row.amountSats).toBeUndefined();
     expect(row.assets).toStrictEqual([{ assetId: "A", amount: "50" }]);
     expect(row.metadata).toMatchObject({

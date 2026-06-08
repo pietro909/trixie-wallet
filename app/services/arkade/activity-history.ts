@@ -260,8 +260,8 @@ function buildAssetActivity(args: {
   anchorSats: bigint;
   assetDelta: Asset[];
   network: string | null;
-  // Asset semantics carry no fast-finality promise (unlike BTC off-chain
-  // receives, see commit 94b4a34), so the row reflects the real flag.
+  // Callers pass the user-facing status policy for the row. Arkade off-chain
+  // receives, including asset-bearing receives, are treated as fast-final.
   settled: boolean;
 }): Activity {
   const cls = classifyAssetActivity({
@@ -1083,7 +1083,7 @@ export async function buildActivityHistory(
                 anchorSats: BigInt(v.value),
                 assetDelta: assets,
                 network,
-                settled: v.status.isLeaf || v.isSpent === true,
+                settled: true,
               }),
             );
           }

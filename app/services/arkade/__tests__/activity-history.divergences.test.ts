@@ -77,12 +77,11 @@ describe("Phase H — pinned divergences", () => {
   // 94b4a34, Arkade's preconfirmed state is the wallet's fast-finality
   // promise and the user considers funds spendable.
   //
-  // Note the deliberate asymmetry with asset rows (D-2 / spec §7 D-3):
-  // asset semantics carry no such promise, so asset receives propagate
-  // the real settled flag.
+  // Asset-bearing Arkade receives follow the same app policy and are pinned in
+  // builder case D-3.
   //
-  // Pinning here so a future "make everything reflect SDK settled"
-  // refactor surfaces the conflict.
+  // Pinning here so a future "make everything reflect SDK settled" refactor
+  // surfaces the conflict.
   it("DIV-3a: preconfirmed BTC offchain receive is 'confirmed' (not 'pending')", async () => {
     const received = vtxo({ txid: "preconf-recv", value: 1000 });
 

@@ -228,10 +228,10 @@ Builder-specific invariants on top of that schema:
 - `kind` = `"wallet_event"`.
 - `status`: derived from the `settled` parameter passed into
   `buildAssetActivity` — `"confirmed"` when settled, else `"pending"`.
-  Callers must compute `settled` per §10 Phase B.5 (offchain receive:
-  `isLeaf || isSpent`; offchain send: `true`; commitment-derived asset row:
-  `true`). Intentionally asymmetric with the BTC offchain receive policy
-  (§7 D-3).
+  Callers must compute `settled` from the user-facing Arkade policy (offchain
+  receive: `true`; offchain send: `true`; commitment-derived asset row:
+  `true`). Asset-bearing offchain receives share the fast-finality treatment
+  used by BTC offchain receives (§7 D-3).
 - `direction`:
   - `"in"` if classification is `asset_received`.
   - `"out"` if classification is `asset_sent`.
@@ -513,16 +513,12 @@ implementation. Each row is a fact a test should pin.
   *Test implication*: when wiring `mergeActivities` and any title/icon
   registries, ensure `boarding_settled` is registered.
 
-- **D-2 Asset row `status` is hardcoded `"confirmed"` (TO BE FIXED in Phase B.5).**
+- **D-2 Asset row `status` follows the app's Arkade finality policy.**
   MILESTONE_3 §Asset Activity suggests `status: settled ? "confirmed" : "pending"`.
-  The current implementation does not propagate a settled flag from the
-  underlying tx; all asset rows are emitted as confirmed.
-  **Decision (2026-05-12)**: this is a data-integrity bug — a preconfirmed
-  asset receive must not display as final. Fix during Phase B.5 before
-  writing tests, so the test suite pins the *correct* behavior.
+  The builder still takes a `settled` input, but offchain Arkade asset receives
+  are considered fast-final by the app and display as confirmed immediately.
   Resolution rule:
-  - Asset receive (offchain): `settled = v.status.isLeaf || v.isSpent`
-    (SDK parity).
+  - Asset receive (offchain): `settled = true`.
   - Asset send (offchain): `settled = true` (user-initiated).
   - Asset row from a commitment settlement (after Phase G): `settled = true`
     (commitment is final).
@@ -532,10 +528,8 @@ implementation. Each row is a fact a test should pin.
   pending"). MILESTONE_3 does not pin a status for offchain receives but the
   earlier app behavior used `"pending"`.
   *Test implication*: pin to `"confirmed"`.
-  *Note*: this is **intentionally asymmetric** with D-2 (assets). Arkade's
-  preconfirmed BTC state is the wallet's "received" UX promise — funds are
-  spendable; calling it confirmed matches user mental model. Assets carry
-  no such fast-finality promise, so they propagate the real settled flag.
+  *Note*: asset-bearing offchain receives now use the same app-level finality
+  policy; see D-2 and builder test D-3.
 
 - **D-4 `created` filter (FIXED in Phase B.5).** Originally used
   `commitmentTxIds?.every(id => id === commitmentTxid)`, which silently
@@ -1428,9 +1422,9 @@ Plan:
   row per leaf; we collapse to one per commitment with aggregated value.
   The collapsed form is arguably better UX (fewer redundant rows for the
   same commitment), so this may stay as-is even after review.
-- **DIV-3 (`settled` flag for BTC offchain receives)**: intentional per
-  commit `94b4a34`; add a comment in the test file. No code change.
-  Asymmetric with D-2 by design — see §7 D-3 note.
+- **DIV-3 (`settled` flag for offchain receives)**: intentional per
+  commit `94b4a34`; comments in the test file pin BTC receives, and builder
+  test D-3 pins asset-bearing receives.
 - ~~**D-2**~~ — *fixed in Phase B.5.*
 - **Performance**: the builder is `O(commitments × vtxos)` because the
   per-commitment loop re-filters `sorted` on each iteration (one pass for
