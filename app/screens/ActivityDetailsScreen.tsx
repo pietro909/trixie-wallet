@@ -9,7 +9,7 @@ import {
   Repeat,
 } from "lucide-react-native";
 import type * as React from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import Button from "../components/Button";
 import CopyableField from "../components/CopyableField";
@@ -26,6 +26,10 @@ import {
 } from "../services/activity-details/buildSections";
 import { collectSwapMetadataExport } from "../services/activity-details/swapMetadataExport";
 import { statusAmountColor, statusVisuals } from "../services/activity-status";
+import {
+  type ChainRefundReadiness,
+  getChainRefundReadinessById,
+} from "../services/arkade/lightning";
 import type { Activity } from "../store/types";
 import { useAppStore } from "../store/useAppStore";
 import { type AppTheme, radius, spacing, typography } from "../theme/theme";
@@ -152,13 +156,42 @@ export default function ActivityDetailsScreen() {
   // rules-of-hooks.
   const chainSwapId =
     activity?.source.type === "boltz_swap" ? activity.source.swapId : null;
+  const activitySaysChainRefundAvailable =
+    activity?.source.type === "boltz_swap" &&
+    activity.source.swapType === "chain" &&
+    activity.metadata?.refundAvailable === true;
   // Mirror the row id format used by `recovery.ts` so the refund button on
   // this screen and the row in ProfileRecovery share spinner / error state.
   const recoveryRowId = chainSwapId ? `chain:${chainSwapId}` : null;
+  const [chainRefundReadiness, setChainRefundReadiness] = useState<
+    ChainRefundReadiness | "checking" | null
+  >(null);
   const activityTitle = activity?.title ?? "";
   const activityTimestamp = activity?.timestamp ?? 0;
+
+  useEffect(() => {
+    if (!activitySaysChainRefundAvailable || !chainSwapId) {
+      setChainRefundReadiness(null);
+      return;
+    }
+    let cancelled = false;
+    setChainRefundReadiness("checking");
+    getChainRefundReadinessById(chainSwapId)
+      .then((readiness) => {
+        if (!cancelled) setChainRefundReadiness(readiness);
+      })
+      .catch(() => {
+        if (!cancelled) setChainRefundReadiness("unknown");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activitySaysChainRefundAvailable, chainSwapId]);
+
   const performRefund = useCallback(async () => {
-    if (!chainSwapId || !recoveryRowId) return;
+    if (!chainSwapId || !recoveryRowId || chainRefundReadiness !== "ready") {
+      return;
+    }
     const result = await runRecoveryAction("refund_chain_ark", recoveryRowId, {
       id: recoveryRowId,
       swapId: chainSwapId,
@@ -185,6 +218,7 @@ export default function ActivityDetailsScreen() {
     activityTimestamp,
     rowErrors,
     showToast,
+    chainRefundReadiness,
   ]);
 
   if (!activity) {
@@ -225,9 +259,12 @@ export default function ActivityDetailsScreen() {
 
   const isBoltzSwap = activity.source.type === "boltz_swap";
   const refundableChainSwap =
-    activity.source.type === "boltz_swap" &&
-    activity.source.swapType === "chain" &&
-    activity.metadata?.refundAvailable === true;
+    activitySaysChainRefundAvailable && chainRefundReadiness === "ready";
+  const chainRefundUnavailable =
+    activitySaysChainRefundAvailable &&
+    chainRefundReadiness != null &&
+    chainRefundReadiness !== "checking" &&
+    chainRefundReadiness !== "ready";
   const refunding = recoveryRowId != null && recoveringIds.has(recoveryRowId);
   const refundError =
     recoveryRowId != null ? rowErrors[recoveryRowId] : undefined;
@@ -353,6 +390,22 @@ export default function ActivityDetailsScreen() {
                 : refundError.message}
             </Text>
           ) : null}
+        </View>
+      ) : null}
+
+      {chainRefundUnavailable ? (
+        <View style={styles.refundCard}>
+          <Text style={[styles.refundBody, { color: theme.colors.textMuted }]}>
+            {chainRefundReadiness === "missing_material"
+              ? "This swap expired, but this device is missing the refund details needed to build the Arkade recovery transaction. Export a support bundle from Profile -> Recovery."
+              : chainRefundReadiness === "not_found"
+                ? "This swap is no longer in the local swap repository. Export a support bundle from Profile -> Recovery."
+                : chainRefundReadiness === "endpoint_not_found"
+                  ? "This swap is not known by the configured Boltz endpoints. Export a support bundle from Profile -> Recovery."
+                  : chainRefundReadiness === "unknown"
+                    ? "This swap expired, but refund readiness could not be verified. Export a support bundle from Profile -> Recovery."
+                    : "This swap expired, but this device cannot find a refundable Arkade VHTLC for it. Export a support bundle from Profile -> Recovery."}
+          </Text>
         </View>
       ) : null}
 

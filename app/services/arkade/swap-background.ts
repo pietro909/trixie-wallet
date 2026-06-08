@@ -1,17 +1,28 @@
-import { SWAP_POLL_TASK_TYPE } from "@arkade-os/boltz-swap/expo";
 import {
-  defineExpoSwapBackgroundTask,
+  type PersistedSwapBackgroundConfig,
   registerExpoSwapBackgroundTask,
+  SWAP_POLL_TASK_TYPE,
+  type SwapTaskDependencies,
+  swapsPollProcessor,
   unregisterExpoSwapBackgroundTask,
 } from "@arkade-os/boltz-swap/expo/background";
 import { SQLiteSwapRepository } from "@arkade-os/boltz-swap/repositories/sqlite";
+import { ArkAddress } from "@arkade-os/sdk";
+import {
+  ExpoArkProvider,
+  ExpoIndexerProvider,
+} from "@arkade-os/sdk/adapters/expo";
 import {
   AsyncStorageTaskQueue,
+  runTasks,
   type TaskItem,
   type TaskResult,
 } from "@arkade-os/sdk/worker/expo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { hex } from "@scure/base";
+import * as BackgroundTask from "expo-background-task";
 import * as Notifications from "expo-notifications";
+import * as TaskManager from "expo-task-manager";
 import type { ArkadeWalletMetadata } from "../../store/types";
 import {
   type BgTaskSummary,
@@ -21,6 +32,7 @@ import {
 import { recordPersistedError } from "../diagnostics/persisted";
 import { scheduleLocalNotification } from "../notifications";
 import { decideNotification } from "../notifications/policy";
+import { createTrixieBoltzSwapProvider } from "./boltz-endpoints";
 import { buildIdentityFromSecret } from "./identity";
 import { isMainnetForNetworkName } from "./network";
 import { readSecret } from "./secret-store";
@@ -281,6 +293,54 @@ async function identityFactory() {
   }
 }
 
+function createBackgroundWalletShim(args: {
+  identity: SwapTaskDependencies["identity"];
+  getAddress: () => Promise<string>;
+}): SwapTaskDependencies["wallet"] {
+  const notImplemented = (method: string): never => {
+    throw new Error(
+      '[boltz-swap] Background wallet shim: "' +
+        method +
+        '" is not implemented',
+    );
+  };
+
+  return {
+    identity: args.identity,
+    getAddress: args.getAddress,
+    getBoardingAddress: async () => notImplemented("getBoardingAddress"),
+    getBalance: async () => notImplemented("getBalance"),
+    getVtxos: async () => notImplemented("getVtxos"),
+    getBoardingUtxos: async () => notImplemented("getBoardingUtxos"),
+    getTransactionHistory: async () => notImplemented("getTransactionHistory"),
+    getContractManager: async () => notImplemented("getContractManager"),
+    getDelegateManager: async () => notImplemented("getDelegateManager"),
+    getDelegatorManager: async () => notImplemented("getDelegatorManager"),
+    sendBitcoin: async () => notImplemented("sendBitcoin"),
+    send: async () => notImplemented("send"),
+    settle: async () => notImplemented("settle"),
+    assetManager: new Proxy(
+      {},
+      {
+        get: (_target, prop) => notImplemented(`assetManager.${String(prop)}`),
+      },
+    ) as SwapTaskDependencies["wallet"]["assetManager"],
+  } as SwapTaskDependencies["wallet"];
+}
+
+async function buildBackgroundAddress(args: {
+  identity: SwapTaskDependencies["identity"];
+  arkProvider: SwapTaskDependencies["arkProvider"];
+}): Promise<string> {
+  const info = await args.arkProvider.getInfo();
+  const serverPubKey = hex.decode(info.signerPubkey);
+  const xOnlyServerPubKey =
+    serverPubKey.length === 33 ? serverPubKey.slice(1) : serverPubKey;
+  const pubkey = await args.identity.xOnlyPublicKey();
+  const hrp = info.network === "bitcoin" ? "ark" : "tark";
+  return new ArkAddress(xOnlyServerPubKey, pubkey, hrp).encode();
+}
+
 export async function rememberSwapBackgroundWallet(
   metadata: ArkadeWalletMetadata,
 ): Promise<void> {
@@ -363,10 +423,55 @@ export async function drainSwapPollResults(): Promise<
 // OS-scheduled wake can find it. Activation of the OS scheduler itself is
 // deferred to `ensureSwapBackgroundRegistered`, called from the lifecycle
 // once a wallet is available.
-defineExpoSwapBackgroundTask(SWAP_BACKGROUND_TASK_NAME, {
-  taskQueue: swapTaskQueue,
-  swapRepository: createSwapRepository(),
-  identityFactory,
+TaskManager.defineTask(SWAP_BACKGROUND_TASK_NAME, async () => {
+  try {
+    const config =
+      await swapTaskQueue.loadConfig<PersistedSwapBackgroundConfig>();
+    if (!config) return BackgroundTask.BackgroundTaskResult.Success;
+
+    const identity = await identityFactory();
+    const arkProvider = new ExpoArkProvider(config.arkServerUrl);
+    const indexerProvider = new ExpoIndexerProvider(config.arkServerUrl);
+    const swapProvider = createTrixieBoltzSwapProvider({
+      network: config.network,
+      apiUrl: config.boltzApiUrl,
+    });
+    const wallet = createBackgroundWalletShim({
+      identity,
+      getAddress: () => buildBackgroundAddress({ identity, arkProvider }),
+    });
+    const deps: SwapTaskDependencies = {
+      swapRepository: createSwapRepository(),
+      swapProvider,
+      arkProvider,
+      indexerProvider,
+      identity,
+      wallet,
+    };
+
+    await runTasks(swapTaskQueue, [swapsPollProcessor], deps);
+    const results = await swapTaskQueue.getResults();
+    if (results.length > 0) {
+      await swapTaskQueue.acknowledgeResults(results.map((r) => r.id));
+    }
+    const existing = await swapTaskQueue.getTasks(SWAP_POLL_TASK_TYPE);
+    if (existing.length === 0) {
+      await swapTaskQueue.addTask({
+        id: newTaskId(),
+        type: SWAP_POLL_TASK_TYPE,
+        data: {},
+        createdAt: Date.now(),
+      });
+    }
+    return BackgroundTask.BackgroundTaskResult.Success;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
+    await recordPersistedError("lightning", `bg_swap_task_failed: ${message}`, {
+      stack,
+    });
+    return BackgroundTask.BackgroundTaskResult.Failed;
+  }
 });
 
 /**
