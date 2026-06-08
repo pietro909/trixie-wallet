@@ -224,6 +224,21 @@ describe("TrixieBoltzSwapProvider", () => {
     });
   });
 
+  it("throws not found for status after all endpoints miss without re-querying primary", async () => {
+    mockGetSwapStatus
+      .mockRejectedValueOnce(new SwapNotFoundError("s1"))
+      .mockRejectedValueOnce(new SwapNotFoundError("s1"));
+
+    await expect(provider.getSwapStatus("s1")).rejects.toBeInstanceOf(
+      SwapNotFoundError,
+    );
+    expect(mockGetSwapStatus).toHaveBeenCalledTimes(2);
+    expect(mockGetSwapStatus.mock.calls.map((call) => call[1].apiUrl)).toEqual([
+      "https://api.boltz.exchange",
+      "https://api.ark.boltz.exchange",
+    ]);
+  });
+
   it("does not try legacy after a generic primary status error", async () => {
     mockGetSwapStatus.mockRejectedValueOnce(new Error("rate limited"));
 
@@ -268,6 +283,29 @@ describe("TrixieBoltzSwapProvider", () => {
       checkpoint,
       expect.objectContaining({ apiUrl: "https://api.ark.boltz.exchange" }),
     );
+  });
+
+  it("throws not found for swap-id operations after all endpoints miss without calling the operation", async () => {
+    const transaction = {} as Parameters<
+      TrixieBoltzSwapProvider["refundChainSwap"]
+    >[1];
+    const checkpoint = {} as Parameters<
+      TrixieBoltzSwapProvider["refundChainSwap"]
+    >[2];
+    mockGetSwapStatus
+      .mockRejectedValueOnce(new SwapNotFoundError("s1"))
+      .mockRejectedValueOnce(new SwapNotFoundError("s1"));
+
+    await expect(
+      provider.refundChainSwap("s1", transaction, checkpoint),
+    ).rejects.toBeInstanceOf(SwapNotFoundError);
+
+    expect(mockGetSwapStatus).toHaveBeenCalledTimes(2);
+    expect(mockGetSwapStatus.mock.calls.map((call) => call[1].apiUrl)).toEqual([
+      "https://api.boltz.exchange",
+      "https://api.ark.boltz.exchange",
+    ]);
+    expect(mockRefundChainSwap).not.toHaveBeenCalled();
   });
 
   it("delegates refundSubmarineSwap to a legacy-bound raw provider", async () => {

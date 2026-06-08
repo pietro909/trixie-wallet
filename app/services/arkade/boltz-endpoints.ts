@@ -130,7 +130,11 @@ export class TrixieBoltzSwapProvider extends BoltzSwapProvider {
       swapId,
     });
 
-    if ("kind" in resolved || this.getApiUrl() === resolved.apiUrl) {
+    if ("kind" in resolved) {
+      throw new SwapNotFoundError(swapId);
+    }
+
+    if (this.getApiUrl() === resolved.apiUrl) {
       return fallbackToSuper();
     }
 
@@ -147,7 +151,7 @@ export class TrixieBoltzSwapProvider extends BoltzSwapProvider {
       swapId: id,
     });
     if ("kind" in resolved) {
-      return super.getSwapStatus(id);
+      throw new SwapNotFoundError(id);
     }
     return resolved.response;
   }
