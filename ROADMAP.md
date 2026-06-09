@@ -65,6 +65,8 @@ Last updated: 2026-05-25 (Milestone 25 delivered; Milestone 26: Loading Feedback
   - Surface in-flight refresh state on Wallet and Activity (driver: ~3s cold-start gap), then a motion-polish pass on send/receive, then expressive loaders for backup and support-bundle export.
 - [ ] Milestone 27: Localization & Internationalization (i18n) ([docs/MILESTONE_27.agents.md](./docs/MILESTONE_27.agents.md))
   - Remove hardcoded English strings, introduce a robust localization framework (i18next + expo-localization), and ensure locale-aware number/date formatting throughout the app.
+- [ ] Milestone 28: HD Wallet Address Rotation ([docs/MILESTONE_28.agents.md](./docs/MILESTONE_28.agents.md))
+  - Enable privacy-preserving address rotation for mnemonic-based wallets via `walletMode: "hd"`, allowing users to toggle between static and rotating addresses.
 
 ## Relevant Documentation
 

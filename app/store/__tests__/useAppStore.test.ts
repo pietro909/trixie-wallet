@@ -336,7 +336,7 @@ describe("useAppStore hydrate / schema mismatch", () => {
 
   it("hydrates normally when stored version matches", async () => {
     getItem.mockResolvedValueOnce(
-      JSON.stringify({ schemaVersion: 6, wallet: null }),
+      JSON.stringify({ schemaVersion: 7, wallet: null }),
     );
 
     await useAppStore.getState().hydrate();
@@ -407,6 +407,7 @@ describe("useAppStore setArkadeNetwork", () => {
         type: "arkade",
         label: "x",
         identityKind: "mnemonic",
+        walletMode: "static" as const,
         publicKeyHex: "00",
         arkServerUrl: MUTINYNET_ARK_SERVER_URL,
         network: "mutinynet",
@@ -460,6 +461,7 @@ function makeWalletMetadata() {
     type: "arkade" as const,
     label: "x",
     identityKind: "mnemonic" as const,
+    walletMode: "static" as const,
     publicKeyHex: "00",
     arkServerUrl: MUTINYNET_ARK_SERVER_URL,
     network: "mutinynet",
@@ -787,7 +789,7 @@ describe("useAppStore.exportBackup — contract labels", () => {
       version: number;
       contractLabels: { script: string; label: string }[];
     };
-    expect(built.version).toBe(3);
+    expect(built.version).toBe(4);
     expect(built.contractLabels).toEqual([{ script: "s1", label: "Primary" }]);
   });
 });

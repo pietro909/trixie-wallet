@@ -51,6 +51,7 @@ export type WalletSnapshot = {
 
 let activeWalletId: string | null = null;
 let activeBehaviorKey: string | null = null;
+let activeWalletMode: "static" | "hd" | null = null;
 let activeWalletPromise: Promise<Wallet> | null = null;
 let activeWalletInstance: Wallet | null = null;
 let incomingFundsListener: ((funds: IncomingFunds) => void) | null = null;
@@ -181,6 +182,7 @@ async function buildWallet(
   arkServerUrl: string,
   network: string,
   behavior: WalletBehavior,
+  walletMode: "static" | "hd",
   esploraUrl?: string,
 ): Promise<Wallet> {
   const repos = createRepositories(walletId);
@@ -205,6 +207,7 @@ async function buildWallet(
   try {
     return await Wallet.create({
       identity: artifacts.identity,
+      walletMode,
       arkServerUrl,
       arkProvider: new ExpoArkProvider(arkServerUrl),
       indexerProvider: new ExpoIndexerProvider(arkServerUrl),
@@ -291,6 +294,7 @@ export type CreateWalletInput = {
   arkServerUrl: string;
   network: string;
   behavior: WalletBehavior;
+  walletMode: "static" | "hd";
   esploraUrl?: string;
 };
 
@@ -303,13 +307,58 @@ export async function createWalletInstance(
     input.arkServerUrl,
     input.network,
     input.behavior,
+    input.walletMode,
     input.esploraUrl,
   );
   activeWalletId = input.walletId;
   activeBehaviorKey = behaviorKey(input.behavior);
+  activeWalletMode = input.walletMode;
   activeWalletInstance = wallet;
   activeWalletPromise = Promise.resolve(wallet);
   await attachIncomingFundsSubscription(wallet);
+  const snapshot = await snapshotWallet(wallet, input.arkServerUrl, {
+    network: input.network,
+  });
+  return { wallet, snapshot };
+}
+
+export type RestoreStage = "initializing" | "scanning" | "syncing";
+
+export type RestoreWalletInput = CreateWalletInput & {
+  gapLimit?: number;
+  onStage?: (stage: RestoreStage) => void;
+};
+
+export async function restoreWalletInstance(
+  input: RestoreWalletInput,
+): Promise<{ wallet: Wallet; snapshot: WalletSnapshot }> {
+  input.onStage?.("initializing");
+  const wallet = await buildWallet(
+    input.walletId,
+    input.artifacts,
+    input.arkServerUrl,
+    input.network,
+    input.behavior,
+    input.walletMode,
+    input.esploraUrl,
+  );
+
+  if (
+    input.walletMode === "hd" &&
+    input.artifacts.identityKind === "mnemonic"
+  ) {
+    input.onStage?.("scanning");
+    await wallet.restore({ gapLimit: input.gapLimit ?? 20 });
+  }
+
+  activeWalletId = input.walletId;
+  activeBehaviorKey = behaviorKey(input.behavior);
+  activeWalletMode = input.walletMode;
+  activeWalletInstance = wallet;
+  activeWalletPromise = Promise.resolve(wallet);
+  await attachIncomingFundsSubscription(wallet);
+
+  input.onStage?.("syncing");
   const snapshot = await snapshotWallet(wallet, input.arkServerUrl, {
     network: input.network,
   });
@@ -327,6 +376,7 @@ export async function ensureWallet(input: EnsureWalletInput): Promise<Wallet> {
   if (
     activeWalletId === metadata.id &&
     activeBehaviorKey === nextBehaviorKey &&
+    activeWalletMode === metadata.walletMode &&
     activeWalletInstance &&
     activeWalletPromise
   ) {
@@ -347,6 +397,7 @@ export async function ensureWallet(input: EnsureWalletInput): Promise<Wallet> {
       metadata.arkServerUrl,
       network,
       behavior,
+      metadata.walletMode,
       metadata.esploraUrl,
     );
     activeWalletInstance = wallet;
@@ -355,10 +406,12 @@ export async function ensureWallet(input: EnsureWalletInput): Promise<Wallet> {
   })();
   activeWalletId = metadata.id;
   activeBehaviorKey = nextBehaviorKey;
+  activeWalletMode = metadata.walletMode;
   activeWalletPromise = promise.catch((e) => {
     if (activeWalletId === metadata.id) {
       activeWalletId = null;
       activeBehaviorKey = null;
+      activeWalletMode = null;
       activeWalletInstance = null;
       activeWalletPromise = null;
     }
@@ -396,6 +449,7 @@ export async function disposeWallet(): Promise<void> {
   detachIncomingFundsSubscription();
   activeWalletId = null;
   activeBehaviorKey = null;
+  activeWalletMode = null;
   activeWalletInstance = null;
   activeWalletPromise = null;
   if (instance) {
