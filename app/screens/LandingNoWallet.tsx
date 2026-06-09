@@ -1,7 +1,7 @@
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ShieldCheck } from "lucide-react-native";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AddressModeSelector from "../components/AddressModeSelector";
@@ -31,18 +31,24 @@ export default function LandingNoWallet() {
   const { showToast } = useToast();
   const { isLoading, message, show, hide } = useLoading();
   const [walletMode, setWalletMode] = useState<"static" | "hd">("static");
+  const activeRef = useRef(true);
 
   async function handleCreate(kind: CreateWalletKind) {
+    activeRef.current = true;
     show(STAGES[0]);
     try {
       const stagePromise = (async () => {
         for (let i = 1; i < STAGES.length; i++) {
           await new Promise((r) => setTimeout(r, 700));
-          show(STAGES[i]);
+          if (activeRef.current) show(STAGES[i]);
         }
       })();
-      await createWallet(kind, kind === "mnemonic" ? walletMode : "static");
-      await stagePromise;
+      try {
+        await createWallet(kind, kind === "mnemonic" ? walletMode : "static");
+        await stagePromise;
+      } finally {
+        activeRef.current = false;
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Wallet creation failed";
       showToast(msg, "error");
