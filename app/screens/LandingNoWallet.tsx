@@ -1,61 +1,19 @@
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ShieldCheck } from "lucide-react-native";
-import { useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import AddressModeSelector from "../components/AddressModeSelector";
 import Button from "../components/Button";
-import LoadingOverlay from "../components/LoadingOverlay";
 import NetworkSelector from "../components/NetworkSelector";
-import { useToast } from "../components/ToastProvider";
-import { useLoading } from "../hooks/useLoading";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../navigation/RootStack";
-import { type CreateWalletKind, useAppStore } from "../store/useAppStore";
 import { spacing, typography } from "../theme/theme";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Landing">;
 
-const STAGES = [
-  "Connecting to Arkade…",
-  "Generating wallet…",
-  "Creating addresses…",
-  "Syncing balance…",
-];
-
 export default function LandingNoWallet() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
-  const createWallet = useAppStore((s) => s.createWallet);
-  const { showToast } = useToast();
-  const { isLoading, message, show, hide } = useLoading();
-  const [walletMode, setWalletMode] = useState<"static" | "hd">("static");
-  const activeRef = useRef(true);
-
-  async function handleCreate(kind: CreateWalletKind) {
-    activeRef.current = true;
-    show(STAGES[0]);
-    try {
-      const stagePromise = (async () => {
-        for (let i = 1; i < STAGES.length; i++) {
-          await new Promise((r) => setTimeout(r, 700));
-          if (activeRef.current) show(STAGES[i]);
-        }
-      })();
-      try {
-        await createWallet(kind, kind === "mnemonic" ? walletMode : "static");
-        await stagePromise;
-      } finally {
-        activeRef.current = false;
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Wallet creation failed";
-      showToast(msg, "error");
-    } finally {
-      hide();
-    }
-  }
 
   return (
     <SafeAreaView
@@ -70,7 +28,7 @@ export default function LandingNoWallet() {
           Your self-custodial Arkade wallet
         </Text>
         <View style={styles.selector}>
-          <NetworkSelector theme={theme} disabled={isLoading} />
+          <NetworkSelector theme={theme} />
         </View>
       </View>
 
@@ -82,42 +40,19 @@ export default function LandingNoWallet() {
           onPress={() => nav.navigate("IntroCarousel")}
           style={styles.learnMore}
         />
-
-        <View style={styles.mnemonicSection}>
-          <Button
-            label="Create seed phrase wallet"
-            theme={theme}
-            onPress={() => handleCreate("mnemonic")}
-            loading={isLoading}
-          />
-          <AddressModeSelector
-            theme={theme}
-            value={walletMode}
-            onChange={setWalletMode}
-            disabled={isLoading}
-          />
-        </View>
-
         <Button
-          label="Create single key wallet"
-          variant="secondary"
+          label="Create wallet"
           theme={theme}
-          onPress={() => handleCreate("singleKey")}
-          style={styles.singleKeyBtn}
-          disabled={isLoading}
+          onPress={() => nav.navigate("CreateWallet")}
         />
-
         <Button
           label="Restore wallet"
-          variant="ghost"
+          variant="secondary"
           theme={theme}
           onPress={() => nav.navigate("RestoreWallet")}
           style={styles.restoreBtn}
-          disabled={isLoading}
         />
       </View>
-
-      <LoadingOverlay visible={isLoading} message={message} theme={theme} />
     </SafeAreaView>
   );
 }
@@ -149,17 +84,10 @@ const styles = StyleSheet.create({
     paddingBottom: spacing[8],
   },
   learnMore: {
-    marginBottom: spacing[5],
+    marginBottom: spacing[3],
     alignSelf: "center",
-  },
-  mnemonicSection: {
-    gap: spacing[4],
-  },
-  singleKeyBtn: {
-    marginTop: spacing[3],
   },
   restoreBtn: {
-    marginTop: spacing[4],
-    alignSelf: "center",
+    marginTop: spacing[3],
   },
 });

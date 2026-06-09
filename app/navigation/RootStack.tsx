@@ -14,6 +14,7 @@ import AssetDetailScreen from "../screens/assets/AssetDetailScreen";
 import AssetImportScreen from "../screens/assets/AssetImportScreen";
 import AssetMintScreen from "../screens/assets/AssetMintScreen";
 import AssetReissueScreen from "../screens/assets/AssetReissueScreen";
+import CreateWallet from "../screens/CreateWallet";
 import ContractDetailScreen from "../screens/contracts/ContractDetailScreen";
 import ContractsScreen from "../screens/contracts/ContractsScreen";
 import IntroCarousel from "../screens/IntroCarousel";
@@ -49,6 +50,7 @@ import RootTabs from "./RootTabs";
 export type RootStackParamList = {
   Landing: undefined;
   IntroCarousel: undefined;
+  CreateWallet: undefined;
   RestoreWallet: undefined;
   RestoreBackupPassword: { envelope: EncryptedEnvelope };
   Unlock: undefined;
@@ -230,6 +232,11 @@ export default function RootStack() {
             options={{ animation: "fade" }}
           />
           <Stack.Screen name="IntroCarousel" component={IntroCarousel} />
+          <Stack.Screen
+            name="CreateWallet"
+            component={CreateWallet}
+            options={{ ...headerOptions, title: "Create wallet" }}
+          />
           <Stack.Screen
             name="RestoreWallet"
             component={RestoreWallet}
