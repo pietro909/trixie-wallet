@@ -20,6 +20,7 @@ const wallet: ArkadeWalletMetadata = {
   type: "arkade",
   label: "Test wallet",
   identityKind: "mnemonic",
+  walletMode: "static",
   publicKeyHex: "00",
   arkServerUrl: "https://ark.example",
   network: "mutinynet",
@@ -211,9 +212,9 @@ describe("backup serializer contract labels round-trip", () => {
     ]);
   });
 
-  it("stamps the new version as 3", () => {
+  it("stamps the new version as 4", () => {
     const built = buildWithLabels([]);
-    expect(built.version).toBe(3);
+    expect(built.version).toBe(4);
   });
 
   it("falls back to an empty contractLabels list for v1 backups", () => {
@@ -300,5 +301,108 @@ describe("backup serializer contract labels round-trip", () => {
     const wire = JSON.parse(JSON.stringify(payload));
     const parsed = parseBackupPayload(wire);
     expect(parsed.contractLabels).toEqual([{ script: "s1", label: "Second" }]);
+  });
+});
+
+describe("backup serializer walletMode round-trip", () => {
+  it("round-trips walletMode: hd", () => {
+    const hdWallet: ArkadeWalletMetadata = { ...wallet, walletMode: "hd" };
+    const built = buildBackupPayload({
+      wallet: hdWallet,
+      walletBehavior,
+      preferences: {
+        theme: "system",
+        fiatCurrency: "EUR",
+        bitcoinUnit: "auto",
+        notifications: { enabled: false, swaps: false, payments: false },
+      },
+      secret,
+      swapMetadata: [],
+      boltzSwaps: [],
+      importedAssetIds: [],
+      contractLabels: [],
+    });
+    const wire = JSON.parse(JSON.stringify(built));
+    const parsed = parseBackupPayload(wire);
+    expect(parsed.wallet.walletMode).toBe("hd");
+  });
+
+  it("defaults walletMode to static for v1-v3 backups", () => {
+    const v3 = {
+      version: 3,
+      createdAt: 1,
+      wallet: {
+        id: "w1",
+        label: "x",
+        identityKind: "mnemonic",
+        arkServerUrl: "https://ark.example",
+        esploraUrl: null,
+        network: "mutinynet",
+      },
+      walletBehavior,
+      preferences: {
+        theme: "system",
+        fiatCurrency: "EUR",
+        bitcoinUnit: "auto",
+      },
+      secret,
+      swapMetadata: [],
+      boltzSwaps: [],
+      importedAssetIds: [],
+      contractLabels: [],
+    };
+    const parsed = parseBackupPayload(v3);
+    expect(parsed.wallet.walletMode).toBe("static");
+  });
+
+  it("rejects walletMode: hd for singleKey identities", () => {
+    const skSecret: StoredSecret = { kind: "singleKey", privateKeyHex: "00" };
+    const skWallet: ArkadeWalletMetadata = {
+      ...wallet,
+      identityKind: "singleKey",
+      walletMode: "hd",
+    };
+    const built = buildBackupPayload({
+      wallet: skWallet,
+      walletBehavior,
+      preferences: {
+        theme: "system",
+        fiatCurrency: "EUR",
+        bitcoinUnit: "auto",
+        notifications: { enabled: false, swaps: false, payments: false },
+      },
+      secret: skSecret,
+      swapMetadata: [],
+      boltzSwaps: [],
+      importedAssetIds: [],
+      contractLabels: [],
+    });
+    const wire = JSON.parse(JSON.stringify(built));
+    expect(() => parseBackupPayload(wire)).toThrow(
+      /HD mode is only supported for mnemonic identities/,
+    );
+  });
+
+  it("rejects invalid walletMode in v4 payloads", () => {
+    const built = buildBackupPayload({
+      wallet,
+      walletBehavior,
+      preferences: {
+        theme: "system",
+        fiatCurrency: "EUR",
+        bitcoinUnit: "auto",
+        notifications: { enabled: false, swaps: false, payments: false },
+      },
+      secret,
+      swapMetadata: [],
+      boltzSwaps: [],
+      importedAssetIds: [],
+      contractLabels: [],
+    });
+    const wire = JSON.parse(JSON.stringify(built)) as Record<string, any>;
+    wire.wallet.walletMode = "bogus";
+    expect(() => parseBackupPayload(wire)).toThrow(
+      /Backup wallet.walletMode is missing or invalid/,
+    );
   });
 });

@@ -86,6 +86,7 @@ import {
   ensureWallet,
   probeServer,
   refreshWalletSnapshot,
+  restoreWalletInstance,
   setIncomingFundsListener,
   type WalletSnapshot,
 } from "../services/arkade/runtime";
@@ -155,13 +156,14 @@ import type {
   LightningResumeState,
   LightningResumeTrigger,
   NotificationPreferences,
+  RestoreProgress,
   SyncStage,
   SyncState,
   ThemePref,
   WalletBehavior,
 } from "./types";
 
-const CURRENT_SCHEMA_VERSION: AppState["schemaVersion"] = 6;
+const CURRENT_SCHEMA_VERSION: AppState["schemaVersion"] = 7;
 
 // PBKDF2 cost for the unlock password hash. Each guess against an exfiltrated
 // `app_state_v1` must pay this iteration count, so we set it higher than the
@@ -327,7 +329,7 @@ const BACKGROUND_TASK_DESCRIPTORS: Record<
 };
 
 const DEFAULT_STATE: AppState = {
-  schemaVersion: 6,
+  schemaVersion: 7,
   wallet: null,
   network: {
     arkServerUrl: DEFAULT_ARK_SERVER_URL,
@@ -396,6 +398,13 @@ type StoreState = AppState & {
    * `_hydrated` / `_schemaMismatch`.
    */
   _syncState: SyncState;
+  /**
+   * In-flight signal for `restoreWallet` (mnemonic only). `{ status: "idle" }`
+   * when no restore is running; `{ status: "restoring", ... }` for the
+   * duration of the SDK scan and snapshot sync. Lifecycle metadata — not
+   * persisted, same as `_syncState`.
+   */
+  restoreProgress: RestoreProgress;
   /** Per-row spinner gate, keyed by `RecoveryItem.id`. */
   recoveringIds: Set<string>;
   /** Per-row error display, keyed by `RecoveryItem.id`. */
@@ -404,8 +413,14 @@ type StoreState = AppState & {
   acknowledgeSchemaMismatchAndWipe: () => Promise<void>;
   refreshServer: () => Promise<void>;
   setArkadeNetwork: (network: "bitcoin" | "mutinynet") => Promise<void>;
-  createWallet: (kind: CreateWalletKind) => Promise<void>;
-  restoreWallet: (input: RestoreInput) => Promise<void>;
+  createWallet: (
+    kind: CreateWalletKind,
+    walletMode: "static" | "hd",
+  ) => Promise<void>;
+  restoreWallet: (
+    input: RestoreInput,
+    walletMode: "static" | "hd",
+  ) => Promise<void>;
   refreshWallet: () => Promise<void>;
   resumeLightning: (trigger: LightningResumeTrigger) => Promise<void>;
   sendArkade: (address: string, amountSats: number) => Promise<string>;
@@ -580,6 +595,7 @@ function buildMetadata(
   esploraUrl: string | undefined,
   network: string,
   artifacts: IdentityArtifacts,
+  walletMode: "static" | "hd",
   snapshot: WalletSnapshot,
   activities: Activity[],
 ): ArkadeWalletMetadata {
@@ -588,6 +604,7 @@ function buildMetadata(
     type: "arkade",
     label: artifacts.identityKind === "mnemonic" ? "Arkade Seed" : "Arkade Key",
     identityKind: artifacts.identityKind,
+    walletMode,
     publicKeyHex: snapshot.publicKeyHex,
     arkServerUrl,
     esploraUrl,
@@ -908,6 +925,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
   _hydrated: false,
   _schemaMismatch: false,
   _syncState: { kind: "idle" },
+  restoreProgress: { status: "idle" },
   recoveringIds: new Set<string>(),
   rowErrors: {},
 
@@ -992,6 +1010,8 @@ export const useAppStore = create<StoreState>((set, get) => ({
       ...DEFAULT_STATE,
       _hydrated: true,
       _schemaMismatch: false,
+      _syncState: { kind: "idle" },
+      restoreProgress: { status: "idle" },
       recoveringIds: new Set<string>(),
       rowErrors: {},
     });
@@ -1050,7 +1070,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
     await persist(get());
   },
 
-  createWallet: async (kind) => {
+  createWallet: async (kind, walletMode) => {
     if (get().wallet) {
       throw new ArkadeError(
         "wallet_init_failed",
@@ -1099,6 +1119,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
         arkServerUrl,
         network: serverNetwork,
         behavior: get().walletBehavior,
+        walletMode,
       });
       const draft: ArkadeWalletMetadata = buildMetadata(
         walletId,
@@ -1106,6 +1127,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
         undefined,
         serverNetwork,
         artifacts,
+        walletMode,
         snapshot,
         snapshot.activities,
       );
@@ -1141,7 +1163,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
     }
   },
 
-  restoreWallet: async (input) => {
+  restoreWallet: async (input, walletMode) => {
     if (get().wallet) {
       throw new ArkadeError(
         "wallet_init_failed",
@@ -1179,14 +1201,31 @@ export const useAppStore = create<StoreState>((set, get) => ({
           ? buildSingleKeyIdentityFromNsec(input.nsec)
           : buildSingleKeyIdentityFromHex(input.privateKeyHex);
     const walletId = newWalletId();
+
+    set({
+      restoreProgress: {
+        status: "restoring",
+        walletMode,
+        stage: "initializing",
+        startedAt: Date.now(),
+      },
+    });
+
     try {
       await saveSecret(walletId, artifacts.secret);
-      const { snapshot } = await createWalletInstance({
+      const { snapshot } = await restoreWalletInstance({
         walletId,
         artifacts,
         arkServerUrl,
         network: serverNetwork,
         behavior: get().walletBehavior,
+        walletMode,
+        onStage: (stage) => {
+          const current = get().restoreProgress;
+          if (current.status === "restoring") {
+            set({ restoreProgress: { ...current, stage } });
+          }
+        },
       });
       const draft: ArkadeWalletMetadata = buildMetadata(
         walletId,
@@ -1194,6 +1233,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
         undefined,
         serverNetwork,
         artifacts,
+        walletMode,
         snapshot,
         snapshot.activities,
       );
@@ -1226,6 +1266,8 @@ export const useAppStore = create<StoreState>((set, get) => ({
       await deleteSecret(walletId);
       await disposeWallet();
       throw toArkadeError("wallet_init_failed", "Failed to restore wallet", e);
+    } finally {
+      set({ restoreProgress: { status: "idle" } });
     }
   },
 
@@ -1796,6 +1838,8 @@ export const useAppStore = create<StoreState>((set, get) => ({
     set({
       ...DEFAULT_STATE,
       _hydrated: true,
+      _syncState: { kind: "idle" },
+      restoreProgress: { status: "idle" },
       recoveringIds: new Set<string>(),
       rowErrors: {},
     });
@@ -2167,9 +2211,19 @@ export const useAppStore = create<StoreState>((set, get) => ({
         : buildSingleKeyIdentityFromHex(payload.secret.privateKeyHex);
 
     const walletId = payload.wallet.id;
+    const walletMode = payload.wallet.walletMode ?? "static";
     const normalizedPreferences = normalizePreferences(payload.preferences);
     const restoredAssetsSlice: AssetsSlice = normalizeAssetsSlice({
       importedAssetIds: payload.importedAssetIds ?? [],
+    });
+
+    set({
+      restoreProgress: {
+        status: "restoring",
+        walletMode,
+        stage: "initializing",
+        startedAt: Date.now(),
+      },
     });
 
     // Track external side-effects so we can roll back on failure. Until we
@@ -2184,18 +2238,25 @@ export const useAppStore = create<StoreState>((set, get) => ({
       swapMetadataRestored = true;
       await restoreBoltzSwaps(payload.boltzSwaps);
 
-      // Mark the runtime as "needs disposal" before the call: createWalletInstance
+      // Mark the runtime as "needs disposal" before the call: restoreWalletInstance
       // mutates the module-level runtime cache (activeWalletInstance/subscription)
       // before snapshotWallet returns, so a snapshot failure must still trigger
       // disposeWallet() in the catch below. Safe because the import branch is
       // guarded by `!get().wallet` and disposeWallet() is idempotent.
       walletRuntimeCreated = true;
-      const { snapshot } = await createWalletInstance({
+      const { snapshot } = await restoreWalletInstance({
         walletId,
         artifacts,
         arkServerUrl,
         network: serverNetwork,
         behavior: payload.walletBehavior,
+        walletMode,
+        onStage: (stage) => {
+          const current = get().restoreProgress;
+          if (current.status === "restoring") {
+            set({ restoreProgress: { ...current, stage } });
+          }
+        },
       });
       const draft = buildMetadata(
         walletId,
@@ -2203,6 +2264,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
         undefined,
         serverNetwork,
         artifacts,
+        walletMode,
         snapshot,
         snapshot.activities,
       );
@@ -2264,35 +2326,26 @@ export const useAppStore = create<StoreState>((set, get) => ({
       //     should remain clean until the user makes the next edit
       //   - the bridge re-checks `isLocked`, which is mid-construction here
       if (payload.contractLabels.length > 0) {
-        void (async () => {
-          try {
-            const labelWallet = await ensureWallet({
-              metadata,
-              behavior: payload.walletBehavior,
-            });
-            for (const entry of payload.contractLabels) {
-              try {
-                await updateContractLabel(
-                  labelWallet,
-                  entry.script,
-                  entry.label,
-                );
-              } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                recordError(
-                  "backup",
-                  `contract_label_restore_failed: ${entry.script}: ${msg}`,
-                );
-              }
+        try {
+          const labelWallet = await ensureWallet({
+            metadata,
+            behavior: payload.walletBehavior,
+          });
+          for (const entry of payload.contractLabels) {
+            try {
+              await updateContractLabel(labelWallet, entry.script, entry.label);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              recordError(
+                "backup",
+                `contract_label_restore_failed: ${entry.script}: ${msg}`,
+              );
             }
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            recordError(
-              "backup",
-              `contract_labels_ensure_wallet_failed: ${msg}`,
-            );
           }
-        })();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          recordError("backup", `contract_labels_ensure_wallet_failed: ${msg}`);
+        }
       }
     } catch (e) {
       if (walletRuntimeCreated) {
@@ -2312,6 +2365,8 @@ export const useAppStore = create<StoreState>((set, get) => ({
         "Failed to restore wallet from backup",
         e,
       );
+    } finally {
+      set({ restoreProgress: { status: "idle" } });
     }
   },
 

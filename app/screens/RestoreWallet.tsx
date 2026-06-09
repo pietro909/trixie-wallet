@@ -4,6 +4,7 @@ import { ChevronRight, FileLock2, Info } from "lucide-react-native";
 import * as React from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import AddressModeSelector from "../components/AddressModeSelector";
 import Button from "../components/Button";
 import LoadingOverlay from "../components/LoadingOverlay";
 import NetworkSelector from "../components/NetworkSelector";
@@ -17,6 +18,7 @@ import {
   isValidPrivateKeyHex,
 } from "../services/arkade/identity";
 import { BackupFileError, pickBackupFile } from "../services/backup/storage";
+import { restoreLoadingMessage } from "../store/restoreProgress";
 import { useAppStore } from "../store/useAppStore";
 import { radius, spacing, typography } from "../theme/theme";
 
@@ -33,23 +35,21 @@ function classifyInput(value: string): ValidationKind {
   return null;
 }
 
-const STAGES = [
-  "Connecting to Arkade…",
-  "Restoring wallet…",
-  "Syncing balance…",
-];
-
 export default function RestoreWallet() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
   const { showToast } = useToast();
   const restore = useAppStore((s) => s.restoreWallet);
+  const restoreProgress = useAppStore((s) => s.restoreProgress);
   const { isLoading, message, show, hide } = useLoading();
 
   const [value, setValue] = React.useState("");
   const kind = classifyInput(value);
   const showError = value.trim().length > 0 && kind === null;
   const [pickingBackup, setPickingBackup] = React.useState(false);
+  const [walletMode, setWalletMode] = React.useState<"static" | "hd">("static");
+
+  const loadingMessage = restoreLoadingMessage(restoreProgress, message);
 
   async function handlePickBackup() {
     if (pickingBackup) return;
@@ -73,7 +73,7 @@ export default function RestoreWallet() {
 
   async function handleRestore() {
     if (!kind) return;
-    show(STAGES[0]);
+    show("Restoring wallet…");
     try {
       const input =
         kind === "mnemonic"
@@ -81,14 +81,7 @@ export default function RestoreWallet() {
           : kind === "nsec"
             ? ({ kind: "nsec", nsec: value.trim() } as const)
             : ({ kind: "hex", privateKeyHex: value.trim() } as const);
-      const stagePromise = (async () => {
-        for (let i = 1; i < STAGES.length; i++) {
-          await new Promise((r) => setTimeout(r, 600));
-          show(STAGES[i]);
-        }
-      })();
-      await restore(input);
-      await stagePromise;
+      await restore(input, kind === "mnemonic" ? walletMode : "static");
       // RootStack swaps to the wallet-exists branch automatically when
       // the store updates, so this screen unmounts on its own.
     } catch (e) {
@@ -214,6 +207,17 @@ export default function RestoreWallet() {
           </Text>
         ) : null}
 
+        {kind === "mnemonic" && (
+          <View style={styles.modeSelector}>
+            <AddressModeSelector
+              theme={theme}
+              value={walletMode}
+              onChange={setWalletMode}
+              disabled={isLoading}
+            />
+          </View>
+        )}
+
         <View
           style={[styles.banner, { backgroundColor: theme.colors.primarySoft }]}
         >
@@ -234,7 +238,11 @@ export default function RestoreWallet() {
         />
       </View>
 
-      <LoadingOverlay visible={isLoading} message={message} theme={theme} />
+      <LoadingOverlay
+        visible={isLoading}
+        message={loadingMessage}
+        theme={theme}
+      />
     </SafeAreaView>
   );
 }
@@ -313,6 +321,9 @@ const styles = StyleSheet.create({
   validation: {
     fontSize: typography.size.xs,
     marginTop: spacing[1],
+  },
+  modeSelector: {
+    marginTop: spacing[4],
   },
   banner: {
     flexDirection: "row",

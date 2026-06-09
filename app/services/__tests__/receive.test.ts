@@ -13,6 +13,7 @@ const wallet: ArkadeWalletMetadata = {
   type: "arkade",
   label: "Test wallet",
   identityKind: "mnemonic",
+  walletMode: "static",
   publicKeyHex: "00".repeat(33),
   arkServerUrl: "https://mutinynet.arkade.sh",
   network: "mutinynet",

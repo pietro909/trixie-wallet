@@ -118,11 +118,27 @@ export type AssetBalanceEntry = {
   amount: string;
 };
 
+export type RestoreStage = "initializing" | "scanning" | "syncing";
+
+/**
+ * Transient signal for the multi-stage restoration process (mnemonic only).
+ * Carried in the Zustand store but NOT persisted in AppState.
+ */
+export type RestoreProgress =
+  | { status: "idle" }
+  | {
+      status: "restoring";
+      walletMode: "static" | "hd";
+      stage: RestoreStage;
+      startedAt: number;
+    };
+
 export type ArkadeWalletMetadata = {
   id: string;
   type: "arkade";
   label: string;
   identityKind: WalletIdentityKind;
+  walletMode: "static" | "hd";
   publicKeyHex: string;
   arkServerUrl: string;
   esploraUrl?: string;
@@ -205,7 +221,7 @@ export type NotificationPreferences = {
 };
 
 export type AppState = {
-  schemaVersion: 6;
+  schemaVersion: 7;
   wallet: ArkadeWalletMetadata | null;
   network: {
     arkServerUrl: string;

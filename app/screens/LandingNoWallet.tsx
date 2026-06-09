@@ -1,8 +1,10 @@
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { ShieldCheck } from "lucide-react-native";
+import { useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import AddressModeSelector from "../components/AddressModeSelector";
 import Button from "../components/Button";
 import LoadingOverlay from "../components/LoadingOverlay";
 import NetworkSelector from "../components/NetworkSelector";
@@ -28,6 +30,7 @@ export default function LandingNoWallet() {
   const createWallet = useAppStore((s) => s.createWallet);
   const { showToast } = useToast();
   const { isLoading, message, show, hide } = useLoading();
+  const [walletMode, setWalletMode] = useState<"static" | "hd">("static");
 
   async function handleCreate(kind: CreateWalletKind) {
     show(STAGES[0]);
@@ -38,7 +41,7 @@ export default function LandingNoWallet() {
           show(STAGES[i]);
         }
       })();
-      await createWallet(kind);
+      await createWallet(kind, kind === "mnemonic" ? walletMode : "static");
       await stagePromise;
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Wallet creation failed";
@@ -74,12 +77,20 @@ export default function LandingNoWallet() {
           style={styles.learnMore}
         />
 
-        <Button
-          label="Create seed phrase wallet"
-          theme={theme}
-          onPress={() => handleCreate("mnemonic")}
-          loading={isLoading}
-        />
+        <View style={styles.mnemonicSection}>
+          <Button
+            label="Create seed phrase wallet"
+            theme={theme}
+            onPress={() => handleCreate("mnemonic")}
+            loading={isLoading}
+          />
+          <AddressModeSelector
+            theme={theme}
+            value={walletMode}
+            onChange={setWalletMode}
+            disabled={isLoading}
+          />
+        </View>
 
         <Button
           label="Create single key wallet"
@@ -134,6 +145,9 @@ const styles = StyleSheet.create({
   learnMore: {
     marginBottom: spacing[5],
     alignSelf: "center",
+  },
+  mnemonicSection: {
+    gap: spacing[4],
   },
   singleKeyBtn: {
     marginTop: spacing[3],

@@ -12,9 +12,9 @@ import {
 } from "../arkade/swap-storage";
 import { recordError } from "../diagnostics/recorder";
 
-export const PAYLOAD_VERSION = 3 as const;
+export const PAYLOAD_VERSION = 4 as const;
 
-const SUPPORTED_VERSIONS = new Set<number>([1, 2, 3]);
+const SUPPORTED_VERSIONS = new Set<number>([1, 2, 3, 4]);
 
 /** Hard cap on imported asset ids carried in the backup envelope. */
 const MAX_IMPORTED_ASSET_IDS = 200;
@@ -55,7 +55,14 @@ export type BackupPayloadV3 = Omit<BackupPayloadV2, "version"> & {
   contractLabels: ContractLabelBackup[];
 };
 
-export type BackupPayload = BackupPayloadV3;
+export type BackupPayloadV4 = Omit<BackupPayloadV3, "version"> & {
+  version: 4;
+  wallet: BackupPayloadV3["wallet"] & {
+    walletMode: "static" | "hd";
+  };
+};
+
+export type BackupPayload = BackupPayloadV4;
 
 export type BuildPayloadInput = {
   wallet: ArkadeWalletMetadata;
@@ -77,6 +84,7 @@ export function buildBackupPayload(input: BuildPayloadInput): BackupPayload {
       id: input.wallet.id,
       label: input.wallet.label,
       identityKind: input.wallet.identityKind,
+      walletMode: input.wallet.walletMode,
       arkServerUrl: input.wallet.arkServerUrl,
       esploraUrl: input.wallet.esploraUrl ?? null,
       network: input.wallet.network,
@@ -111,16 +119,11 @@ export function parseBackupPayload(raw: unknown): BackupPayload {
     );
   }
   const r = raw as Record<string, unknown>;
-  if (typeof r.version !== "number") {
-    throw new PayloadParseError(
-      "malformed_payload",
-      "Backup payload is missing version",
-    );
-  }
-  if (!SUPPORTED_VERSIONS.has(r.version)) {
+  const version = typeof r.version === "number" ? r.version : 0;
+  if (!SUPPORTED_VERSIONS.has(version)) {
     throw new PayloadParseError(
       "unsupported_version",
-      `Unsupported backup payload version ${r.version}`,
+      `Unsupported backup payload version ${version}`,
     );
   }
   if (typeof r.createdAt !== "number") {
@@ -129,16 +132,27 @@ export function parseBackupPayload(raw: unknown): BackupPayload {
       "Backup payload is missing createdAt",
     );
   }
-  const wallet = parseWallet(r.wallet);
+  const wallet = parseWallet(r.wallet, version);
   const walletBehavior = parseWalletBehavior(r.walletBehavior);
   const preferences = parsePreferences(r.preferences);
   const secret = parseSecret(r.secret);
+
+  // Cross-field validation for HD mode (v4+ only)
+  if (wallet.walletMode === "hd") {
+    if (wallet.identityKind !== "mnemonic" || secret.kind !== "mnemonic") {
+      throw new PayloadParseError(
+        "malformed_payload",
+        "HD mode is only supported for mnemonic identities",
+      );
+    }
+  }
+
   const swapMetadata = parseSwapMetadata(r.swapMetadata);
   const boltzSwaps = parseBoltzSwaps(r.boltzSwaps);
   const importedAssetIds =
-    r.version === 1 ? [] : parseImportedAssetIds(r.importedAssetIds);
+    version === 1 ? [] : parseImportedAssetIds(r.importedAssetIds);
   const contractLabels =
-    r.version < 3 ? [] : parseContractLabels(r.contractLabels);
+    version < 3 ? [] : parseContractLabels(r.contractLabels);
   return {
     version: PAYLOAD_VERSION,
     createdAt: r.createdAt,
@@ -222,7 +236,7 @@ function parseImportedAssetIds(raw: unknown): string[] {
   return out;
 }
 
-function parseWallet(raw: unknown): BackupPayload["wallet"] {
+function parseWallet(raw: unknown, version: number): BackupPayload["wallet"] {
   if (typeof raw !== "object" || raw === null) {
     throw new PayloadParseError(
       "malformed_payload",
@@ -266,10 +280,25 @@ function parseWallet(raw: unknown): BackupPayload["wallet"] {
       : typeof w.esploraUrl === "string"
         ? w.esploraUrl
         : null;
+
+  const walletMode =
+    version < 4
+      ? "static"
+      : w.walletMode === "hd" || w.walletMode === "static"
+        ? w.walletMode
+        : null;
+  if (!walletMode) {
+    throw new PayloadParseError(
+      "malformed_payload",
+      "Backup wallet.walletMode is missing or invalid",
+    );
+  }
+
   return {
     id: w.id,
     label: w.label,
     identityKind: w.identityKind,
+    walletMode,
     arkServerUrl: w.arkServerUrl,
     esploraUrl,
     network: w.network,

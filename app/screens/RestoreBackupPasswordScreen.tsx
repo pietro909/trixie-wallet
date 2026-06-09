@@ -13,6 +13,7 @@ import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { RootStackParamList } from "../navigation/RootStack";
 import { BackupError } from "../services/backup/crypto";
 import { PayloadParseError } from "../services/backup/serializer";
+import { restoreLoadingMessage } from "../store/restoreProgress";
 import { useAppStore } from "../store/useAppStore";
 import { radius, spacing, typography } from "../theme/theme";
 
@@ -22,14 +23,13 @@ type Nav = NativeStackNavigationProp<
 >;
 type Route = RouteProp<RootStackParamList, "RestoreBackupPassword">;
 
-const STAGES = ["Verifying password…", "Restoring wallet…", "Syncing balance…"];
-
 export default function RestoreBackupPasswordScreen() {
   const theme = useResolvedTheme();
   const nav = useNavigation<Nav>();
   const route = useRoute<Route>();
   const envelope = route.params.envelope;
   const importBackup = useAppStore((s) => s.importBackup);
+  const restoreProgress = useAppStore((s) => s.restoreProgress);
   const { showToast } = useToast();
   const { isLoading, message, show, hide } = useLoading();
 
@@ -39,27 +39,22 @@ export default function RestoreBackupPasswordScreen() {
   const created = new Date(envelope.createdAt);
   const summary = `Backup from ${created.toLocaleString()} · v${envelope.version}`;
 
+  const loadingMessage = restoreLoadingMessage(restoreProgress, message);
+
   async function handleSubmit() {
     if (password.length === 0) {
       setError("Enter the backup password");
       return;
     }
     setError(null);
-    show(STAGES[0]);
+    show("Verifying password…");
     // Yield one event-loop tick so React paints the LoadingOverlay before
     // we kick off pbkdf2Async, which runs ~10ms of synchronous JS before
     // its first internal yield. Without this, the button looks frozen for
     // the entire decrypt+import on slow devices and the emulator.
     await new Promise((r) => setTimeout(r, 0));
     try {
-      const stagePromise = (async () => {
-        for (let i = 1; i < STAGES.length; i++) {
-          await new Promise((r) => setTimeout(r, 600));
-          show(STAGES[i]);
-        }
-      })();
       await importBackup(envelope, password);
-      await stagePromise;
       // Navigation auto-redirects to Main when wallet exists.
     } catch (e) {
       if (e instanceof BackupError && e.kind === "wrong_password") {
@@ -154,7 +149,11 @@ export default function RestoreBackupPasswordScreen() {
         />
       </View>
 
-      <LoadingOverlay visible={isLoading} message={message} theme={theme} />
+      <LoadingOverlay
+        visible={isLoading}
+        message={loadingMessage}
+        theme={theme}
+      />
     </SafeAreaView>
   );
 }
