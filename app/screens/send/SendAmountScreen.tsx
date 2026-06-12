@@ -44,6 +44,7 @@ import {
   fetchLnurlParams,
   type LnurlPayParams,
   lnurlDescriptionFrom,
+  lnurlFixedAmountSats,
   maxSendableSats,
   minSendableSats,
 } from "../../services/arkade/lnurl";
@@ -236,6 +237,18 @@ export default function SendAmountScreen() {
   const lnurlDescription = lnurlParams
     ? lnurlDescriptionFrom(lnurlParams.metadata)
     : undefined;
+
+  // When an LNURL resolves to a *fixed* amount (min === max), auto-fill the
+  // visible amount field. The field is bound to `userValue`, which the params
+  // fetch above never touches — so without this the input stays blank, sats
+  // parse to NaN, and the user can't submit even though the amount isn't
+  // theirs to choose. Guarded on `userTouched` so we never clobber a value the
+  // user already typed.
+  React.useEffect(() => {
+    if (!isLnurl || !lnurlParams || userTouched) return;
+    const fixed = lnurlFixedAmountSats(lnurlParams);
+    if (fixed != null) setUserValue(String(fixed));
+  }, [isLnurl, lnurlParams, userTouched]);
 
   // Reset the value when the user switches asset selection so we don't carry
   // a stale sats string into an asset context with different precision.

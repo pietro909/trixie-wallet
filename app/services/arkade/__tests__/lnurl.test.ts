@@ -3,6 +3,7 @@ import {
   isLightningAddress,
   isLnurlIdentifier,
   lnurlDescriptionFrom,
+  lnurlFixedAmountSats,
   maxSendableSats,
   minSendableSats,
   resolveLnurlEndpoint,
@@ -100,5 +101,47 @@ describe("minSendableSats / maxSendableSats", () => {
     expect(maxSendableSats({ ...params, maxSendable: 1999 })).toBe(1);
     expect(minSendableSats(params)).toBe(1);
     expect(maxSendableSats(params)).toBe(100_000);
+  });
+});
+
+describe("lnurlFixedAmountSats", () => {
+  const params = {
+    callback: "https://x/y",
+    minSendable: 1000,
+    maxSendable: 100_000_000,
+    metadata: "",
+    domain: "x",
+    identifier: "x",
+  };
+  it("returns the sat amount when min === max in millisats", () => {
+    // 21_000 msat fixed → 21 sats. This is the case that, left blank, produced
+    // an unpayable invoice (regression: fixed-amount LNURL amount field).
+    expect(
+      lnurlFixedAmountSats({
+        ...params,
+        minSendable: 21_000,
+        maxSendable: 21_000,
+      }),
+    ).toBe(21);
+  });
+  it("treats a sub-sat range that collapses to one whole sat as fixed", () => {
+    // ceil(21000/1000)=21, floor(21999/1000)=21 → both 21, so it's fixed.
+    expect(
+      lnurlFixedAmountSats({
+        ...params,
+        minSendable: 21_000,
+        maxSendable: 21_999,
+      }),
+    ).toBe(21);
+  });
+  it("returns null for a genuine range so the field stays user-editable", () => {
+    expect(lnurlFixedAmountSats(params)).toBeNull();
+    expect(
+      lnurlFixedAmountSats({
+        ...params,
+        minSendable: 1_000,
+        maxSendable: 2_000,
+      }),
+    ).toBeNull();
   });
 });

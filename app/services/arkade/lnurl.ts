@@ -263,3 +263,17 @@ export function minSendableSats(params: LnurlPayParams): number {
 export function maxSendableSats(params: LnurlPayParams): number {
   return Math.floor(params.maxSendable / 1000);
 }
+
+/**
+ * Sat amount when an LNURL-pay endpoint advertises a *fixed* amount, else
+ * `null`. "Fixed" means the spendable min and max collapse to the same whole
+ * sat value — either a literal `minSendable === maxSendable`, or a range so
+ * narrow it rounds (min up, max down) to a single sat. Callers use this to
+ * auto-fill the amount field: a fixed amount isn't the user's to choose, so
+ * leaving the field blank produces an invoice they can't pay.
+ */
+export function lnurlFixedAmountSats(params: LnurlPayParams): number | null {
+  const min = minSendableSats(params);
+  const max = maxSendableSats(params);
+  return min === max ? min : null;
+}
