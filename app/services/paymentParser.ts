@@ -301,13 +301,16 @@ function buildBareLightning(rawInput: string, invoice: string): ParseResult {
   };
 }
 
-function buildBareLnurl(rawInput: string, lnurl: string): ParseResult {
+function buildBareLnurl(_rawInput: string, lnurl: string): ParseResult {
   return {
     options: [
       {
         id: makeId("lnurl", lnurl),
         type: "lnurl",
-        raw: rawInput,
+        // Carry the cleaned identifier, not the original input: a `lightning:`
+        // QR arrives as `lightning:LNURL1…` and `option.raw` flows straight
+        // into `fetchLnurlParams`, whose resolver expects a bare identifier.
+        raw: lnurl,
         destination: shortenAddress(lnurl),
         isPayable: true,
       },

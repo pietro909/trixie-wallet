@@ -61,9 +61,15 @@ export function isLnurlIdentifier(input: string): boolean {
  * (`<name>@<host>` → `https://<host>/.well-known/lnurlp/<name>`) or a
  * bech32 `lnurl1…` string (bytes decode to a UTF-8 URL). Returns `null`
  * if neither form is recognised.
+ *
+ * Tolerates a leading `lightning:` / `lnurl:` URI scheme (with optional `//`):
+ * POS terminals encode their QR as `lightning:LNURL1…`, and that prefix
+ * survives into `option.raw`. Stripping it here — the single place LNURL
+ * identifiers are interpreted — keeps scanned QRs and `lightning:user@host`
+ * working regardless of what the caller passes.
  */
 export function resolveLnurlEndpoint(input: string): LnurlEndpoint | null {
-  const v = input.trim();
+  const v = input.trim().replace(/^(?:lightning|lnurl):(?:\/\/)?/i, "");
   if (isLightningAddress(v)) {
     const at = v.lastIndexOf("@");
     const name = v.slice(0, at);

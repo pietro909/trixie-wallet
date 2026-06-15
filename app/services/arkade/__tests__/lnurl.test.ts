@@ -63,6 +63,24 @@ describe("resolveLnurlEndpoint", () => {
   it("returns null for unrecognized inputs", () => {
     expect(resolveLnurlEndpoint("nope")).toBeNull();
   });
+  it("strips a leading lightning:/lnurl: URI scheme (POS QR form)", () => {
+    // POS terminals encode the QR as `lightning:LNURL1…`; the resolver must
+    // tolerate the scheme (any case, optional `//`) instead of rejecting it.
+    for (const prefixed of [
+      `lightning:${SAMPLE_LNURL}`,
+      `LIGHTNING://${SAMPLE_LNURL}`,
+      `lnurl:${SAMPLE_LNURL}`,
+    ]) {
+      const r = resolveLnurlEndpoint(prefixed);
+      expect(r?.url).toBe(SAMPLE_URL);
+      expect(r?.identifier).toBe(SAMPLE_LNURL);
+    }
+  });
+  it("strips the scheme from a lightning: lightning address", () => {
+    const r = resolveLnurlEndpoint("lightning:alice@example.com");
+    expect(r?.url).toBe("https://example.com/.well-known/lnurlp/alice");
+    expect(r?.identifier).toBe("alice@example.com");
+  });
 });
 
 describe("lnurlDescriptionFrom", () => {
