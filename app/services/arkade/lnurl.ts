@@ -283,3 +283,29 @@ export function lnurlFixedAmountSats(params: LnurlPayParams): number | null {
   const max = maxSendableSats(params);
   return min === max ? min : null;
 }
+
+/**
+ * Fractional band within which a minted invoice's amount may differ from what
+ * we requested. A fiat-pinned POS recomputes its sat figure on every step, so
+ * the BOLT11 it mints legitimately drifts a few sats from the requested amount
+ * — far below this. The band is deliberately wide: its only job is to reject a
+ * grossly-wrong amount from a broken or hostile endpoint, not to police rate
+ * drift. The caller still surfaces the invoice's amount for explicit
+ * confirmation, so this is defence-in-depth rather than the primary safeguard.
+ */
+export const LNURL_INVOICE_AMOUNT_TOLERANCE = 0.1;
+
+/**
+ * Whether a minted invoice's sat amount is acceptable for the amount we
+ * requested on the callback. Rejects a missing/non-positive amount or one that
+ * deviates by more than {@link LNURL_INVOICE_AMOUNT_TOLERANCE} (with a 1-sat
+ * floor so tiny amounts aren't rejected by rounding alone).
+ */
+export function lnurlInvoiceAmountAcceptable(
+  requestedSats: number,
+  invoiceSats: number | null | undefined,
+): boolean {
+  if (invoiceSats == null || invoiceSats <= 0) return false;
+  const allowed = Math.max(requestedSats * LNURL_INVOICE_AMOUNT_TOLERANCE, 1);
+  return Math.abs(invoiceSats - requestedSats) <= allowed;
+}

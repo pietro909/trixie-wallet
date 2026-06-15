@@ -4,6 +4,7 @@ import {
   isLnurlIdentifier,
   lnurlDescriptionFrom,
   lnurlFixedAmountSats,
+  lnurlInvoiceAmountAcceptable,
   maxSendableSats,
   minSendableSats,
   resolveLnurlEndpoint,
@@ -161,5 +162,30 @@ describe("lnurlFixedAmountSats", () => {
         maxSendable: 2_000,
       }),
     ).toBeNull();
+  });
+});
+
+describe("lnurlInvoiceAmountAcceptable", () => {
+  it("accepts an exact match", () => {
+    expect(lnurlInvoiceAmountAcceptable(14_908, 14_908)).toBe(true);
+  });
+  it("tolerates small fiat-pinned drift (the POS case)", () => {
+    // Opago: requested 14921, minted 14908 — 13 sats ≈ 0.09%, well inside band.
+    expect(lnurlInvoiceAmountAcceptable(14_921, 14_908)).toBe(true);
+    expect(lnurlInvoiceAmountAcceptable(14_908, 14_921)).toBe(true);
+  });
+  it("rejects a grossly different amount", () => {
+    expect(lnurlInvoiceAmountAcceptable(14_908, 149_080)).toBe(false);
+    expect(lnurlInvoiceAmountAcceptable(14_908, 1_490)).toBe(false);
+  });
+  it("rejects a missing or non-positive amount", () => {
+    expect(lnurlInvoiceAmountAcceptable(14_908, null)).toBe(false);
+    expect(lnurlInvoiceAmountAcceptable(14_908, undefined)).toBe(false);
+    expect(lnurlInvoiceAmountAcceptable(14_908, 0)).toBe(false);
+  });
+  it("allows a 1-sat floor so tiny amounts aren't rejected by rounding", () => {
+    // 10% of 5 = 0.5, floored to 1 → a 1-sat delta is still acceptable.
+    expect(lnurlInvoiceAmountAcceptable(5, 6)).toBe(true);
+    expect(lnurlInvoiceAmountAcceptable(5, 7)).toBe(false);
   });
 });

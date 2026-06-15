@@ -45,6 +45,7 @@ import {
   type LnurlPayParams,
   lnurlDescriptionFrom,
   lnurlFixedAmountSats,
+  lnurlInvoiceAmountAcceptable,
   maxSendableSats,
   minSendableSats,
 } from "../../services/arkade/lnurl";
@@ -415,6 +416,16 @@ export default function SendAmountScreen() {
           setError(decoded.warning ?? "LNURL returned an unusable invoice");
           return;
         }
+        // Guard against an endpoint that mints an invoice grossly different
+        // from what we requested. Small fiat-pinned drift is tolerated (see
+        // `lnurlInvoiceAmountAcceptable`); the user still confirms the decoded
+        // amount on Review below.
+        if (!lnurlInvoiceAmountAcceptable(sats, decoded.amountSats)) {
+          setError(
+            `LNURL returned an invoice for ${(decoded.amountSats ?? 0).toLocaleString()} sats but ${sats.toLocaleString()} sats was requested`,
+          );
+          return;
+        }
         const lightningOption: ParsedPaymentOption = {
           ...decoded,
           destination: lnurlParams.identifier,
@@ -422,7 +433,15 @@ export default function SendAmountScreen() {
         };
         nav.navigate("SendReview", {
           option: lightningOption,
-          amountSats: sats,
+          // Carry the *minted invoice's* amount, not the requested `sats`. A
+          // fiat-pinned POS recomputes its sat figure on every step, so the
+          // amount it advertises (and we requested) can differ by a few sats
+          // from the BOLT11 it actually mints — which is what settles. Passing
+          // the decoded amount keeps Review's displayed amount, fiat estimate,
+          // and fee quote consistent with what the wallet pays. `isPayable`
+          // already guarantees a non-null amount (amountless invoices are
+          // rejected above), but fall back to `sats` to satisfy the type.
+          amountSats: decoded.amountSats ?? sats,
           flow: "lnurl_send",
         });
       } catch (e) {
