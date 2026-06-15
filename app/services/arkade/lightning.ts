@@ -70,7 +70,11 @@ type LightningInstance = ArkadeSwaps | ExpoArkadeSwaps;
 
 type ChainArkRefundOutcome = { swept: number; skipped: number };
 
-export { boltzApiUrlForNetwork, isLightningSupportedForNetwork };
+export {
+  boltzApiUrlForNetwork,
+  boltzLegacyApiUrlsForNetwork,
+  isLightningSupportedForNetwork,
+};
 
 let activeWalletId: string | null = null;
 let activeNetwork: string | null = null;

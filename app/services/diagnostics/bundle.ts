@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { useAppStore } from "../../store/useAppStore";
 import {
+  canAttemptArkChainRefund,
   getLightning,
   getNonTerminalSwapCount,
   isLightningSupportedForNetwork,
@@ -287,6 +288,12 @@ export async function buildSupportBundle(
       for (const s of swaps) {
         const key = `${s.type}.${s.status}`;
         boltzSwapCounts[key] = (boltzSwapCounts[key] ?? 0) + 1;
+        if (s.type === "chain") {
+          const mk = canAttemptArkChainRefund(s)
+            ? "chain.material.complete"
+            : "chain.material.incomplete";
+          boltzSwapCounts[mk] = (boltzSwapCounts[mk] ?? 0) + 1;
+        }
       }
     } catch (e) {
       recordError(

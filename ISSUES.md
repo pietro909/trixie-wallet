@@ -2,9 +2,9 @@
 
 Open items and follow-ups that do not yet belong to a milestone. If an issue grows into a scoped implementation effort, move it into a dedicated milestone doc under `docs/`.
 
-Last updated: 2026-06-01
+Last updated: 2026-06-15
 
-Resolved scoped efforts move under `docs/` with a `# RESOLVED` prefix — see [docs/ISSUE_PUSH_NOTIFICATIONS_SEMANTIC.md](./docs/ISSUE_PUSH_NOTIFICATIONS_SEMANTIC.md) for the former Issue 1 (notification classification and copy).
+Resolved scoped efforts move under `docs/` with a `# RESOLVED` prefix — see [docs/ISSUE_PUSH_NOTIFICATIONS_SEMANTIC.md](./docs/ISSUE_PUSH_NOTIFICATIONS_SEMANTIC.md) for the former Issue 1 (notification classification and copy) and [docs/ISSUE_BOLTZ_ENDPOINTS.md](./docs/ISSUE_BOLTZ_ENDPOINTS.md) / [docs/ISSUE_BOLTZ_LEGACY.md](./docs/ISSUE_BOLTZ_LEGACY.md) for the former Issues 5 and 6 (Boltz endpoint migration and chain-swap refund material guard).
 
 Issues promoted to scoped milestones move under `docs/MILESTONE_NN.agents.md` — see [docs/MILESTONE_26.agents.md](./docs/MILESTONE_26.agents.md) for the former Issue 2 (animation and loading feedback pass).
 
@@ -43,44 +43,6 @@ Only `android/` exists on disk; there is no `ios/` directory. Local iOS builds w
 
 ### Notes
 Defer until iOS development or a TestFlight build is actually needed. The Milestone 25 wire-up of brand icons covers iOS in `app.json` already, so prebuild will pick them up correctly the first time it runs.
-
-## Issue 5: Boltz Endpoint Migration and Legacy Recovery
-
-### Summary
-Mainnet Arkade swaps now live on the primary Boltz API at `https://api.boltz.exchange`, but the wallet still pins mainnet Lightning/Boltz traffic to the legacy Arkade-specific endpoint `https://api.ark.boltz.exchange`.
-
-### Current Behavior
-- New mainnet Boltz providers are constructed with the legacy endpoint from `app/services/arkade/lightning.ts`.
-- Existing historical swaps may only be discoverable on the legacy endpoint.
-- Newer Arkade swaps should use the primary Boltz endpoint.
-- Recovery can show an actionable chain-swap refund row even when the local/restored swap data is missing fields needed by the SDK refund path.
-
-### Expected Behavior
-- New swap creation, fee quotes, limits, and foreground WebSocket management use `https://api.boltz.exchange` on mainnet.
-- Historical swap status, restore, and recovery actions fall back to `https://api.ark.boltz.exchange` only when the primary endpoint returns a swap-not-found response.
-- Recovery does not present an actionable refund button unless the selected endpoint and local swap material are sufficient to execute the refund.
-
-### Plan
-Detailed plan: [docs/ISSUE_BOLTZ_ENDPOINTS.md](./docs/ISSUE_BOLTZ_ENDPOINTS.md).
-
-## Issue 6: Restored Chain Swaps Missing Refund Timeouts
-
-### Summary
-Restored ARK->BTC chain swaps can be rebuilt with enough status data to appear refundable, but without the full VHTLC timeout set needed to execute `refundArk()`.
-
-### Current Behavior
-- A restored swap can have status `swap.expired`, causing Recovery to show "Bitcoin send - refund available".
-- The restored local swap object may only contain `response.lockupDetails.timeoutBlockHeight`.
-- The SDK refund path requires `response.lockupDetails.timeouts`.
-- Tapping "Refund Arkade lockup" then fails with an error such as `Swap L4Kx9HZscpJ9: missing timeouts in lockup details`.
-
-### Expected Behavior
-- Restored chain swaps include `response.lockupDetails.timeouts` whenever the Boltz restore response has enough data to derive it.
-- If the full timeout set cannot be restored, Recovery and Activity Details must treat the row as support-only instead of actionable.
-- The UI must not show a runnable refund button for a swap whose local material cannot build the Arkade refund transaction.
-
-### Notes
-This is related to Issue 5 but distinct: endpoint fallback decides where the swap exists; this issue decides whether the restored local swap object has enough data to refund. The preferred fix is in `@arkade-os/boltz-swap` restore logic, with the wallet keeping a defensive material guard.
 
 ## Issue 7: Expose Wallet Public Keys for Debugging
 

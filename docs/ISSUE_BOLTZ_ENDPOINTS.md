@@ -1,7 +1,23 @@
+# RESOLVED
+
 # Issue 5: Boltz Endpoint Migration and Legacy Recovery
 
-**Status:** Planned  
-**Last updated:** 2026-05-26
+**Status:** Resolved  
+**Last updated:** 2026-06-15
+
+## Resolution Summary
+
+All steps implemented. Key artifacts:
+
+- `app/services/arkade/boltz-endpoints.ts` — endpoint registry, `TrixieBoltzSwapProvider` facade, `resolveBoltzSwapEndpoint()`.
+- `app/services/arkade/lightning.ts` — primary-only construction, multi-endpoint restore with field merge, `canAttemptArkChainRefund()`, `getChainRefundReadinessById()`, endpoint-aware `refundChainSwapById()`, `refreshSwapsStatus()` per-swap with fallback.
+- `app/services/arkade/recovery.ts` — async enrichment pass sets `endpointState`/`materialState`, replaces `refund_chain_ark` with `support_bundle` when either is incomplete.
+- `app/screens/ActivityDetailsScreen.tsx` — gates refund button on `getChainRefundReadinessById()`.
+- `app/screens/AdvancedScreen.tsx` — shows primary Boltz URL and legacy fallback as informational subtext.
+- `app/services/diagnostics/bundle.ts` — adds `chain.material.complete` / `chain.material.incomplete` counts to `boltzSwapCounts` in support bundle.
+- `app/services/arkade/swap-background.ts` — background task uses `createTrixieBoltzSwapProvider()`.
+
+SDK timeout gate: resolved as support-only — see Step 10 below.
 
 ## Context
 
@@ -481,23 +497,13 @@ Do not make fallback look selectable. Do not expose a custom endpoint input.
 
 ### 10. SDK Timeout Fix Gate
 
-Before marking Issue 5 complete, verify one of these is true:
+**Resolved as support-only (2026-06-15).**
 
-- `@arkade-os/boltz-swap` has been bumped to a version where restored chain swaps populate `response.lockupDetails.timeouts` for ARK -> BTC refund details.
-- Or a local package patch exists and is documented.
-- Or recovery intentionally remains support-only for restored chain swaps without timeouts, and this limitation is documented in `ISSUES.md` or this file.
+`@arkade-os/boltz-swap` 0.3.40 types `ChainSwapDetailsResponse.timeouts` as optional — the field is populated only when the Boltz API returns it in the restore response. Historical legacy-endpoint swaps may not include `timeouts`.
 
-Verification command after package bump or patch:
+Trixie's `canAttemptArkChainRefund()` (`app/services/arkade/lightning.ts`) guards this: it requires `swap.response.lockupDetails?.timeouts != null` and returns `false` when the field is absent. Recovery and Activity Details both gate on this helper and show support-only guidance for incomplete material. This is the third option in the gate: the limitation is explicitly documented here and handled by the existing guard.
 
-```bash
-rg -n "lockupDetails.*timeouts|timeoutBlockHeights.*lockupDetails|refundDetails" node_modules/.pnpm/@arkade-os+boltz-swap*/node_modules/@arkade-os/boltz-swap/dist -S
-```
-
-Manual verification:
-
-- Restore historical swap `L4Kx9HZscpJ9`.
-- Inspect stored chain swap JSON.
-- Confirm `response.lockupDetails.timeouts` exists before expecting the refund button to appear.
+No upstream patch or package bump is needed — the guard is the correct long-term behavior regardless of what the API returns.
 
 ## Final Test Matrix
 

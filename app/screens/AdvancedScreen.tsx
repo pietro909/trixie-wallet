@@ -30,6 +30,7 @@ import { useFormatSats } from "../hooks/useFormatSats";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import {
   boltzApiUrlForNetwork,
+  boltzLegacyApiUrlsForNetwork,
   getLightningFees,
   getLightningLimits,
   isLightningSupportedForNetwork,
@@ -349,6 +350,9 @@ export default function AdvancedScreen() {
   const boltzUrl = lightningNetwork
     ? boltzApiUrlForNetwork(lightningNetwork)
     : null;
+  const boltzLegacyUrls = lightningNetwork
+    ? boltzLegacyApiUrlsForNetwork(lightningNetwork)
+    : [];
   const lightningRestore = wallet?.lightningRestore ?? null;
   const [lightningLimits, setLightningLimits] = React.useState<{
     min: number;
@@ -675,6 +679,11 @@ export default function AdvancedScreen() {
               label="Boltz API"
               value={boltzUrl ?? "—"}
               mono
+              subtext={
+                boltzLegacyUrls.length > 0
+                  ? `Legacy recovery fallback: ${boltzLegacyUrls.map((u) => new URL(u).host).join(", ")}`
+                  : undefined
+              }
               onCopy={
                 boltzUrl ? () => handleCopy(boltzUrl, "Boltz URL") : undefined
               }
@@ -904,6 +913,7 @@ function DetailRow({
   mono,
   truncate,
   last,
+  subtext,
   onCopy,
 }: {
   theme: AppTheme;
@@ -912,6 +922,7 @@ function DetailRow({
   mono?: boolean;
   truncate?: boolean;
   last?: boolean;
+  subtext?: string;
   onCopy?: () => void;
 }) {
   return (
@@ -921,21 +932,38 @@ function DetailRow({
           {label}
         </Text>
         <View style={styles.detailValueWrap}>
-          <Text
-            style={[
-              styles.detailValue,
-              {
-                color: theme.colors.text,
-                fontFamily: mono
-                  ? typography.fontFamily.mono
-                  : typography.fontFamily.ui,
-              },
-            ]}
-            numberOfLines={truncate ? 1 : undefined}
-            ellipsizeMode={truncate ? "middle" : undefined}
-          >
-            {value}
-          </Text>
+          <View>
+            <Text
+              style={[
+                styles.detailValue,
+                {
+                  color: theme.colors.text,
+                  fontFamily: mono
+                    ? typography.fontFamily.mono
+                    : typography.fontFamily.ui,
+                },
+              ]}
+              numberOfLines={truncate ? 1 : undefined}
+              ellipsizeMode={truncate ? "middle" : undefined}
+            >
+              {value}
+            </Text>
+            {subtext ? (
+              <Text
+                style={[
+                  styles.detailValue,
+                  {
+                    color: theme.colors.textMuted,
+                    fontFamily: typography.fontFamily.ui,
+                    fontSize: 11,
+                    marginTop: 2,
+                  },
+                ]}
+              >
+                {subtext}
+              </Text>
+            ) : null}
+          </View>
           {onCopy ? (
             <Pressable
               onPress={onCopy}

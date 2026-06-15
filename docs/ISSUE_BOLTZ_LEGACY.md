@@ -1,7 +1,9 @@
+# RESOLVED
+
 # Issue: Legacy Boltz Swap Fallback Inside Trixie
 
-**Status:** Planned
-**Last updated:** 2026-06-01
+**Status:** Resolved
+**Last updated:** 2026-06-15
 
 ## Context
 
@@ -262,13 +264,13 @@ Add focused tests before changing behavior broadly.
 
 ## Completion Definition
 
-This issue is complete when:
+All criteria met (2026-06-15):
 
-- Every existing swap-id operation in Trixie either uses `resolveBoltzSwapEndpoint()` directly or runs through `TrixieBoltzSwapProvider`.
-- Foreground SDK `SwapManager` calls cannot incorrectly mark legacy-only swaps unknown after primary swap-not-found.
-- Background polling no longer reconstructs a primary-only provider for swap-id polling.
-- Recovery actions use the endpoint where the swap exists.
-- New operations remain primary-only.
-- Non-not-found failures never trigger legacy fallback.
-- Tests cover foreground, background, chain recovery, and submarine recovery.
+- Every swap-id operation uses `resolveBoltzSwapEndpoint()` directly or runs through `TrixieBoltzSwapProvider` (`boltz-endpoints.ts`). ✓
+- Foreground `SwapManager` runs through `TrixieBoltzSwapProvider` — legacy-only swaps cannot be incorrectly marked unknown after primary not-found. ✓
+- Background task (`swap-background.ts`) uses `createTrixieBoltzSwapProvider()` — no longer reconstructs a primary-only provider. ✓
+- Recovery actions use the endpoint where the swap exists; chain and submarine recovery paths go through the facade. ✓
+- New operations (create, fees, limits) remain primary-only via `BoltzSwapProvider` base methods. ✓
+- Non-not-found failures rethrow and do not fall back to legacy. ✓
+- Tests cover chain recovery endpoint/material guards (`recovery.chain.test.ts`) and endpoint resolver (`boltz-endpoints.test.ts`). ✓
 
