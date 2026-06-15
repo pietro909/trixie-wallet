@@ -183,6 +183,12 @@ describe("lnurlInvoiceAmountAcceptable", () => {
     expect(lnurlInvoiceAmountAcceptable(14_908, undefined)).toBe(false);
     expect(lnurlInvoiceAmountAcceptable(14_908, 0)).toBe(false);
   });
+  it("rejects a non-positive requested amount", () => {
+    expect(lnurlInvoiceAmountAcceptable(0, 14_908)).toBe(false);
+    expect(lnurlInvoiceAmountAcceptable(-10, 14_908)).toBe(false);
+    // Would slip through the 1-sat floor without the requested-amount guard.
+    expect(lnurlInvoiceAmountAcceptable(0, 1)).toBe(false);
+  });
   it("allows a 1-sat floor so tiny amounts aren't rejected by rounding", () => {
     // 10% of 5 = 0.5, floored to 1 → a 1-sat delta is still acceptable.
     expect(lnurlInvoiceAmountAcceptable(5, 6)).toBe(true);

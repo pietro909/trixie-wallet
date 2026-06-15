@@ -305,7 +305,8 @@ export function lnurlInvoiceAmountAcceptable(
   requestedSats: number,
   invoiceSats: number | null | undefined,
 ): boolean {
-  if (invoiceSats == null || invoiceSats <= 0) return false;
+  if (requestedSats <= 0 || invoiceSats == null || invoiceSats <= 0)
+    return false;
   const allowed = Math.max(requestedSats * LNURL_INVOICE_AMOUNT_TOLERANCE, 1);
   return Math.abs(invoiceSats - requestedSats) <= allowed;
 }

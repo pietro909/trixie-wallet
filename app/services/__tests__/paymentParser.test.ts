@@ -67,6 +67,11 @@ describe("paymentParser", () => {
       expect(result.options[0].type).toBe("lnurl");
       expect(result.options[0].raw).toBe(lnurl);
     });
+    it("strips the lnurl: scheme (LUD-17) from a scanned LNURL's raw", () => {
+      const result = parsePaymentInput(`lnurl:${lnurl}`);
+      expect(result.options[0].type).toBe("lnurl");
+      expect(result.options[0].raw).toBe(lnurl);
+    });
     it("keeps a bare LNURL's raw untouched", () => {
       const result = parsePaymentInput(lnurl);
       expect(result.options[0].raw).toBe(lnurl);

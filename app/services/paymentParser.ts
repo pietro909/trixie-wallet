@@ -540,7 +540,10 @@ export function parsePaymentInput(
 
   const { scheme, rest } = stripUriScheme(trimmed);
 
-  if (scheme === "lightning") {
+  // Both `lightning:` and `lnurl:` (LUD-17) carry a bare invoice/LNURL/LN
+  // address. `resolveLnurlEndpoint` strips either prefix downstream, but the
+  // input never reaches it unless we accept the scheme here first.
+  if (scheme === "lightning" || scheme === "lnurl") {
     const value = rest.replace(/^\/\//, "");
     const sub = detectBareType(value);
     if (sub === "lightning") return buildBareLightning(trimmed, value);
@@ -548,7 +551,7 @@ export function parsePaymentInput(
     return {
       options: [],
       metadata: {},
-      error: "Unsupported lightning: payload",
+      error: `Unsupported ${scheme}: payload`,
     };
   }
 
