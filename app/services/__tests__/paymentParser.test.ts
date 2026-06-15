@@ -57,6 +57,27 @@ describe("paymentParser", () => {
     });
   });
 
+  describe("lnurl raw normalization", () => {
+    const lnurl =
+      "lnurl1dp68gurn8ghj7mrww4exctndw46xjmnedejhgtnpwf4kzer99eekstmvde6hymp0xvmnxdmxx33nzcmpv93rsvvxxx";
+    it("strips the lightning: scheme from a scanned LNURL's raw", () => {
+      // A POS QR arrives as `lightning:LNURL1…`; `raw` flows into
+      // fetchLnurlParams, whose resolver expects a bare identifier.
+      const result = parsePaymentInput(`lightning:${lnurl}`);
+      expect(result.options[0].type).toBe("lnurl");
+      expect(result.options[0].raw).toBe(lnurl);
+    });
+    it("strips the lnurl: scheme (LUD-17) from a scanned LNURL's raw", () => {
+      const result = parsePaymentInput(`lnurl:${lnurl}`);
+      expect(result.options[0].type).toBe("lnurl");
+      expect(result.options[0].raw).toBe(lnurl);
+    });
+    it("keeps a bare LNURL's raw untouched", () => {
+      const result = parsePaymentInput(lnurl);
+      expect(result.options[0].raw).toBe(lnurl);
+    });
+  });
+
   describe("parsePaymentInput basic validation", () => {
     it("parses a plain Bitcoin address", () => {
       const addr = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh";

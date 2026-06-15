@@ -61,9 +61,15 @@ export function isLnurlIdentifier(input: string): boolean {
  * (`<name>@<host>` → `https://<host>/.well-known/lnurlp/<name>`) or a
  * bech32 `lnurl1…` string (bytes decode to a UTF-8 URL). Returns `null`
  * if neither form is recognised.
+ *
+ * Tolerates a leading `lightning:` / `lnurl:` URI scheme (with optional `//`):
+ * POS terminals encode their QR as `lightning:LNURL1…`, and that prefix
+ * survives into `option.raw`. Stripping it here — the single place LNURL
+ * identifiers are interpreted — keeps scanned QRs and `lightning:user@host`
+ * working regardless of what the caller passes.
  */
 export function resolveLnurlEndpoint(input: string): LnurlEndpoint | null {
-  const v = input.trim();
+  const v = input.trim().replace(/^(?:lightning|lnurl):(?:\/\/)?/i, "");
   if (isLightningAddress(v)) {
     const at = v.lastIndexOf("@");
     const name = v.slice(0, at);
@@ -262,4 +268,45 @@ export function minSendableSats(params: LnurlPayParams): number {
 
 export function maxSendableSats(params: LnurlPayParams): number {
   return Math.floor(params.maxSendable / 1000);
+}
+
+/**
+ * Sat amount when an LNURL-pay endpoint advertises a *fixed* amount, else
+ * `null`. "Fixed" means the spendable min and max collapse to the same whole
+ * sat value — either a literal `minSendable === maxSendable`, or a range so
+ * narrow it rounds (min up, max down) to a single sat. Callers use this to
+ * auto-fill the amount field: a fixed amount isn't the user's to choose, so
+ * leaving the field blank produces an invoice they can't pay.
+ */
+export function lnurlFixedAmountSats(params: LnurlPayParams): number | null {
+  const min = minSendableSats(params);
+  const max = maxSendableSats(params);
+  return min === max ? min : null;
+}
+
+/**
+ * Fractional band within which a minted invoice's amount may differ from what
+ * we requested. A fiat-pinned POS recomputes its sat figure on every step, so
+ * the BOLT11 it mints legitimately drifts a few sats from the requested amount
+ * — far below this. The band is deliberately wide: its only job is to reject a
+ * grossly-wrong amount from a broken or hostile endpoint, not to police rate
+ * drift. The caller still surfaces the invoice's amount for explicit
+ * confirmation, so this is defence-in-depth rather than the primary safeguard.
+ */
+export const LNURL_INVOICE_AMOUNT_TOLERANCE = 0.1;
+
+/**
+ * Whether a minted invoice's sat amount is acceptable for the amount we
+ * requested on the callback. Rejects a missing/non-positive amount or one that
+ * deviates by more than {@link LNURL_INVOICE_AMOUNT_TOLERANCE} (with a 1-sat
+ * floor so tiny amounts aren't rejected by rounding alone).
+ */
+export function lnurlInvoiceAmountAcceptable(
+  requestedSats: number,
+  invoiceSats: number | null | undefined,
+): boolean {
+  if (requestedSats <= 0 || invoiceSats == null || invoiceSats <= 0)
+    return false;
+  const allowed = Math.max(requestedSats * LNURL_INVOICE_AMOUNT_TOLERANCE, 1);
+  return Math.abs(invoiceSats - requestedSats) <= allowed;
 }

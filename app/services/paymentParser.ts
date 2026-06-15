@@ -301,13 +301,16 @@ function buildBareLightning(rawInput: string, invoice: string): ParseResult {
   };
 }
 
-function buildBareLnurl(rawInput: string, lnurl: string): ParseResult {
+function buildBareLnurl(_rawInput: string, lnurl: string): ParseResult {
   return {
     options: [
       {
         id: makeId("lnurl", lnurl),
         type: "lnurl",
-        raw: rawInput,
+        // Carry the cleaned identifier, not the original input: a `lightning:`
+        // QR arrives as `lightning:LNURL1…` and `option.raw` flows straight
+        // into `fetchLnurlParams`, whose resolver expects a bare identifier.
+        raw: lnurl,
         destination: shortenAddress(lnurl),
         isPayable: true,
       },
@@ -537,7 +540,10 @@ export function parsePaymentInput(
 
   const { scheme, rest } = stripUriScheme(trimmed);
 
-  if (scheme === "lightning") {
+  // Both `lightning:` and `lnurl:` (LUD-17) carry a bare invoice/LNURL/LN
+  // address. `resolveLnurlEndpoint` strips either prefix downstream, but the
+  // input never reaches it unless we accept the scheme here first.
+  if (scheme === "lightning" || scheme === "lnurl") {
     const value = rest.replace(/^\/\//, "");
     const sub = detectBareType(value);
     if (sub === "lightning") return buildBareLightning(trimmed, value);
@@ -545,7 +551,7 @@ export function parsePaymentInput(
     return {
       options: [],
       metadata: {},
-      error: "Unsupported lightning: payload",
+      error: `Unsupported ${scheme}: payload`,
     };
   }
 
