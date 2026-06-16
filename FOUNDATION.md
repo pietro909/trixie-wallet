@@ -70,6 +70,27 @@ The active entry is `index.ts` → `App.tsx`, which mounts:
 - Mock data helpers in `app/store/mock.ts`
 - Actions: `hydrate()`, `createWallet()`, `lockWallet()`, `unlockWithPassword()`, `unlockWithBiometrics()`, `resetWallet()`, `setTheme()`, `setFiatCurrency()`, `setPassword()`, `toggleBiometrics()`
 
+### Arkade SDK integration (`@arkade-os/sdk`)
+
+Facts verified against the installed SDK (pinned `0.4.35`) and the current
+integration code. Re-verify against `node_modules/@arkade-os/sdk/dist/*.d.ts`
+only if the pinned version changes.
+
+**SDK API surface:**
+
+- **Error model.** `ArkError` has `{ code: number; name: string; message: string; metadata? }`. `maybeArkError(e): ArkError | undefined` parses both a structured `ark.v1.ErrorDetails` in `details[]` **and** a `"NAME (code): message"` top-level message prefix. arkd's guard interceptors (build-version, digest) send an **empty `details[]`** and carry the name/code only in the message prefix — there is **no exported SDK constant** for these. Branch on `.name`/`.code`, never on raw message matching. Known contracts: `DIGEST_MISMATCH` (code `1101`), `BUILD_VERSION_TOO_OLD` (code `48`); these are arkd server contracts, not SDK enums.
+- **Digest negotiation.** `RestArkProvider`/`ExpoArkProvider` send `X-Digest`, expose `onServerInfoChanged(listener: (info: ArkInfo) => void): () => void` (multiple listeners allowed; the SDK wallet subscribes internally), and **throw `DigestMismatchError`** (a plain `Error` — no `code`/`name` beyond its class) on `DIGEST_MISMATCH` after refreshing info and emitting. `getInfo()` itself is **not** digest-gated. `ExpoArkProvider extends RestArkProvider`.
+- **Build-version gate.** The SDK sends `X-Build-Version` on arkd requests; the server can reject with `BUILD_VERSION_TOO_OLD (48)`.
+- **Signer rotation.** `ArkInfo.deprecatedSigners: DeprecatedSigner[]`, where `DeprecatedSigner = { pubkey: string; cutoffDate: bigint }` and `cutoffDate === 0n` is the sentinel for "no cutoff advertised / due now". `SignerStatus = "CURRENT" | "MIGRATABLE" | "DUE_NOW" | "EXPIRED" | "UNKNOWN_SIGNER"` — **UPPERCASE** (a doc comment in the `.d.ts` wrongly shows lowercase; trust the type literal). `await wallet.getVtxoManager()` (async) → `IVtxoManager` with `getDeprecatedSignerStatus(): Promise<DeprecatedSignerReport[]>` and `migrateDeprecatedSignerVtxos(opts?): Promise<DeprecatedSignerMigrationReport>`. Manual migration works **even when the wallet was built with `settlementConfig: false`**. `DeprecatedSignerMigrationReport` is a **two-leg** result (`vtxos` + `boarding`, each `{ txid?, migrated[], skipped?, deferred?, oversized?, error? }`) plus top-level `rotated`, `skipped?`, `expired[]`, `signers[]` — not a flat success/fail. Helper `isCooperativelyMigratable(status)` is exported.
+
+**App integration patterns:**
+
+- **Persistence is an explicit allowlist.** `persist()` in `app/store/useAppStore.ts` writes only the named `AppState` fields. Any field added to the transient `StoreState` (not `AppState`) is **automatically excluded** from persistence — use `StoreState` for transient/lifecycle flags (mirrors `_hydrated`, `_syncState`, `restoreProgress`).
+- **Lock does not dispose the wallet.** `lockWallet()` is UI gating only — it does **not** call `disposeWallet()` (the Lightning instance holds a wallet ref and would crash on swap events). The in-process wallet stays alive while locked; gate "locked" behavior on `security.isLocked`, not on wallet availability.
+- **Runtime never imports the store.** `app/services/arkade/runtime.ts` exposes setters (e.g. `setIncomingFundsListener`) that the store wires up at module-eval at the bottom of `useAppStore.ts`. Per-wallet SDK subscriptions go through **detach-before-attach** helpers (`attachIncomingFundsSubscription`) and are torn down in `disposeWallet()`; `buildWallet()` itself has no module-state side effects.
+- **Error wrapping preserves the SDK error.** `ArkadeError` (`app/services/arkade/errors.ts`) carries `.cause`, and `toArkadeError()` both copies the inner error's `message` and keeps it as `.cause`. SDK error guards (`maybeArkError`, `instanceof DigestMismatchError`) therefore work on a wrapped `ArkadeError` directly (message preserved) or by recursing `.cause`.
+- **`ensureWallet({ metadata, behavior })`** returns the cached active `Wallet` when id/behavior/mode match, otherwise disposes and rebuilds.
+
 ### Network Naming
 
 Use `bitcoin` as the canonical internal and persisted network name for Bitcoin mainnet, matching `@arkade-os/sdk`'s `NetworkName`. Use "Mainnet" only as user-facing UI copy. Do not accept lowercase `mainnet` as an internal or boundary value; code should pass SDK `NetworkName` strings only.
