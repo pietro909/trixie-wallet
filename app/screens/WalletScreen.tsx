@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ActivityRow from "../components/ActivityRow";
 import AssetCard from "../components/AssetCard";
 import Button from "../components/Button";
+import SignerRotationBanner from "../components/SignerRotationBanner";
 import { SyncPill } from "../components/SyncPill";
 import { useAssetMetadata } from "../hooks/useAssetMetadata";
 import { useFormatSats } from "../hooks/useFormatSats";
@@ -297,6 +298,10 @@ export default function WalletScreen() {
             );
           })()}
         </View>
+
+        {/* Signer rotation status — surfaced directly under the balance so
+            critical key-rotation state is visible on Wallet open. */}
+        <SignerRotationBanner theme={theme} />
 
         {/* Recent Activity */}
         <View style={styles.section}>

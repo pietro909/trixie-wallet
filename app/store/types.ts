@@ -191,6 +191,18 @@ export type IntentFeeProgramConfig = {
   onchainOutput?: string;
 };
 
+/**
+ * A server-advertised deprecated signer, persisted alongside
+ * {@link ArkadeServerInfo}. `cutoffDateSeconds` is the SDK's `cutoffDate`
+ * (a Unix-seconds `bigint`) serialized as a decimal string so it survives
+ * `JSON.stringify`/AsyncStorage round-trips. `"0"` is the SDK sentinel for
+ * "no cutoff advertised / due now".
+ */
+export type PersistedDeprecatedSigner = {
+  pubkey: string;
+  cutoffDateSeconds: string;
+};
+
 export type ArkadeServerInfo = {
   network: string;
   version: string;
@@ -200,6 +212,62 @@ export type ArkadeServerInfo = {
   unilateralExitDelaySeconds: number;
   txFeeRate: string;
   intentFee: IntentFeeProgramConfig;
+  /**
+   * Full set of signer keys the server currently advertises as deprecated.
+   * Empty when no rotation is in progress. Persisted so the round-trip keeps
+   * the advertised cutoff set; user-facing rotation status is always derived
+   * fresh from the SDK VTXO manager, never from this list.
+   */
+  deprecatedSigners: PersistedDeprecatedSigner[];
+};
+
+/**
+ * Product-level severity for a deprecated server signer. Mirrors the SDK's
+ * `SignerStatus` literal union (UPPERCASE) but is declared locally so store
+ * types do not depend on the SDK type surface.
+ */
+export type SignerRotationSeverity =
+  | "CURRENT"
+  | "MIGRATABLE"
+  | "DUE_NOW"
+  | "EXPIRED"
+  | "UNKNOWN_SIGNER";
+
+/**
+ * Per-signer rotation status, derived from the SDK
+ * `getDeprecatedSignerStatus()` report. `bigint` cutoff fields are stringified
+ * for JSON safety. Transient — never persisted.
+ */
+export type SignerRotationReport = {
+  signerPubKey: string;
+  status: SignerRotationSeverity;
+  /** Whether cooperative migration applies, via SDK `isCooperativelyMigratable`. */
+  canMigrate: boolean;
+  /** Absolute cutoff (Unix seconds) as a decimal string, when advertised. */
+  cutoffDateSeconds?: string;
+  /** Derived seconds until cutoff; negative once passed. */
+  secondsUntilCutoff?: number;
+  vtxoCount: number;
+  totalValue: number;
+  boardingCount: number;
+  boardingValue: number;
+  recoverableCount: number;
+  recoverableValue: number;
+  awaitingSweepCount: number;
+  awaitingSweepValue: number;
+  /** Soonest batch-sweep ETA (ms since epoch) among awaiting-sweep VTXOs. */
+  nextSweepEta?: number;
+};
+
+/**
+ * Aggregated signer-rotation status surfaced to the UI. Transient store state
+ * (lives in `StoreState`, never persisted). `null` means no actionable
+ * deprecated-signer exposure.
+ */
+export type SignerRotationStatus = {
+  worstStatus: SignerRotationSeverity;
+  hasMigratableFunds: boolean;
+  reports: SignerRotationReport[];
 };
 
 /**
@@ -221,7 +289,7 @@ export type NotificationPreferences = {
 };
 
 export type AppState = {
-  schemaVersion: 7;
+  schemaVersion: 8;
   wallet: ArkadeWalletMetadata | null;
   network: {
     arkServerUrl: string;
