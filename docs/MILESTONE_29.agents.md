@@ -66,6 +66,13 @@ features the app currently does not expose at the product layer.
 - **Use the public migration API.** One-tap migration calls
   `getVtxoManager().migrateDeprecatedSignerVtxos()`. Do not call
   `Wallet.rotateServerSigner()` directly.
+- **Do not collapse migration reports.** `DeprecatedSignerMigrationReport` has
+  independent `vtxos` and `boarding` legs plus top-level `rotated`,
+  `skipped?`, `expired[]`, and `signers[]`. Interpret per-leg `txid`,
+  `migrated`, `skipped`, `deferred`, `oversized`, and `error` fields explicitly
+  instead of reducing the report to one success/skip/error state. Partial
+  success, retryable leftovers, oversized funds, expired-only funds, and hard
+  errors must remain distinguishable.
 - **Treat statuses differently.**
   - `MIGRATABLE`: soft advisory with cutoff date and a migrate action.
   - `DUE_NOW`: prominent, non-dismissable action-required banner with a migrate
@@ -114,6 +121,7 @@ features the app currently does not expose at the product layer.
   export type SignerRotationReport = {
     signerPubKey: string;
     status: SignerRotationSeverity;
+    canMigrate: boolean;
     cutoffDateSeconds?: string;
     secondsUntilCutoff?: number;
     vtxoCount: number;
@@ -129,6 +137,7 @@ features the app currently does not expose at the product layer.
 
   export type SignerRotationStatus = {
     worstStatus: SignerRotationSeverity;
+    hasMigratableFunds: boolean;
     reports: SignerRotationReport[];
   };
   ```
@@ -179,19 +188,37 @@ features the app currently does not expose at the product layer.
   export function setServerInfoChangedListener(
     listener: ServerInfoChangedListener | null,
   ): void;
+
+  export function waitForServerInfoChangedListener(): Promise<void>;
   ```
 - In `buildWallet`, construct the provider once:
   ```ts
   const arkProvider = new ExpoArkProvider(arkServerUrl);
   ```
-  pass that instance to `Wallet.create`, and subscribe to
-  `arkProvider.onServerInfoChanged`.
-- The runtime listener should call `arkInfoToServerInfo(info)` and then the
-  registered app listener. Catch and record listener errors; never throw back
-  into the provider emit loop.
-- Track the unsubscribe handle in runtime module state and dispose it from
-  `disposeWallet()`. Lock does not dispose the wallet in this app, so lock should
-  clear store-visible signer status but leave the runtime listener alone.
+  pass that same instance to `Wallet.create`, and expose it to the active-wallet
+  caller. Do not subscribe inside `buildWallet`.
+- Add `attachServerInfoSubscription(provider)` / `detachServerInfoSubscription()`
+  in `runtime.ts`, mirroring `attachIncomingFundsSubscription`:
+  - detach the prior server-info subscription before attaching a new one.
+  - subscribe to `provider.onServerInfoChanged`.
+  - call `arkInfoToServerInfo(info)` and then the registered app listener.
+  - chain any listener promise in runtime module state and expose the current
+    chain through `waitForServerInfoChangedListener()`. The SDK calls
+    `onServerInfoChanged` listeners synchronously and does **not** await returned
+    promises before throwing `DigestMismatchError`, so digest retry code needs an
+    explicit app-side barrier before it re-runs an operation.
+  - catch and record listener errors inside the chain; never throw back into the
+    provider emit loop. The wait helper should resolve after the listener work is
+    handled/logged, not reject and mask the original digest retry.
+- Call `attachServerInfoSubscription(arkProvider)` alongside
+  `attachIncomingFundsSubscription(wallet)` in every active-wallet creation path
+  (`ensureWallet` rebuild, `createWalletInstance`, and
+  `restoreWalletInstance`). Those paths do not all call `disposeWallet()` first,
+  so attach must be detach-before-attach to prevent duplicate listeners.
+- Track the unsubscribe handle in runtime module state and dispose it from both
+  `disposeWallet()` and the next re-attach. Lock does not dispose the wallet in
+  this app, so lock should clear store-visible signer status but leave the
+  runtime listener alone.
 - Do not import `useAppStore` from `runtime.ts`; the store already imports
   runtime and should install the listener after store creation, mirroring the
   existing `setIncomingFundsListener` pattern.
@@ -233,15 +260,27 @@ features the app currently does not expose at the product layer.
   - Update `detectedNetwork`, `status: "online"`, and clear `lastError`.
   - Persist, because `serverInfo` is part of `AppState`.
 - `refreshSignerRotationStatus`:
-  - Return early when no wallet or locked.
-  - Use `ensureWallet({ metadata, behavior })`.
+  - Return early when no wallet or locked. The locked check must branch on
+    `state.security.isLocked`, not wallet availability, because lock keeps the
+    SDK wallet alive in memory.
+  - Use `ensureWallet({ metadata, behavior })` only after the locked check.
   - Call `const manager = await wallet.getVtxoManager()`.
   - Call `manager.getDeprecatedSignerStatus()`.
   - Convert bigint cutoff fields to strings and aggregate `worstStatus` using
-    severity order:
+    the product severity order:
     `DUE_NOW > EXPIRED > MIGRATABLE > UNKNOWN_SIGNER > CURRENT`.
-    `DUE_NOW` outranks `EXPIRED` because it is still actionable.
+    This intentionally prioritizes actionability: `DUE_NOW` has a cooperative
+    migration action, while `EXPIRED` is serious but recovery/wait guidance.
+    If both are present, show the DUE_NOW action and mention expired funds in
+    supporting copy.
+  - Derive report-level `canMigrate` and aggregate `hasMigratableFunds` with
+    the SDK's exported `isCooperativelyMigratable(status)` helper, not a
+    hardcoded `MIGRATABLE || DUE_NOW` check.
   - Store `null` when every report is `CURRENT` or the SDK returns no reports.
+  - Coalesce signer-status refreshes with an in-flight promise or short debounce
+    (250ms is enough) so normal wallet refreshes and digest-mismatch listener
+    callbacks do not thrash SDK work. The action must be idempotent and
+    non-fatal.
   - Record failures but do not fail ordinary `refreshWallet`; signer status is
     advisory unless the user explicitly tapped migration.
 - `migrateDeprecatedSigners`:
@@ -251,9 +290,47 @@ features the app currently does not expose at the product layer.
   - Await `refreshWallet()` and `refreshSignerRotationStatus()` after the report.
   - Return the report so the UI can summarize migrated/skipped/expired inputs.
   - Clear the in-flight flag in `finally`.
+- Add a pure `summarizeMigrationReport(report)` helper, exported from the store
+  or an adjacent service, so UI copy does not inspect the SDK report shape
+  directly. Use a flat summary struct, not a single-kind discriminated union, so
+  one SDK report can preserve simultaneous conditions across both legs:
+  ```ts
+  type SignerMigrationSummary = {
+    migratedCount: number;
+    deferredCount: number;
+    oversizedCount: number;
+    expiredCount: number;
+    txids: string[];
+    legSkips: Array<{
+      leg: "vtxos" | "boarding";
+      reason: "below-dust" | "oversized-only";
+    }>;
+    globalSkip?: "no-deprecated-vtxos" | "unknown-wallet-signer";
+    errors: Array<{ leg: "vtxos" | "boarding" | "top_level"; message: string }>;
+    hasPartialProgress: boolean;
+    hasRetryableRemainder: boolean;
+    needsUnilateralExit: boolean;
+    hasErrors: boolean;
+  };
+  ```
+  The helper must inspect both `vtxos` and `boarding` legs, aggregate their
+  counts, keep every leg `txid`, preserve each leg `skipped` reason, and
+  preserve top-level `skipped` and `expired[]`. A leg `skipped` is a reason
+  enum (`"below-dust" | "oversized-only"`), not an input count; do not invent a
+  skipped count. A leg error is not a plain failure when the other leg migrated
+  funds; keep both the error and migrated counts/txids so the UI can explain
+  partial progress. `deferred` means caps left funds behind and the user may
+  need to run migration again. `oversized` means funds cannot migrate
+  cooperatively and need unilateral exit/recovery guidance, not a generic
+  skipped message. `expired[]` with no movable inputs maps to wait/recovery
+  guidance, not success. Top-level `skipped: "unknown-wallet-signer"` is a
+  refusal to rotate and needs distinct copy; `"no-deprecated-vtxos"` is a
+  no-op/no-action outcome.
 - Wire `refreshSignerRotationStatus()` after successful wallet refresh, create,
   restore, unlock, and server-info change. It should not create a recursive
-  refresh loop.
+  refresh loop. Because `getDeprecatedSignerStatus()` may do SDK/network work,
+  route these triggers through the coalesced refresh helper rather than starting
+  independent concurrent calls.
 - Clear `signerRotationStatus` on lock, reset, schema wipe, and wallet switch
   boundaries. Keep `_updateRequired` until app restart or an explicit
   `setUpdateRequired(false)` in tests/dev flows.
@@ -261,28 +338,59 @@ features the app currently does not expose at the product layer.
   ```ts
   setServerInfoChangedListener((info) => {
     const store = useAppStore.getState();
-    void store.updateServerInfo(info)
+    return store.updateServerInfo(info)
       .then(() => store.refreshSignerRotationStatus())
       .catch((e) => recordError(...));
   });
   ```
+  The listener must return the promise chain. Do not prefix it with `void`; the
+  runtime wait helper depends on this promise to know when persisted `serverInfo`
+  and transient signer status have caught up with the SDK event.
 
 ### 6. Digest Retry Call Sites
 
-- Add a small retry helper near the store/runtime boundary:
+- Add a store-local retry helper near the store/runtime boundary. It must accept
+  an attempt-aware callback/factory, not a pre-built promise, so every retry can
+  re-read Zustand state, re-acquire the public SDK wallet/manager, and rebuild
+  SDK request inputs after fresh `ArkInfo` is applied:
   ```ts
-  async function withDigestRetry<T>(run: () => Promise<T>): Promise<T> {
+  async function withDigestRetry<T>(
+    run: (attempt: "initial" | "retry") => Promise<T>,
+  ): Promise<T> {
     try {
-      return await run();
+      return await run("initial");
     } catch (e) {
       if (!isDigestMismatchError(e)) throw e;
+      await waitForServerInfoChangedListener();
+      await rebuildActiveWalletAfterDigestMismatch();
       await useAppStore.getState().refreshSignerRotationStatus().catch(...);
-      return run();
+      return run("retry");
     }
   }
   ```
   The implementation may live in the store or a service helper; avoid a runtime
   -> store import cycle.
+- Add `rebuildActiveWalletAfterDigestMismatch()` as a store-local helper for
+  wallet-backed retry paths:
+  - Snapshot `wallet`, `walletBehavior`, and `security.isLocked` before awaiting.
+  - If there is no wallet or the app is locked, do nothing.
+  - Dispose Lightning before disposing the SDK wallet, because the Lightning
+    instance owns a wallet reference.
+  - Call `disposeWallet()`, then `ensureWallet({ metadata, behavior })` if the
+    same wallet is still current and unlocked.
+  - Re-create Lightning lazily through existing `maybeEnsureLightning` /
+    `refreshWallet` paths after the retry. Do not reach into SDK-private fields
+    such as `_serverInfoInFlight`; force-rebuilding uses only public runtime
+    APIs and avoids racing the SDK's own async server-info listener.
+- Retry callbacks must not close over stale server-dependent values. On the
+  second attempt, rebuild inside the callback:
+  - read `get().network.serverInfo` fresh before `Ramps(wallet).offboard`;
+  - call `ensureWallet({ metadata, behavior })` again and construct a new
+    `Ramps(wallet)`;
+  - call `wallet.getVtxoManager()` again before signer migration;
+  - call `wallet.assetManager.*` from the reacquired wallet;
+  - recompute fee previews or validations that depended on the old
+    `serverInfo`.
 - Use it around SDK calls whose request can be rebuilt safely after a fresh
   `ArkInfo`, especially:
   - `refreshWalletSnapshot`
@@ -292,10 +400,27 @@ features the app currently does not expose at the product layer.
   - VTXO manager migration
 - Do not use it to hide repeated digest failures. Retry once, then surface the
   real error.
+- Expect one `DigestMismatchError` to trigger both the provider listener
+  (`updateServerInfo` + coalesced `refreshSignerRotationStatus`) and the
+  retry helper catch path. The retry helper must await
+  `waitForServerInfoChangedListener()` before rebuilding so it does not race
+  the async store listener. This is acceptable only if signer-status refresh is
+  coalesced/idempotent. `updateServerInfo` should be the only path that writes
+  refreshed `serverInfo` to persistence for that mismatch; the retry helper
+  should not perform a second server-info persist write.
 - When `isBuildVersionTooOldError(e)` is detected in these same paths, set
   `_updateRequired: true` and suppress generic toast/error copy where possible.
   If the calling action must reject, reject with a stable `ArkadeError` message
   that tells the screen not to show a second generic error.
+- Run the same build-version compatibility handling around onboarding and setup
+  paths before generic network/server errors are shown:
+  - `probeServer` / `fetchServerInfo` / `provider.getInfo()`
+  - create-wallet setup
+  - restore-wallet setup
+  If arkd gates `getInfo()` with `BUILD_VERSION_TOO_OLD`, onboarding should set
+  `_updateRequired: true` and show the global modal instead of only surfacing
+  "server unreachable". Keep the runtime -> store boundary clean by preserving
+  causes in `toArkadeError` and performing store mutations in store actions.
 
 ### 7. UI: Signer Rotation Banner (`app/screens/WalletScreen.tsx`)
 
@@ -311,16 +436,36 @@ features the app currently does not expose at the product layer.
   - `EXPIRED`: "Signer cutoff passed. Some funds are waiting for sweep/recovery."
   - `UNKNOWN_SIGNER`: "Some funds use an unknown server key. Export a support
     bundle if this persists."
-- Show the migrate action only when any report has status `MIGRATABLE` or
-  `DUE_NOW`.
+- Show the migrate action when `signerRotationStatus.hasMigratableFunds` is
+  true, derived via the SDK `isCooperativelyMigratable(status)` helper.
 - Use a button-level or inline busy state while migration runs. A blocking
   overlay is acceptable only while an active settlement/migration request is in
   flight and must use honest copy such as "Migrating funds...".
-- After migration:
-  - success with migrated inputs: show a success toast and let the refreshed
-    status remove or downgrade the banner.
-  - skipped/expired-only report: show an explanatory toast/message, not success.
-  - error: show the error, keep the banner.
+- After migration, call `summarizeMigrationReport(report)` and key the UI
+  message off the flat summary after refreshing wallet/signer status. The
+  summary preserves co-occurring conditions; when a single toast headline is
+  needed, choose the most important visible condition in this order:
+  `hasErrors` > `needsUnilateralExit` > `hasRetryableRemainder` >
+  `expiredCount > 0` > `migratedCount > 0` >
+  `globalSkip === "unknown-wallet-signer"` > `globalSkip`/`legSkips`.
+  - `hasErrors`: show the error and include partial-progress copy when
+    `migratedCount > 0`; keep the banner.
+  - `needsUnilateralExit`: explain that some funds exceed cooperative
+    migration limits and need unilateral exit/recovery guidance; do not show
+    plain success.
+  - `hasRetryableRemainder`: explain that some funds moved and more remain;
+    keep the banner if refreshed status still reports `MIGRATABLE`/`DUE_NOW`,
+    with copy that the user can tap migrate again.
+  - `expiredCount > 0` with no movable inputs: show recovery/wait guidance,
+    not success.
+  - `migratedCount > 0` with no higher-priority conditions: show success and
+    let refreshed status remove or downgrade the banner.
+  - `globalSkip === "unknown-wallet-signer"`: explain that the SDK refused to
+    rotate because the wallet signer is unknown, and point to diagnostics/support
+    instead of implying success.
+  - Other `globalSkip` or `legSkips` with no moved funds: show a clear
+    "nothing to migrate right now" message, using the skip reason when useful
+    (for example below-dust or oversized-only).
 - Make the banner accessible with `accessibilityRole="alert"` for `DUE_NOW` and
   `EXPIRED`; use a polite live region for `MIGRATABLE`.
 
@@ -350,15 +495,54 @@ features the app currently does not expose at the product layer.
   `isBuildVersionTooOldError` detect direct SDK errors and errors wrapped in
   `ArkadeError.cause`.
 - **Signer aggregation:** mixed SDK reports aggregate to the expected
-  `worstStatus`, especially `DUE_NOW` outranking `EXPIRED`, and all-current/no
-  reports produce `null`.
+  product severity order, especially `DUE_NOW` outranking `EXPIRED` for
+  actionability. `canMigrate` / `hasMigratableFunds` come from
+  `isCooperativelyMigratable(status)`, and all-current/no reports produce
+  `null`.
+- **Locked gating:** `refreshSignerRotationStatus` returns before
+  `ensureWallet` when `security.isLocked` is true, even if a live SDK wallet
+  remains cached.
+- **Signer-status coalescing:** duplicate triggers from wallet refresh plus
+  `onServerInfoChanged` / digest retry share one in-flight signer-status
+  refresh and do not perform duplicate `serverInfo` persist writes.
+- **Digest retry barrier:** mocked provider emits fresh server info, starts a
+  delayed app listener promise, then throws `DigestMismatchError`. Assert the
+  retry helper does not invoke the retry callback until the listener promise has
+  updated/persisted `network.serverInfo` and the wallet rebuild helper has run.
+  Include an offboard-style test where the first attempt saw old fee/server info
+  and the retry callback re-reads the fresh `serverInfo` before constructing
+  `Ramps(wallet)`.
+- **Digest wallet rebuild:** after a digest mismatch, wallet-backed retry paths
+  dispose Lightning before the SDK wallet, re-acquire the wallet through
+  `ensureWallet({ metadata, behavior })`, and no-op when there is no wallet or
+  the app is locked. Tests must not rely on SDK-private fields such as
+  `_serverInfoInFlight`.
+- **Migration summary:** `summarizeMigrationReport` covers both `vtxos` and
+  `boarding` legs, including full migration, one-leg partial success with the
+  other leg erroring, `deferred` retryable leftovers, `oversized` unilateral-exit
+  guidance, leg `skipped` reasons, global `skipped` reasons, and expired-only
+  wait/recovery. Include a mixed report test where one pass has migrated inputs,
+  deferred inputs, oversized inputs, a leg skip reason, a leg error, global
+  `skipped: "unknown-wallet-signer"`, and top-level `expired[]`; the flat
+  summary must preserve every count/flag/reason at once. Add no-move tests for
+  `globalSkip` and leg-only `legSkips` so the UI always produces a clear
+  message after a tap.
 - **Migration action:** mocked `getVtxoManager().migrateDeprecatedSignerVtxos()`
-  is called, followed by wallet refresh and signer-status refresh. Expired-only
-  reports do not produce a false "migrated" success state.
+  is called, followed by wallet refresh and signer-status refresh. Deferred,
+  oversized, expired-only, and partial-error reports do not produce a false
+  "migrated" success state.
+- **Update-required onboarding:** mocked `BUILD_VERSION_TOO_OLD` from
+  `probeServer` / `fetchServerInfo` setup paths sets `_updateRequired` and avoids
+  a generic server-unreachable-only result.
 - **Transient persistence:** `_updateRequired`, `_signerMigrationInFlight`, and
   `signerRotationStatus` are excluded from `persist()`.
 - **Schema wipe:** persisted schema `7` hits the mismatch modal under
   `CURRENT_SCHEMA_VERSION = 8`.
+- **Schema fixtures:** update the existing
+  `app/store/__tests__/useAppStore.test.ts` "hydrates normally when stored
+  version matches" fixture from `schemaVersion: 7` to `8`, keep schema `7`
+  only in the stale-version mismatch assertion, and review the adjacent
+  older/newer hydrate fixtures while making the bump.
 
 ### Manual / Integration
 
