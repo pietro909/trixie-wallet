@@ -36,6 +36,7 @@ import {
   type BoltzSwapEndpointNotFound,
   boltzApiUrlForNetwork,
   boltzApiUrlsForNetwork,
+  boltzLegacyApiUrlsForNetwork,
   boltzPrimaryApiUrlForNetwork,
   createBoltzSwapProvider,
   isLightningSupportedForNetwork,
