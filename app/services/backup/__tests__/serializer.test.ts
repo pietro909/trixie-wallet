@@ -399,8 +399,8 @@ describe("backup serializer walletMode round-trip", () => {
       importedAssetIds: [],
       contractLabels: [],
     });
-    const wire = JSON.parse(JSON.stringify(built)) as Record<string, any>;
-    wire.wallet.walletMode = "bogus";
+    const wire = JSON.parse(JSON.stringify(built)) as Record<string, unknown>;
+    (wire.wallet as Record<string, unknown>).walletMode = "bogus";
     expect(() => parseBackupPayload(wire)).toThrow(
       /Backup wallet.walletMode is missing or invalid/,
     );
