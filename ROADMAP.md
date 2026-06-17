@@ -4,7 +4,7 @@ This repository is an Expo-only, iOS/Android self-custodial Arkade wallet app. T
 
 This is a living document: tick items off as they land.
 
-Last updated: 2026-05-25 (Milestone 25 delivered; Milestone 26: Loading Feedback & Sync Visibility added)
+Last updated: 2026-06-16 (Milestone 29: SDK Server Compatibility & Signer Rotation added)
 
 ## Milestones
 
@@ -67,6 +67,8 @@ Last updated: 2026-05-25 (Milestone 25 delivered; Milestone 26: Loading Feedback
   - Remove hardcoded English strings, introduce a robust localization framework (i18next + expo-localization), and ensure locale-aware number/date formatting throughout the app.
 - [ ] Milestone 28: HD Wallet Address Rotation ([docs/MILESTONE_28.agents.md](./docs/MILESTONE_28.agents.md))
   - Enable privacy-preserving address rotation for mnemonic-based wallets via `walletMode: "hd"`, allowing users to toggle between static and rotating addresses.
+- [ ] Milestone 29: SDK Server Compatibility & Signer Rotation ([docs/MILESTONE_29.agents.md](./docs/MILESTONE_29.agents.md))
+  - Wire up `onServerInfoChanged` for mid-session server info refresh, catch `BUILD_VERSION_TOO_OLD` with an actionable update prompt, and surface deprecated-signer vtxo classification with a one-tap migration flow.
 
 ## Relevant Documentation
 

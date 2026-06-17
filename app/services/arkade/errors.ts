@@ -1,3 +1,4 @@
+import { DigestMismatchError, maybeArkError } from "@arkade-os/sdk";
 import { type ErrorCategory, recordError } from "../diagnostics/recorder";
 
 export type ArkadeErrorKind =
@@ -33,7 +34,9 @@ export type ArkadeErrorKind =
   | "addresses_fetch_failed"
   | "contracts_fetch_failed"
   | "contracts_params_not_found"
-  | "contracts_update_failed";
+  | "contracts_update_failed"
+  | "signer_migration_failed"
+  | "update_required";
 
 const CATEGORY_BY_KIND: Record<ArkadeErrorKind, ErrorCategory> = {
   server_unreachable: "server",
@@ -69,6 +72,8 @@ const CATEGORY_BY_KIND: Record<ArkadeErrorKind, ErrorCategory> = {
   contracts_fetch_failed: "wallet",
   contracts_params_not_found: "wallet",
   contracts_update_failed: "wallet",
+  signer_migration_failed: "wallet",
+  update_required: "server",
 };
 
 export class ArkadeError extends Error {
@@ -99,5 +104,81 @@ export function toArkadeError(
 function causeMessage(cause: unknown): string | null {
   if (cause == null) return null;
   if (cause instanceof Error) return cause.message;
+  return null;
+}
+
+/**
+ * Stable rejection message used by store actions when a server-required app
+ * update is detected. The global {@link UpdateRequiredModal} is what the user
+ * acts on; this message merely tells the originating screen not to render a
+ * second, generic error on top of the modal.
+ */
+export const UPDATE_REQUIRED_ERROR_MESSAGE =
+  "A server update requires a newer version of Trixie Wallet.";
+
+/**
+ * Walk an error's `cause` chain (including {@link ArkadeError.cause} and the
+ * native `Error.cause`) looking for one that satisfies `predicate`. A `Set`
+ * guards against self-referential causes. `toArkadeError` preserves the SDK
+ * error both as the wrapper's message and as `.cause`, so guards built on this
+ * detect SDK errors whether they arrive raw or wrapped.
+ */
+function someInCauseChain(
+  e: unknown,
+  predicate: (err: unknown) => boolean,
+): boolean {
+  let current: unknown = e;
+  const seen = new Set<unknown>();
+  while (current != null && !seen.has(current)) {
+    if (predicate(current)) return true;
+    seen.add(current);
+    if (current instanceof ArkadeError) {
+      current = current.cause;
+    } else if (current instanceof Error) {
+      current = (current as { cause?: unknown }).cause;
+    } else {
+      break;
+    }
+  }
+  return false;
+}
+
+/**
+ * True when the error (or any wrapped cause) is the SDK's
+ * {@link DigestMismatchError}. `DigestMismatchError` is a plain `Error` with no
+ * `code`/`name` beyond its class, so detection is by `instanceof` along the
+ * cause chain.
+ */
+export function isDigestMismatchError(e: unknown): boolean {
+  return someInCauseChain(e, (err) => err instanceof DigestMismatchError);
+}
+
+/**
+ * True when the error (or any wrapped cause) is arkd's
+ * `BUILD_VERSION_TOO_OLD` guard rejection. arkd carries the name/code in the
+ * message prefix with an empty `details[]`; `maybeArkError` parses both forms,
+ * so branch on `name`/`code`, never on raw message matching.
+ */
+export function isBuildVersionTooOldError(e: unknown): boolean {
+  return someInCauseChain(e, (err) => {
+    const ark = maybeArkError(err);
+    return ark?.name === "BUILD_VERSION_TOO_OLD" || ark?.code === 48;
+  });
+}
+
+/**
+ * Compatibility outcome of an SDK error, computed by store actions *before*
+ * they wrap the error into a generic {@link ArkadeError}. Update-required
+ * outranks digest-mismatch: a stale client build cannot be fixed by refreshing
+ * server info and retrying.
+ */
+export type CompatibilityAction =
+  | { kind: "update_required" }
+  | { kind: "digest_mismatch" }
+  | null;
+
+export function classifyCompatibilityError(e: unknown): CompatibilityAction {
+  if (isBuildVersionTooOldError(e)) return { kind: "update_required" };
+  if (isDigestMismatchError(e)) return { kind: "digest_mismatch" };
   return null;
 }

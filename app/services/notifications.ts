@@ -136,7 +136,7 @@ export async function fetchNotificationPrefs(): Promise<NotificationPrefsSnapsho
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     const prefs = parsed?.preferences?.notifications;
-    if (!prefs || prefs.enabled !== true) return null;
+    if (prefs?.enabled !== true) return null;
     return {
       payments: prefs.payments !== false,
       swaps: prefs.swaps !== false,

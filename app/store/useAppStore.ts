@@ -1,4 +1,4 @@
-import { Ramps } from "@arkade-os/sdk";
+import { type DeprecatedSignerMigrationReport, Ramps } from "@arkade-os/sdk";
 import { bytesToUtf8, utf8ToBytes } from "@noble/ciphers/utils.js";
 import { pbkdf2Async } from "@noble/hashes/pbkdf2.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -28,7 +28,13 @@ import {
   loadContractSummaries,
   updateContractLabel,
 } from "../services/arkade/contracts";
-import { ArkadeError, toArkadeError } from "../services/arkade/errors";
+import {
+  ArkadeError,
+  classifyCompatibilityError,
+  isBuildVersionTooOldError,
+  toArkadeError,
+  UPDATE_REQUIRED_ERROR_MESSAGE,
+} from "../services/arkade/errors";
 import {
   estimateOffboardFee,
   OffboardFeeEstimateError,
@@ -88,13 +94,16 @@ import {
   refreshWalletSnapshot,
   restoreWalletInstance,
   setIncomingFundsListener,
+  setServerInfoChangedListener,
   type WalletSnapshot,
+  waitForServerInfoChangedListener,
 } from "../services/arkade/runtime";
 import {
   deleteSecret,
   readSecret,
   saveSecret,
 } from "../services/arkade/secret-store";
+import { aggregateSignerRotationStatus } from "../services/arkade/signer-rotation";
 import {
   clearSwapBackgroundState,
   ensureSwapBackgroundRegistered,
@@ -147,6 +156,7 @@ import { LEGACY_STORAGE_KEYS, STORAGE_KEY } from "./storage-keys";
 import type {
   Activity,
   AppState,
+  ArkadeServerInfo,
   ArkadeWalletMetadata,
   AssetsSlice,
   BackgroundTaskKey,
@@ -157,13 +167,14 @@ import type {
   LightningResumeTrigger,
   NotificationPreferences,
   RestoreProgress,
+  SignerRotationStatus,
   SyncStage,
   SyncState,
   ThemePref,
   WalletBehavior,
 } from "./types";
 
-const CURRENT_SCHEMA_VERSION: AppState["schemaVersion"] = 7;
+const CURRENT_SCHEMA_VERSION: AppState["schemaVersion"] = 8;
 
 // PBKDF2 cost for the unlock password hash. Each guess against an exfiltrated
 // `app_state_v1` must pay this iteration count, so we set it higher than the
@@ -329,7 +340,7 @@ const BACKGROUND_TASK_DESCRIPTORS: Record<
 };
 
 const DEFAULT_STATE: AppState = {
-  schemaVersion: 7,
+  schemaVersion: 8,
   wallet: null,
   network: {
     arkServerUrl: DEFAULT_ARK_SERVER_URL,
@@ -409,10 +420,46 @@ type StoreState = AppState & {
   recoveringIds: Set<string>;
   /** Per-row error display, keyed by `RecoveryItem.id`. */
   rowErrors: Record<string, RecoveryRowError>;
+  /**
+   * Aggregated deprecated-signer rotation status, derived fresh from the SDK
+   * VTXO manager. `null` when there is no actionable exposure. Transient —
+   * cleared on lock/reset/wipe, refreshed on unlock / wallet refresh /
+   * server-info change / migration completion. Never persisted.
+   */
+  signerRotationStatus: SignerRotationStatus | null;
+  /**
+   * Set when arkd rejects a request with `BUILD_VERSION_TOO_OLD`. Drives the
+   * app-level non-dismissable update prompt. Transient: it persists for the
+   * session (until app restart or an explicit `setUpdateRequired(false)`) but
+   * is never written to AsyncStorage and is NOT cleared on lock/reset.
+   */
+  _updateRequired: boolean;
+  /** In-flight gate for `migrateDeprecatedSigners`. Transient. */
+  _signerMigrationInFlight: boolean;
   hydrate: () => Promise<void>;
   acknowledgeSchemaMismatchAndWipe: () => Promise<void>;
   refreshServer: () => Promise<void>;
   setArkadeNetwork: (network: "bitcoin" | "mutinynet") => Promise<void>;
+  /**
+   * Mirror a fresh SDK `ArkInfo` (already converted) into persisted
+   * `network.serverInfo`. Marks the server online and clears `lastError`.
+   * The single path that writes refreshed `serverInfo` on a digest mismatch.
+   */
+  updateServerInfo: (info: ArkadeServerInfo) => Promise<void>;
+  /** Set/clear the global update-required flag. */
+  setUpdateRequired: (required: boolean) => void;
+  /**
+   * Re-derive {@link StoreState.signerRotationStatus} from the SDK VTXO
+   * manager. Coalesced (shares one in-flight call), idempotent, and non-fatal
+   * — advisory unless the user explicitly taps migrate.
+   */
+  refreshSignerRotationStatus: () => Promise<void>;
+  /**
+   * Run the SDK's cooperative deprecated-signer migration, then refresh wallet
+   * and signer status. Returns the raw two-leg report so the UI can summarize
+   * migrated / deferred / oversized / expired inputs without collapsing it.
+   */
+  migrateDeprecatedSigners: () => Promise<DeprecatedSignerMigrationReport>;
   createWallet: (
     kind: CreateWalletKind,
     walletMode: "static" | "hd",
@@ -758,6 +805,116 @@ function scheduleLightningRestore(walletId: string): void {
 let lightningResumeInFlight: Promise<void> | null = null;
 let refreshInFlight: Promise<void> | null = null;
 let refreshPending = false;
+/**
+ * Shared in-flight gate for `refreshSignerRotationStatus`. Duplicate triggers
+ * (wallet refresh + `onServerInfoChanged` + digest retry) share one SDK pass
+ * instead of thrashing. Reset to `null` once the pass settles.
+ */
+let signerStatusRefreshInFlight: Promise<void> | null = null;
+
+/**
+ * Flag the global update-required state when `e` (or a wrapped cause) is arkd's
+ * `BUILD_VERSION_TOO_OLD`. Returns whether it matched so callers can suppress
+ * a redundant generic error. Uses `setState` directly so onboarding/runtime
+ * boundary catches can call it without a store-action closure.
+ */
+function maybeFlagUpdateRequired(e: unknown): boolean {
+  if (isBuildVersionTooOldError(e)) {
+    useAppStore.setState({ _updateRequired: true });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Map a setup-time `probeServer`/`getInfo` failure to the error a setup action
+ * should throw, flagging update-required first. When arkd gates `getInfo()`
+ * with `BUILD_VERSION_TOO_OLD`, onboarding must show the global update modal
+ * instead of only surfacing "server unreachable".
+ */
+function setupProbeError(e: unknown): ArkadeError {
+  if (maybeFlagUpdateRequired(e)) {
+    return new ArkadeError("update_required", UPDATE_REQUIRED_ERROR_MESSAGE, e);
+  }
+  return toArkadeError(
+    "server_unreachable",
+    "Could not reach Arkade server",
+    e,
+  );
+}
+
+/**
+ * Force-rebuild the active SDK wallet after a `DigestMismatchError`, using only
+ * public runtime APIs (never SDK-private fields). Lightning owns a wallet
+ * reference, so it is disposed first; then the SDK wallet is disposed and
+ * re-acquired through `ensureWallet`. No-ops when there is no wallet or the app
+ * is locked. Lightning is re-created lazily by the next
+ * `maybeEnsureLightning` / `refreshWallet` after the retry.
+ *
+ * Exported for unit tests (the dispose-order and locked/no-wallet no-op).
+ */
+export async function rebuildActiveWalletAfterDigestMismatch(): Promise<void> {
+  const before = useAppStore.getState();
+  const metadata = before.wallet;
+  const behavior = before.walletBehavior;
+  if (!metadata || before.security.isLocked) return;
+  await disposeLightning().catch(() => {});
+  await disposeWallet().catch(() => {});
+  const after = useAppStore.getState();
+  if (
+    !after.wallet ||
+    after.wallet.id !== metadata.id ||
+    after.security.isLocked
+  ) {
+    return;
+  }
+  await ensureWallet({ metadata: after.wallet, behavior });
+}
+
+/**
+ * Run an SDK operation that can be safely rebuilt under fresh `ArkInfo`, with a
+ * single digest-mismatch retry. `run` is attempt-aware and MUST re-read Zustand
+ * state and re-acquire the wallet/manager/request inputs on each call so the
+ * retry never closes over stale server-dependent values.
+ *
+ * On `DigestMismatchError` the provider has already refreshed `ArkInfo` and
+ * fired `onServerInfoChanged`; we await the app-side listener barrier (so
+ * persisted `serverInfo` + signer status have caught up), force-rebuild the
+ * wallet, refresh signer status (coalesced/idempotent), then retry once. A
+ * second mismatch surfaces the real error — this never hides repeated failures.
+ * `updateServerInfo` (via the listener) is the only path that persists the
+ * refreshed `serverInfo`; this helper does not write it a second time.
+ *
+ * Compatibility precedence is decided by {@link classifyCompatibilityError}, not
+ * a bare digest check: update-required outranks digest-mismatch. An error that
+ * looks like both (stale client build AND stale server info) must NOT be
+ * retried — a stale build cannot be fixed by refreshing server info, and a
+ * silent retry could "succeed" and hide the required-update modal. So we flag
+ * `_updateRequired` and surface the error instead.
+ */
+async function withDigestRetry<T>(
+  run: (attempt: "initial" | "retry") => Promise<T>,
+): Promise<T> {
+  try {
+    return await run("initial");
+  } catch (e) {
+    const action = classifyCompatibilityError(e);
+    if (action?.kind === "update_required") {
+      maybeFlagUpdateRequired(e);
+      throw e;
+    }
+    if (action?.kind !== "digest_mismatch") throw e;
+    await waitForServerInfoChangedListener();
+    await rebuildActiveWalletAfterDigestMismatch();
+    await useAppStore
+      .getState()
+      .refreshSignerRotationStatus()
+      .catch(() => {
+        // signer status is advisory; never block the retry on it
+      });
+    return run("retry");
+  }
+}
 
 type LightningResumeSummary = Awaited<ReturnType<typeof resumeLightningSwaps>>;
 
@@ -928,6 +1085,9 @@ export const useAppStore = create<StoreState>((set, get) => ({
   restoreProgress: { status: "idle" },
   recoveringIds: new Set<string>(),
   rowErrors: {},
+  signerRotationStatus: null,
+  _updateRequired: false,
+  _signerMigrationInFlight: false,
 
   hydrate: async () => {
     // Drain BG-context errors first, regardless of which path the rest of
@@ -1014,6 +1174,8 @@ export const useAppStore = create<StoreState>((set, get) => ({
       restoreProgress: { status: "idle" },
       recoveringIds: new Set<string>(),
       rowErrors: {},
+      signerRotationStatus: null,
+      _signerMigrationInFlight: false,
     });
   },
 
@@ -1035,6 +1197,15 @@ export const useAppStore = create<StoreState>((set, get) => ({
       }));
       await persist(get());
     } catch (e) {
+      if (maybeFlagUpdateRequired(e)) {
+        // The global update modal carries the message; don't also surface a
+        // generic "server unreachable" on the Networks screen.
+        set((s) => ({
+          network: { ...s.network, status: "offline", lastError: null },
+        }));
+        await persist(get());
+        return;
+      }
       const message =
         e instanceof Error ? e.message : "Could not reach Arkade server";
       set((s) => ({
@@ -1070,6 +1241,110 @@ export const useAppStore = create<StoreState>((set, get) => ({
     await persist(get());
   },
 
+  updateServerInfo: async (info) => {
+    set((s) => ({
+      network: {
+        ...s.network,
+        status: "online",
+        detectedNetwork: info.network,
+        lastError: null,
+        serverInfo: info,
+      },
+    }));
+    await persist(get());
+  },
+
+  setUpdateRequired: (required) => {
+    if (get()._updateRequired === required) return;
+    set({ _updateRequired: required });
+  },
+
+  refreshSignerRotationStatus: () => {
+    // Coalesce: a single in-flight pass absorbs duplicate triggers from wallet
+    // refresh, `onServerInfoChanged`, and the digest-retry helper.
+    if (signerStatusRefreshInFlight) return signerStatusRefreshInFlight;
+
+    const run = (async () => {
+      const metadata = get().wallet;
+      // Gate on the lock flag, NOT wallet availability — lock keeps the SDK
+      // wallet alive in memory, so an unlocked-but-cached wallet must not leak
+      // signer status while the UI is locked.
+      if (!metadata || get().security.isLocked) return;
+      try {
+        const wallet = await ensureWallet({
+          metadata,
+          behavior: get().walletBehavior,
+        });
+        const manager = await wallet.getVtxoManager();
+        const reports = await manager.getDeprecatedSignerStatus();
+        const status = aggregateSignerRotationStatus(reports);
+        const current = get().wallet;
+        if (!current || current.id !== metadata.id) return;
+        if (get().security.isLocked) return;
+        set({ signerRotationStatus: status });
+      } catch (e) {
+        // Advisory only — never fail an ordinary refresh on signer status.
+        recordError(
+          "server",
+          `signer_status_refresh_failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    })();
+
+    const inFlight = run.finally(() => {
+      if (signerStatusRefreshInFlight === inFlight) {
+        signerStatusRefreshInFlight = null;
+      }
+    });
+    signerStatusRefreshInFlight = inFlight;
+    return inFlight;
+  },
+
+  migrateDeprecatedSigners: async () => {
+    const metadata = get().wallet;
+    if (!metadata) {
+      throw new ArkadeError("wallet_not_ready", "No wallet available");
+    }
+    if (get().security.isLocked) {
+      throw new ArkadeError("wallet_not_ready", "Unlock the wallet first");
+    }
+    set({ _signerMigrationInFlight: true });
+    try {
+      const report = await withDigestRetry(async () => {
+        const wallet = await ensureWallet({
+          metadata,
+          behavior: get().walletBehavior,
+        });
+        const manager = await wallet.getVtxoManager();
+        return manager.migrateDeprecatedSignerVtxos();
+      });
+      // Refresh balances and re-derive signer status so the banner reflects
+      // the post-migration reality (downgrade/remove). Both are non-fatal.
+      await get()
+        .refreshWallet()
+        .catch(() => {});
+      await get()
+        .refreshSignerRotationStatus()
+        .catch(() => {});
+      return report;
+    } catch (e) {
+      if (maybeFlagUpdateRequired(e)) {
+        throw new ArkadeError(
+          "update_required",
+          UPDATE_REQUIRED_ERROR_MESSAGE,
+          e,
+        );
+      }
+      throw toArkadeError(
+        "signer_migration_failed",
+        "Signer migration failed",
+        e,
+      );
+    } finally {
+      set({ _signerMigrationInFlight: false });
+    }
+  },
+
   createWallet: async (kind, walletMode) => {
     if (get().wallet) {
       throw new ArkadeError(
@@ -1082,6 +1357,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
     // support) we don't want a stale snapshot surviving the boundary.
     invalidateVtxoSnapshotCache();
     invalidateAddressesSnapshotCache();
+    set({ signerRotationStatus: null });
     const arkServerUrl = get().network.arkServerUrl;
     set((s) => ({
       network: { ...s.network, status: "connecting", lastError: null },
@@ -1090,16 +1366,12 @@ export const useAppStore = create<StoreState>((set, get) => ({
     try {
       probed = await probeServer(arkServerUrl);
     } catch (e) {
-      const err = toArkadeError(
-        "server_unreachable",
-        "Could not reach Arkade server",
-        e,
-      );
+      const err = setupProbeError(e);
       set((s) => ({
         network: {
           ...s.network,
           status: "offline",
-          lastError: err.message,
+          lastError: err.kind === "update_required" ? null : err.message,
         },
       }));
       throw err;
@@ -1153,6 +1425,9 @@ export const useAppStore = create<StoreState>((set, get) => ({
         },
       }));
       await persist(get());
+      void get()
+        .refreshSignerRotationStatus()
+        .catch(() => {});
       if (isLightningSupportedForNetwork(serverNetwork)) {
         scheduleLightningRestore(walletId);
       }
@@ -1178,16 +1453,12 @@ export const useAppStore = create<StoreState>((set, get) => ({
     try {
       probed = await probeServer(arkServerUrl);
     } catch (e) {
-      const err = toArkadeError(
-        "server_unreachable",
-        "Could not reach Arkade server",
-        e,
-      );
+      const err = setupProbeError(e);
       set((s) => ({
         network: {
           ...s.network,
           status: "offline",
-          lastError: err.message,
+          lastError: err.kind === "update_required" ? null : err.message,
         },
       }));
       throw err;
@@ -1259,6 +1530,9 @@ export const useAppStore = create<StoreState>((set, get) => ({
         },
       }));
       await persist(get());
+      void get()
+        .refreshSignerRotationStatus()
+        .catch(() => {});
       if (isLightningSupportedForNetwork(serverNetwork)) {
         scheduleLightningRestore(walletId);
       }
@@ -1289,9 +1563,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
       const metadata = get().wallet;
       if (!metadata) return;
       markStage("snapshot");
-      const snapshot = await refreshWalletSnapshot(
-        metadata,
-        get().walletBehavior,
+      // The snapshot's SDK reads are digest-gated; on a mid-session signer
+      // rotation, rebuild under fresh ArkInfo and retry once rather than
+      // surfacing a generic refresh failure.
+      const snapshot = await withDigestRetry(() =>
+        refreshWalletSnapshot(metadata, get().walletBehavior),
       );
       markStage("lightning");
       await maybeEnsureLightning(
@@ -1330,6 +1606,9 @@ export const useAppStore = create<StoreState>((set, get) => ({
           lastError = null;
         } catch (e) {
           lastError = e;
+          // A build-version rejection during refresh must raise the global
+          // update prompt, not just stay a transient refresh error.
+          maybeFlagUpdateRequired(e);
         }
       } while (refreshPending);
 
@@ -1346,6 +1625,11 @@ export const useAppStore = create<StoreState>((set, get) => ({
             `notification_diff_failed: ${e instanceof Error ? e.message : String(e)}`,
           );
         });
+        // Re-derive signer-rotation status off the freshly refreshed wallet.
+        // Coalesced + non-fatal: never blocks or fails the refresh.
+        void get()
+          .refreshSignerRotationStatus()
+          .catch(() => {});
       }
 
       if (lastError) throw lastError;
@@ -1434,14 +1718,25 @@ export const useAppStore = create<StoreState>((set, get) => ({
         "Insufficient balance for this amount",
       );
     }
-    const wallet = await ensureWallet({
-      metadata,
-      behavior: get().walletBehavior,
-    });
     let txId: string;
     try {
-      txId = await wallet.send({ address, amount: amountSats });
+      txId = await withDigestRetry(async () => {
+        // Re-acquire the wallet inside the callback so the retry runs against
+        // the rebuilt wallet after a fresh ArkInfo is applied.
+        const wallet = await ensureWallet({
+          metadata,
+          behavior: get().walletBehavior,
+        });
+        return wallet.send({ address, amount: amountSats });
+      });
     } catch (e) {
+      if (maybeFlagUpdateRequired(e)) {
+        throw new ArkadeError(
+          "update_required",
+          UPDATE_REQUIRED_ERROR_MESSAGE,
+          e,
+        );
+      }
       throw toArkadeError("send_failed", "Send failed", e);
     }
     await get()
@@ -1526,51 +1821,78 @@ export const useAppStore = create<StoreState>((set, get) => ({
         "Server fee info is not available — refresh the network and try again",
       );
     }
-    const wallet = await ensureWallet({
-      metadata,
-      behavior: get().walletBehavior,
-    });
-
-    let vtxos: Awaited<ReturnType<typeof wallet.getVtxos>>;
+    let result: { txId: string; feeSats: number };
     try {
-      vtxos = await wallet.getVtxos({
-        withRecoverable: true,
-        withUnrolled: false,
-      });
-    } catch (e) {
-      throw toArkadeError("send_failed", "Failed to load offchain coins", e);
-    }
-
-    let estimate: ReturnType<typeof estimateOffboardFee>;
-    try {
-      estimate = estimateOffboardFee({
-        vtxos,
-        amountSats,
-        destinationAddress: address,
-        feeInfo: { intentFee: serverInfo.intentFee },
-        network: networkNameOrNull(network),
-      });
-    } catch (e) {
-      if (e instanceof OffboardFeeEstimateError) {
-        if (e.kind === "amount_exceeds_balance") {
-          throw new ArkadeError("insufficient_balance", e.message, e);
+      // The whole offboard pipeline — coin load, fee estimate, and submission
+      // — is digest-gated and depends on serverInfo, so it all runs inside the
+      // retry. A mid-session signer rotation rebuilds the wallet and re-reads
+      // fresh ArkInfo, then re-runs the pipeline against it; the specific
+      // load/estimate errors (thrown as ArkadeErrors) pass through the retry
+      // wrapper and are surfaced unchanged by the outer catch.
+      result = await withDigestRetry(async () => {
+        const offboardWallet = await ensureWallet({
+          metadata,
+          behavior: get().walletBehavior,
+        });
+        const freshInfo = get().network.serverInfo;
+        if (!freshInfo) {
+          throw new ArkadeError(
+            "server_unreachable",
+            "Server fee info is not available — refresh the network and try again",
+          );
         }
-        throw new ArkadeError("send_failed", e.message, e);
-      }
-      throw toArkadeError("send_failed", "Failed to estimate fee", e);
-    }
 
-    let txId: string;
-    try {
-      txId = await new Ramps(wallet).offboard(
-        address,
-        {
-          intentFee: serverInfo.intentFee,
-          txFeeRate: serverInfo.txFeeRate,
-        },
-        BigInt(amountSats),
-      );
+        let vtxos: Awaited<ReturnType<typeof offboardWallet.getVtxos>>;
+        try {
+          vtxos = await offboardWallet.getVtxos({
+            withRecoverable: true,
+            withUnrolled: false,
+          });
+        } catch (e) {
+          throw toArkadeError(
+            "send_failed",
+            "Failed to load offchain coins",
+            e,
+          );
+        }
+
+        let estimate: ReturnType<typeof estimateOffboardFee>;
+        try {
+          estimate = estimateOffboardFee({
+            vtxos,
+            amountSats,
+            destinationAddress: address,
+            feeInfo: { intentFee: freshInfo.intentFee },
+            network: networkNameOrNull(network),
+          });
+        } catch (e) {
+          if (e instanceof OffboardFeeEstimateError) {
+            if (e.kind === "amount_exceeds_balance") {
+              throw new ArkadeError("insufficient_balance", e.message, e);
+            }
+            throw new ArkadeError("send_failed", e.message, e);
+          }
+          throw toArkadeError("send_failed", "Failed to estimate fee", e);
+        }
+
+        const txId = await new Ramps(offboardWallet).offboard(
+          address,
+          {
+            intentFee: freshInfo.intentFee,
+            txFeeRate: freshInfo.txFeeRate,
+          },
+          BigInt(amountSats),
+        );
+        return { txId, feeSats: estimate.feeSats };
+      });
     } catch (e) {
+      if (maybeFlagUpdateRequired(e)) {
+        throw new ArkadeError(
+          "update_required",
+          UPDATE_REQUIRED_ERROR_MESSAGE,
+          e,
+        );
+      }
       throw toArkadeError("send_failed", "Collaborative exit failed", e);
     }
 
@@ -1579,7 +1901,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
       .catch(() => {
         // refresh failure; ignore — txId is still returned
       });
-    return { txId, feeSats: estimate.feeSats, amountSats };
+    return { txId: result.txId, feeSats: result.feeSats, amountSats };
   },
 
   sendChainSwap: async (address, amountSats) => {
@@ -1655,17 +1977,26 @@ export const useAppStore = create<StoreState>((set, get) => ({
       // best-effort metadata; the offchain leg can still proceed
     }
 
-    const wallet = await ensureWallet({
-      metadata,
-      behavior: get().walletBehavior,
-    });
     let walletTxId: string;
     try {
-      walletTxId = await wallet.send({
-        address: response.arkAddress,
-        amount: response.amountToPay,
+      walletTxId = await withDigestRetry(async () => {
+        const wallet = await ensureWallet({
+          metadata,
+          behavior: get().walletBehavior,
+        });
+        return wallet.send({
+          address: response.arkAddress,
+          amount: response.amountToPay,
+        });
       });
     } catch (e) {
+      if (maybeFlagUpdateRequired(e)) {
+        throw new ArkadeError(
+          "update_required",
+          UPDATE_REQUIRED_ERROR_MESSAGE,
+          e,
+        );
+      }
       throw toArkadeError(
         "send_failed",
         "Offchain send to Boltz lockup failed",
@@ -1752,6 +2083,10 @@ export const useAppStore = create<StoreState>((set, get) => ({
     clearNotifyState();
     set((s) => ({
       security: { ...s.security, isLocked: true },
+      // Signer status is gated behind unlock; clear it so a locked UI never
+      // shows stale rotation state. `_updateRequired` is intentionally NOT
+      // cleared here — a stale build is stale whether locked or not.
+      signerRotationStatus: null,
     }));
     await persist(get());
   },
@@ -1764,6 +2099,9 @@ export const useAppStore = create<StoreState>((set, get) => ({
     set({ security: { ...security, isLocked: false } });
     await persist(get());
     scheduleLightningResume("unlock");
+    void get()
+      .refreshSignerRotationStatus()
+      .catch(() => {});
     return true;
   },
 
@@ -1785,6 +2123,9 @@ export const useAppStore = create<StoreState>((set, get) => ({
         set({ security: { ...security, isLocked: false } });
         await persist(get());
         scheduleLightningResume("unlock");
+        void get()
+          .refreshSignerRotationStatus()
+          .catch(() => {});
         return true;
       }
       return false;
@@ -1842,6 +2183,8 @@ export const useAppStore = create<StoreState>((set, get) => ({
       restoreProgress: { status: "idle" },
       recoveringIds: new Set<string>(),
       rowErrors: {},
+      signerRotationStatus: null,
+      _signerMigrationInFlight: false,
     });
     await AsyncStorage.removeItem(STORAGE_KEY);
     await clearLegacyStorage();
@@ -2190,11 +2533,7 @@ export const useAppStore = create<StoreState>((set, get) => ({
     try {
       probed = await probeServer(arkServerUrl);
     } catch (e) {
-      throw toArkadeError(
-        "server_unreachable",
-        "Could not reach Arkade server",
-        e,
-      );
+      throw setupProbeError(e);
     }
     const serverNetwork = probed.network;
     if (serverNetwork !== backupNetwork) {
@@ -2312,6 +2651,9 @@ export const useAppStore = create<StoreState>((set, get) => ({
         },
       }));
       await persist(get());
+      void get()
+        .refreshSignerRotationStatus()
+        .catch(() => {});
 
       // Post-commit work — must not roll back an otherwise successful import.
       if (isLightningSupportedForNetwork(serverNetwork)) {
@@ -2450,17 +2792,26 @@ export const useAppStore = create<StoreState>((set, get) => ({
         "Insufficient asset balance for this amount",
       );
     }
-    const wallet = await ensureWallet({
-      metadata,
-      behavior: get().walletBehavior,
-    });
     let txId: string;
     try {
-      txId = await wallet.send({
-        address,
-        assets: [{ assetId, amount }],
+      txId = await withDigestRetry(async () => {
+        const wallet = await ensureWallet({
+          metadata,
+          behavior: get().walletBehavior,
+        });
+        return wallet.send({
+          address,
+          assets: [{ assetId, amount }],
+        });
       });
     } catch (e) {
+      if (maybeFlagUpdateRequired(e)) {
+        throw new ArkadeError(
+          "update_required",
+          UPDATE_REQUIRED_ERROR_MESSAGE,
+          e,
+        );
+      }
       throw toArkadeError("send_failed", "Asset send failed", e);
     }
     await get()
@@ -2479,34 +2830,45 @@ export const useAppStore = create<StoreState>((set, get) => ({
     if (input.amount <= 0n) {
       throw new ArkadeError("send_failed", "Amount must be greater than zero");
     }
-    const wallet = await ensureWallet({
-      metadata,
-      behavior: get().walletBehavior,
-    });
     const mode = input.controlMode ?? "none";
     let controlAssetId = input.controlAssetId;
+    const metadataObj: Record<string, unknown> = {};
+    if (input.name) metadataObj.name = input.name;
+    if (input.ticker) metadataObj.ticker = input.ticker;
+    if (typeof input.decimals === "number") {
+      metadataObj.decimals = input.decimals;
+    }
+    if (input.icon) metadataObj.icon = input.icon;
+    const hasMetadata = Object.keys(metadataObj).length > 0;
     try {
-      if (mode === "new") {
-        const control = await wallet.assetManager.issue({ amount: 1n });
-        controlAssetId = control.assetId;
-        await markSelfIssued(control.assetId);
-      }
-      const metadataObj: Record<string, unknown> = {};
-      if (input.name) metadataObj.name = input.name;
-      if (input.ticker) metadataObj.ticker = input.ticker;
-      if (typeof input.decimals === "number") {
-        metadataObj.decimals = input.decimals;
-      }
-      if (input.icon) metadataObj.icon = input.icon;
-      const result = await wallet.assetManager.issue({
-        amount: input.amount,
-        controlAssetId,
-        metadata:
-          Object.keys(metadataObj).length > 0
+      // Wallet acquisition, control-asset issuance, and the main issuance all
+      // run inside the digest retry, inside the try. `controlIssued` keeps the
+      // control leg idempotent across a retry: a digest mismatch on the MAIN
+      // issuance rebuilds and retries without minting a second control asset,
+      // while a mismatch before the control asset exists still issues it
+      // exactly once. ensureWallet lives inside the try so a build-version
+      // rejection there flags _updateRequired instead of escaping raw.
+      let controlIssued = false;
+      const result = await withDigestRetry(async () => {
+        const w = await ensureWallet({
+          metadata,
+          behavior: get().walletBehavior,
+        });
+        if (mode === "new" && !controlIssued) {
+          const control = await w.assetManager.issue({ amount: 1n });
+          controlAssetId = control.assetId;
+          controlIssued = true;
+          await markSelfIssued(control.assetId);
+        }
+        return w.assetManager.issue({
+          amount: input.amount,
+          controlAssetId,
+          metadata: hasMetadata
             ? (metadataObj as Parameters<
-                typeof wallet.assetManager.issue
+                typeof w.assetManager.issue
               >[0]["metadata"])
             : undefined,
+        });
       });
       await markSelfIssued(result.assetId);
       const ids = get().assets.importedAssetIds;
@@ -2526,6 +2888,13 @@ export const useAppStore = create<StoreState>((set, get) => ({
         });
       return result;
     } catch (e) {
+      if (maybeFlagUpdateRequired(e)) {
+        throw new ArkadeError(
+          "update_required",
+          UPDATE_REQUIRED_ERROR_MESSAGE,
+          e,
+        );
+      }
       throw toArkadeError("send_failed", "Asset issuance failed", e);
     }
   },
@@ -2541,14 +2910,23 @@ export const useAppStore = create<StoreState>((set, get) => ({
     if (!isValidAssetId(assetId)) {
       throw new ArkadeError("send_failed", "Invalid asset id");
     }
-    const wallet = await ensureWallet({
-      metadata,
-      behavior: get().walletBehavior,
-    });
     let arkTxId: string;
     try {
-      arkTxId = await wallet.assetManager.reissue({ assetId, amount });
+      arkTxId = await withDigestRetry(async () => {
+        const wallet = await ensureWallet({
+          metadata,
+          behavior: get().walletBehavior,
+        });
+        return wallet.assetManager.reissue({ assetId, amount });
+      });
     } catch (e) {
+      if (maybeFlagUpdateRequired(e)) {
+        throw new ArkadeError(
+          "update_required",
+          UPDATE_REQUIRED_ERROR_MESSAGE,
+          e,
+        );
+      }
       throw toArkadeError("send_failed", "Asset reissue failed", e);
     }
     await get()
@@ -2578,14 +2956,23 @@ export const useAppStore = create<StoreState>((set, get) => ({
         "Insufficient asset balance to burn",
       );
     }
-    const wallet = await ensureWallet({
-      metadata,
-      behavior: get().walletBehavior,
-    });
     let arkTxId: string;
     try {
-      arkTxId = await wallet.assetManager.burn({ assetId, amount });
+      arkTxId = await withDigestRetry(async () => {
+        const wallet = await ensureWallet({
+          metadata,
+          behavior: get().walletBehavior,
+        });
+        return wallet.assetManager.burn({ assetId, amount });
+      });
     } catch (e) {
+      if (maybeFlagUpdateRequired(e)) {
+        throw new ArkadeError(
+          "update_required",
+          UPDATE_REQUIRED_ERROR_MESSAGE,
+          e,
+        );
+      }
       throw toArkadeError("send_failed", "Asset burn failed", e);
     }
     await get()
@@ -2827,4 +3214,21 @@ setIncomingFundsListener(() => {
         );
       });
   }, 250);
+});
+
+// Mirror mid-session server-info changes (digest negotiation) into persisted
+// `serverInfo` and refresh signer-rotation status. The returned promise chain
+// is what `waitForServerInfoChangedListener` resolves on, so the digest-retry
+// helper can await this catch-up before rebuilding — do NOT `void` it.
+setServerInfoChangedListener((info) => {
+  const store = useAppStore.getState();
+  return store
+    .updateServerInfo(info)
+    .then(() => store.refreshSignerRotationStatus())
+    .catch((e) => {
+      recordError(
+        "server",
+        `server_info_listener_failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    });
 });

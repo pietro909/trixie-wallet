@@ -1,4 +1,5 @@
 import {
+  type ArkInfo,
   type IncomingFunds,
   RestDelegatorProvider,
   Wallet,
@@ -57,10 +58,99 @@ let activeWalletInstance: Wallet | null = null;
 let incomingFundsListener: ((funds: IncomingFunds) => void) | null = null;
 let incomingFundsUnsubscribe: (() => void) | null = null;
 
+type ServerInfoChangedListener = (
+  info: ArkadeServerInfo,
+) => void | Promise<void>;
+
+let serverInfoChangedListener: ServerInfoChangedListener | null = null;
+let serverInfoUnsubscribe: (() => void) | null = null;
+/**
+ * Tail of the chain of app-listener invocations triggered by
+ * `onServerInfoChanged`. The SDK fires its listeners synchronously and does
+ * NOT await returned promises before throwing `DigestMismatchError`, so the
+ * digest-retry path needs an explicit barrier — {@link
+ * waitForServerInfoChangedListener} — to know when our persisted `serverInfo`
+ * and transient signer status have caught up with the SDK event.
+ */
+let serverInfoListenerChain: Promise<void> = Promise.resolve();
+
 export function setIncomingFundsListener(
   listener: ((funds: IncomingFunds) => void) | null,
 ): void {
   incomingFundsListener = listener;
+}
+
+/**
+ * Install the app-side server-info listener. Mirrors
+ * {@link setIncomingFundsListener}: the store wires this up after creation so
+ * `runtime.ts` never imports the store.
+ */
+export function setServerInfoChangedListener(
+  listener: ServerInfoChangedListener | null,
+): void {
+  serverInfoChangedListener = listener;
+}
+
+/**
+ * Resolve once the most recent `onServerInfoChanged` listener work has settled
+ * (handled or logged — never rejects, so it cannot mask an original digest
+ * retry). Digest-retry code awaits this before rebuilding so it does not race
+ * the async store listener.
+ */
+export function waitForServerInfoChangedListener(): Promise<void> {
+  return serverInfoListenerChain;
+}
+
+function attachServerInfoSubscription(provider: ExpoArkProvider): void {
+  detachServerInfoSubscription();
+  try {
+    serverInfoUnsubscribe = provider.onServerInfoChanged((info) => {
+      const listener = serverInfoChangedListener;
+      let converted: ArkadeServerInfo;
+      try {
+        converted = arkInfoToServerInfo(info);
+      } catch (e) {
+        recordError(
+          "server",
+          `server_info_convert_failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        return;
+      }
+      // Chain the listener work so `waitForServerInfoChangedListener` can act
+      // as a barrier. Errors are recorded inside the chain and swallowed — they
+      // must never throw back into the provider's synchronous emit loop, and
+      // the wait helper must resolve (not reject) so digest retry proceeds.
+      serverInfoListenerChain = serverInfoListenerChain
+        .catch(() => undefined)
+        .then(() => (listener ? listener(converted) : undefined))
+        .then(
+          () => undefined,
+          (e) => {
+            recordError(
+              "server",
+              `server_info_changed_listener_failed: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          },
+        );
+    });
+  } catch (e) {
+    recordError(
+      "server",
+      `server_info_subscribe_failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+}
+
+function detachServerInfoSubscription(): void {
+  const stop = serverInfoUnsubscribe;
+  serverInfoUnsubscribe = null;
+  if (stop) {
+    try {
+      stop();
+    } catch {
+      // ignore
+    }
+  }
 }
 
 async function attachIncomingFundsSubscription(wallet: Wallet): Promise<void> {
@@ -106,27 +196,42 @@ function behaviorKey(behavior: WalletBehavior): string {
   }`;
 }
 
+/**
+ * Single source of truth for `ArkInfo` → {@link ArkadeServerInfo}. Used by
+ * `fetchServerInfo`, `probeServer`, create/restore setup, and the mid-session
+ * `onServerInfoChanged` bridge so every server-info sync path produces the same
+ * shape. Each `deprecatedSigners[].cutoffDate` (`bigint`) is serialized as a
+ * decimal string so the persisted blob round-trips safely.
+ */
+export function arkInfoToServerInfo(info: ArkInfo): ArkadeServerInfo {
+  return {
+    network: info.network,
+    version: info.version,
+    signerPubkey: info.signerPubkey,
+    forfeitAddress: info.forfeitAddress,
+    dustSats: Number(info.dust),
+    unilateralExitDelaySeconds: Number(info.unilateralExitDelay),
+    txFeeRate: info.fees.txFeeRate,
+    intentFee: {
+      offchainInput: info.fees.intentFee.offchainInput,
+      onchainInput: info.fees.intentFee.onchainInput,
+      offchainOutput: info.fees.intentFee.offchainOutput,
+      onchainOutput: info.fees.intentFee.onchainOutput,
+    },
+    deprecatedSigners: info.deprecatedSigners.map((s) => ({
+      pubkey: s.pubkey,
+      cutoffDateSeconds: s.cutoffDate.toString(),
+    })),
+  };
+}
+
 async function fetchServerInfo(
   arkServerUrl: string,
 ): Promise<ArkadeServerInfo> {
   try {
     const provider = new ExpoArkProvider(arkServerUrl);
     const info = await provider.getInfo();
-    return {
-      network: info.network,
-      version: info.version,
-      signerPubkey: info.signerPubkey,
-      forfeitAddress: info.forfeitAddress,
-      dustSats: Number(info.dust),
-      unilateralExitDelaySeconds: Number(info.unilateralExitDelay),
-      txFeeRate: info.fees.txFeeRate,
-      intentFee: {
-        offchainInput: info.fees.intentFee.offchainInput,
-        onchainInput: info.fees.intentFee.onchainInput,
-        offchainOutput: info.fees.intentFee.offchainOutput,
-        onchainOutput: info.fees.intentFee.onchainOutput,
-      },
-    };
+    return arkInfoToServerInfo(info);
   } catch (e) {
     throw toArkadeError(
       "server_unreachable",
@@ -176,6 +281,17 @@ export async function fetchRawServerInfo(
   }
 }
 
+type BuiltWallet = {
+  wallet: Wallet;
+  /**
+   * The exact `ExpoArkProvider` instance handed to `Wallet.create`. The
+   * caller subscribes to its `onServerInfoChanged` stream; subscribing to a
+   * different instance would never fire. {@link buildWallet} itself does not
+   * subscribe (no module-state side effects).
+   */
+  arkProvider: ExpoArkProvider;
+};
+
 async function buildWallet(
   walletId: string,
   artifacts: IdentityArtifacts,
@@ -184,7 +300,7 @@ async function buildWallet(
   behavior: WalletBehavior,
   walletMode: "static" | "hd",
   esploraUrl?: string,
-): Promise<Wallet> {
+): Promise<BuiltWallet> {
   const repos = createRepositories(walletId);
   const delegatorUrl = behavior.delegatedRenewal
     ? defaultDelegatorUrlForNetwork(network)
@@ -204,12 +320,13 @@ async function buildWallet(
         }
       : false;
 
+  const arkProvider = new ExpoArkProvider(arkServerUrl);
   try {
-    return await Wallet.create({
+    const wallet = await Wallet.create({
       identity: artifacts.identity,
       walletMode,
       arkServerUrl,
-      arkProvider: new ExpoArkProvider(arkServerUrl),
+      arkProvider,
       indexerProvider: new ExpoIndexerProvider(arkServerUrl),
       delegatorProvider: delegatorUrl
         ? new RestDelegatorProvider(delegatorUrl)
@@ -221,6 +338,7 @@ async function buildWallet(
       },
       settlementConfig,
     });
+    return { wallet, arkProvider };
   } catch (e) {
     throw toArkadeError(
       "wallet_init_failed",
@@ -301,7 +419,7 @@ export type CreateWalletInput = {
 export async function createWalletInstance(
   input: CreateWalletInput,
 ): Promise<{ wallet: Wallet; snapshot: WalletSnapshot }> {
-  const wallet = await buildWallet(
+  const { wallet, arkProvider } = await buildWallet(
     input.walletId,
     input.artifacts,
     input.arkServerUrl,
@@ -316,6 +434,7 @@ export async function createWalletInstance(
   activeWalletInstance = wallet;
   activeWalletPromise = Promise.resolve(wallet);
   await attachIncomingFundsSubscription(wallet);
+  attachServerInfoSubscription(arkProvider);
   const snapshot = await snapshotWallet(wallet, input.arkServerUrl, {
     network: input.network,
   });
@@ -333,7 +452,7 @@ export async function restoreWalletInstance(
   input: RestoreWalletInput,
 ): Promise<{ wallet: Wallet; snapshot: WalletSnapshot }> {
   input.onStage?.("initializing");
-  const wallet = await buildWallet(
+  const { wallet, arkProvider } = await buildWallet(
     input.walletId,
     input.artifacts,
     input.arkServerUrl,
@@ -357,6 +476,7 @@ export async function restoreWalletInstance(
   activeWalletInstance = wallet;
   activeWalletPromise = Promise.resolve(wallet);
   await attachIncomingFundsSubscription(wallet);
+  attachServerInfoSubscription(arkProvider);
 
   input.onStage?.("syncing");
   const snapshot = await snapshotWallet(wallet, input.arkServerUrl, {
@@ -391,7 +511,7 @@ export async function ensureWallet(input: EnsureWalletInput): Promise<Wallet> {
       secret,
       isMainnetForNetworkName(network),
     );
-    const wallet = await buildWallet(
+    const { wallet, arkProvider } = await buildWallet(
       metadata.id,
       artifacts,
       metadata.arkServerUrl,
@@ -402,6 +522,7 @@ export async function ensureWallet(input: EnsureWalletInput): Promise<Wallet> {
     );
     activeWalletInstance = wallet;
     await attachIncomingFundsSubscription(wallet);
+    attachServerInfoSubscription(arkProvider);
     return wallet;
   })();
   activeWalletId = metadata.id;
@@ -447,6 +568,7 @@ export async function refreshWalletSnapshot(
 export async function disposeWallet(): Promise<void> {
   const instance = activeWalletInstance;
   detachIncomingFundsSubscription();
+  detachServerInfoSubscription();
   activeWalletId = null;
   activeBehaviorKey = null;
   activeWalletMode = null;
