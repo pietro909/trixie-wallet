@@ -19,8 +19,8 @@
     "test:coverage": "jest --coverage"
   },
   "dependencies": {
-    "@arkade-os/boltz-swap": "0.3.40",
-    "@arkade-os/sdk": "0.4.35",
+    "@arkade-os/boltz-swap": "0.3.45",
+    "@arkade-os/sdk": "0.4.40",
     "@expo-google-fonts/inter": "^0.4.2",
     "@expo/dom-webview": "~56.0.5",
     "@expo/vector-icons": "^15.0.3",

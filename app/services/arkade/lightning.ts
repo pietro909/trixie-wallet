@@ -510,7 +510,15 @@ export async function sendLightningPayment(
     const knownIds = await captureSubmarineSwapIds();
     let response: SendLightningPaymentResponse;
     try {
-      response = await swaps.sendLightningPayment(args);
+      // Request settled semantics explicitly. Since boltz-swap 0.3.45 a plain
+      // call resolves optimistically (the `OptimisticSendLightningPaymentResponse`
+      // overload, where `preimage` may be absent); `waitFor: "settled"` selects
+      // the strict response and preserves this wrapper's preimage guarantee,
+      // matching the pre-0.3.45 default behavior.
+      response = await swaps.sendLightningPayment({
+        ...args,
+        waitFor: "settled",
+      });
     } catch (e) {
       throw toArkadeError(
         "swap_settle_failed",
