@@ -932,7 +932,7 @@ function DetailRow({
           {label}
         </Text>
         <View style={styles.detailValueWrap}>
-          <View>
+          <View style={styles.detailValueColumn}>
             <Text
               style={[
                 styles.detailValue,
@@ -1473,6 +1473,12 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     alignItems: "center",
     gap: spacing[2],
+    minWidth: 0,
+  },
+  // Lets the value/subtext column shrink so the mono value truncates instead
+  // of overflowing past the left edge of the row.
+  detailValueColumn: {
+    flexShrink: 1,
     minWidth: 0,
   },
   detailValue: {
