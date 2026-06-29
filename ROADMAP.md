@@ -4,7 +4,7 @@ This repository is an Expo-only, iOS/Android self-custodial Arkade wallet app. T
 
 This is a living document: tick items off as they land.
 
-Last updated: 2026-06-16 (Milestone 29: SDK Server Compatibility & Signer Rotation added)
+Last updated: 2026-06-29 (Milestone 30: Message Signing & QR Login added)
 
 ## Milestones
 
@@ -69,6 +69,8 @@ Last updated: 2026-06-16 (Milestone 29: SDK Server Compatibility & Signer Rotati
   - Enable privacy-preserving address rotation for mnemonic-based wallets via `walletMode: "hd"`, allowing users to toggle between static and rotating addresses.
 - [ ] Milestone 29: SDK Server Compatibility & Signer Rotation ([docs/MILESTONE_29.agents.md](./docs/MILESTONE_29.agents.md))
   - Wire up `onServerInfoChanged` for mid-session server info refresh, catch `BUILD_VERSION_TOO_OLD` with an actionable update prompt, and surface deprecated-signer vtxo classification with a one-tap migration flow.
+- [ ] Milestone 30: Message Signing & QR Login ([docs/MILESTONE_30.agents.md](./docs/MILESTONE_30.agents.md))
+  - Add a "Sign & Connect" surface in three phases: BIP-322 message sign/verify, LNURL-auth QR login (LUD-04/05), and Nostr NIP-46 remote signing — all on a single audited raw-key chokepoint gated behind `AuthGate`.
 
 ## Relevant Documentation
 
