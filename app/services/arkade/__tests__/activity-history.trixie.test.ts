@@ -390,16 +390,19 @@ describe("Phase F — Trixie-specific cases", () => {
   });
 });
 
-// F-12 — Boarding settled mixed with renewal (lag case): isBoardingMixed=false,
-// kind=renewal_plus_receive, but amount matches a boarding tx.
-// Reclassifies the receive part to boarding_settled.
-it("F-12: boarding settlement mixed with renewal (lag case) → renewal + boarding_settled", async () => {
+// F-12 — Unmarked renewal+receive is NOT reclassified by amount coincidence.
+// isBoardingMixed=false, kind=renewal_plus_receive whose receive part happens
+// to equal a boarding deposit amount. Since `commitmentsToIgnore` is
+// authoritative (ts-sdk #587, sdk 0.4.40), an unmarked commitment is a genuine
+// off-chain receive and must keep its "Arkade received" row — promoting it to a
+// boarding settlement by amount would suppress real funds.
+it("F-12: unmarked renewal+receive is preserved as a genuine receive", async () => {
   const C = "cmt-F12";
   const B = "B-F12";
   const tx = boardingTx({
     key: { boardingTxid: B, commitmentTxid: "", arkTxid: "" },
     amount: 1000,
-    settled: true, // Already settled (partial SDK lag)
+    settled: true,
   });
   const prev = vtxo({
     txid: "prev-F12",
@@ -409,28 +412,64 @@ it("F-12: boarding settlement mixed with renewal (lag case) → renewal + boardi
   });
   const leaf = leafVtxo(C, {
     txid: "leaf-F12",
-    value: 1500, // 500 renewal + 1000 boarding
+    value: 1500, // 500 renewal + 1000 receive (coincidentally == boarding amount)
     createdAt: new Date(baseDate.getTime() + 1000),
   });
 
-  // isBoardingMixed (Set) is empty -> SDK lag
+  // Commitment NOT in commitmentsToIgnore -> genuine off-chain activity.
   const activities = await buildActivityHistory([prev, leaf], [tx], new Set());
 
   const ids = activities.map((a) => a.id).sort();
   expect(ids).toContain(`arkade:boarding:${B}`);
-  expect(ids).toContain(`arkade:boarding_settled:${C}`);
   expect(activities.find((a) => a.id === `arkade:renewal:${C}`)).toBeDefined();
-  // The "Arkade received" row from renewal_plus_receive is suppressed:
-  expect(activities.find((a) => a.id === `arkade:batch:${C}`)).toBeUndefined();
+  // The genuine receive is kept, and no phantom boarding_settled is emitted.
+  expect(activities.find((a) => a.id === `arkade:batch:${C}`)).toBeDefined();
+  expect(
+    activities.find((a) => a.id === `arkade:boarding_settled:${C}`),
+  ).toBeUndefined();
+});
 
-  const settled = activities.find(
-    (a) => a.id === `arkade:boarding_settled:${C}`,
-  );
-  expect(settled?.metadata).toMatchObject({
-    commitmentTxid: C,
-    settledAmountSats: 1000,
-    boardingTxid: B,
+// F-14 — Combined multi-deposit onboard (the ts-sdk #587 case). Two boarding
+// deposits of DIFFERENT amounts are swept into ONE marked commitment. No single
+// deposit equals the swept total, so the explorer link is left unset, but the
+// netted amount is surfaced exactly once with no phantom "Arkade received".
+it("F-14: combined multi-deposit sweep nets to one boarding_settled, no phantom receive", async () => {
+  const C = "cmt-F14";
+  const txA = boardingTx({
+    key: { boardingTxid: "B-A14", commitmentTxid: "", arkTxid: "" },
+    amount: 1000,
+    settled: true,
   });
+  const txB = boardingTx({
+    key: { boardingTxid: "B-B14", commitmentTxid: "", arkTxid: "" },
+    amount: 1500,
+    settled: true,
+  });
+  // The single swept VTXO carries the combined 2500 with no VTXO inputs.
+  const leaf = leafVtxo(C, { txid: "leaf-F14", value: 2500 });
+
+  const activities = await buildActivityHistory(
+    [leaf],
+    [txA, txB],
+    new Set([C]),
+  );
+
+  const ids = activities.map((a) => a.id);
+  expect(ids).toContain("arkade:boarding:B-A14");
+  expect(ids).toContain("arkade:boarding:B-B14");
+
+  const settledRows = activities.filter((a) =>
+    a.id.startsWith("arkade:boarding_settled:"),
+  );
+  expect(settledRows).toHaveLength(1);
+  expect(settledRows[0].metadata).toMatchObject({
+    commitmentTxid: C,
+    settledAmountSats: 2500,
+  });
+  // No single deposit equals 2500 -> no boarding tx is linked.
+  expect(settledRows[0].metadata?.boardingTxid).toBeUndefined();
+  // The combined inflow is not double-counted as an Arkade receive.
+  expect(activities.find((a) => a.id === `arkade:batch:${C}`)).toBeUndefined();
 });
 
 // F-13 — Boarding settled mixed with renewal (explicit case): isBoardingMixed=true,

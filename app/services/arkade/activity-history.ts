@@ -630,22 +630,21 @@ export async function buildActivityHistory(
   const EMPTY: VirtualCoin[] = [];
 
   // The SDK marks commitments that consumed on-chain boarding outputs via
-  // `commitmentsToIgnore`, but the underlying outspend lookup can lag — when
-  // a boarding output is consumed off-chain before the outspend cache
-  // refreshes, the commitment slips through as a plain batch_receive and we
-  // end up emitting "Arkade received" next to "Boarding deposit" for the
-  // same funds. Match by amount as a fallback, claiming each boarding tx at
-  // most once so multi-deposit wallets stay deterministic.
+  // `commitmentsToIgnore`. Since @arkade-os/sdk 0.4.40 (ts-sdk #587) it
+  // recovers the sweep commitment from the boarding address's own `vin` even
+  // when `/outspends` omits the spender txid, so this set is authoritative —
+  // boarding sweeps are always marked and never slip through as a plain
+  // batch_receive. We use the amount match only to resolve WHICH boarding tx a
+  // marked settlement should link to for the explorer, claiming each boarding
+  // tx at most once so multi-deposit wallets stay deterministic. It never
+  // promotes an unmarked group to a settlement (that would misattribute a
+  // genuine receive whose value happened to equal a deposit).
   const usedBoardingTxids = new Set<string>();
-  const findBoardingMatch = (
-    amount: bigint,
-    requireUnsettled: boolean,
-  ): ArkTransaction | null => {
+  const findBoardingMatch = (amount: bigint): ArkTransaction | null => {
     for (const tx of allBoardingTxs) {
       const boardingTxid = tx.key.boardingTxid;
       if (!boardingTxid) continue;
       if (usedBoardingTxids.has(boardingTxid)) continue;
-      if (requireUnsettled && tx.settled) continue;
       if (BigInt(tx.amount) === amount) return tx;
     }
     return null;
@@ -700,52 +699,48 @@ export async function buildActivityHistory(
         : 0;
     const tsAnchor = tsCreated > 0 ? tsCreated : tsSpent + 1;
 
-    // Reclassify pure boarding settlements before the default switch:
-    //  - SDK-marked + no VTXO inputs → definitely a boarding settlement;
-    //    find the boarding tx by amount for the explorer link.
-    //  - Plain batch_receive that matches an unsettled boarding deposit by
-    //    amount → outspend cache lag; treat as a boarding settlement.
-    // In both cases we emit a single "Boarding settled" wallet_event and
-    // suppress the "Arkade received" / "Arkade settlement" duplicate.
+    // Collapse SDK-marked boarding settlements before the default switch.
+    // `commitmentsToIgnore` is authoritative (see findBoardingMatch above), so
+    // we only act on marked commitments — emitting one "Boarding settled"
+    // wallet_event and suppressing the "Arkade received" / "Arkade settlement"
+    // duplicate. When marked, decompose yields either a `renewal` (the leftover
+    // above the refreshed inputs is the boarding amount) or a
+    // `boarding_mixed_unresolved` settlement (a pure sweep with no VTXO
+    // inputs). Unmarked groups are left to the switch as genuine activity.
     let boardingSettlement: {
       settledAmount: bigint;
       boardingTxid: string | null;
     } | null = null;
 
-    if (
-      decomp.kind === "batch_receive" ||
-      decomp.kind === "renewal_plus_receive" ||
-      decomp.kind === "renewal"
-    ) {
-      const amount =
-        decomp.kind === "batch_receive"
-          ? decomp.createdAmount
-          : decomp.kind === "renewal_plus_receive"
-            ? decomp.receiveAmount
-            : decomp.createdAmount - decomp.spentAmount;
-
-      if (amount > 0n) {
-        const match = findBoardingMatch(amount, false);
-        if (match) {
-          usedBoardingTxids.add(match.key.boardingTxid);
-          boardingSettlement = {
-            settledAmount: amount,
-            boardingTxid: match.key.boardingTxid,
-          };
+    if (isBoardingMixed) {
+      if (decomp.kind === "renewal") {
+        const leftover = decomp.createdAmount - decomp.spentAmount;
+        if (leftover > 0n) {
+          const match = findBoardingMatch(leftover);
+          if (match) {
+            usedBoardingTxids.add(match.key.boardingTxid);
+            boardingSettlement = {
+              settledAmount: leftover,
+              boardingTxid: match.key.boardingTxid,
+            };
+          }
         }
+      } else if (
+        decomp.kind === "settlement" &&
+        decomp.reason === "boarding_mixed_unresolved" &&
+        spent.length === 0 &&
+        created.length > 0
+      ) {
+        // A pure sweep. For combined deposits no single boarding tx equals the
+        // swept total, so the link is left unset while the netted amount is
+        // still surfaced once — no phantom receive.
+        const match = findBoardingMatch(decomp.createdAmount);
+        if (match) usedBoardingTxids.add(match.key.boardingTxid);
+        boardingSettlement = {
+          settledAmount: decomp.createdAmount,
+          boardingTxid: match?.key.boardingTxid ?? null,
+        };
       }
-    } else if (
-      decomp.kind === "settlement" &&
-      decomp.reason === "boarding_mixed_unresolved" &&
-      spent.length === 0 &&
-      created.length > 0
-    ) {
-      const match = findBoardingMatch(decomp.createdAmount, false);
-      if (match) usedBoardingTxids.add(match.key.boardingTxid);
-      boardingSettlement = {
-        settledAmount: decomp.createdAmount,
-        boardingTxid: match?.key.boardingTxid ?? null,
-      };
     }
 
     if (boardingSettlement) {
