@@ -8,6 +8,8 @@ Resolved scoped efforts move under `docs/` with a `# RESOLVED` prefix — see [d
 
 Issues promoted to scoped milestones move under `docs/MILESTONE_NN.agents.md` — see [docs/MILESTONE_26.agents.md](./docs/MILESTONE_26.agents.md) for the former Issue 2 (animation and loading feedback pass).
 
+Issue 9 (SDK upgrade & boarding-sweep history) is resolved — see [docs/ISSUE_BOARDING_SWEEP_HISTORY.md](./docs/ISSUE_BOARDING_SWEEP_HISTORY.md). The SDK was bumped to 0.4.40 (ships ts-sdk #587) and the amount-based boarding-sweep workaround removed.
+
 ## Issue 1: Password Setup Is Too Slow
 
 ### Summary
@@ -97,27 +99,3 @@ Some historical Arkade swaps were created against the legacy Boltz endpoint `htt
 
 ### Notes
 This is related to Issue 5, but tracks the user-visible legacy-swap recovery behavior specifically: old Boltz records are not enough by themselves to prove that an Arkade refund is possible. The wallet must prove there is an unspent local VHTLC before presenting a refund action.
-
-## Issue 9: Upgrade SDK and Revisit Custom Boarding-Sweep History Once #587 Ships
-
-### Summary
-The SDK fix for phantom "Received" inflation from boarding sweeps ([ts-sdk #587](https://github.com/arkade-os/ts-sdk/pull/587)) is merged to `master` but **not yet in any released version**. We are pinned to `@arkade-os/sdk` 0.4.35, which predates it. Once the fix is released we should upgrade and revisit our custom activity-history implementation, which currently carries its own workaround for the same root cause.
-
-### Background
-On the default mainnet Esplora (`mempool.arkade.sh`), `/outspends` returns `{"spent":true}` **without** the spender txid. The SDK's `wallet.getBoardingTxs()` therefore builds an unreliable `commitmentsToIgnore`, so a boarding sweep's resulting VTXO is surfaced *in addition to* the on-chain boarding deposit(s) — double-counting the inflow (e.g. a 228,532-sat onboard from two deposits shown as 457,064). #587 fixes this in the SDK by recovering the sweep commitment txid from the boarding address's own `vin` list.
-
-### Current Behavior (trixie)
-- `app/services/arkade/activity-history.ts` re-implements history (`buildActivityHistory`) but still consumes the SDK-derived `commitmentsToIgnore` from `wallet.getBoardingTxs()`, so it inherits the unreliable ignore-set.
-- Our safety net is the amount-based `findBoardingMatch` fallback — which is exactly the fallback #587 notes is insufficient for combined deposits: when several deposits are swept into one VTXO, no single boarding tx equals the combined amount, so the match fails and a phantom `batch_receive` is still emitted.
-- Net effect: single-deposit onboards are masked by the amount match, but **multi-deposit / combined onboards are still double-counted**, same as the SDK bug.
-
-### Expected Behavior
-- Track the SDK release that first contains #587; bump `@arkade-os/sdk` to it.
-- After upgrading, re-evaluate our custom `findBoardingMatch` / boarding-sweep handling in `activity-history.ts`:
-  - If `getBoardingTxs()` now returns a correct `commitmentsToIgnore`, simplify or remove the amount-based fallback.
-  - Verify the combined multi-deposit case nets correctly (no phantom receive) against real mainnet data.
-- If a fix is needed before the SDK release, port #587's approach into our layer: recover the sweep commitment via a `vin` scan of the boarding address's tx list (we already have that history in hand) instead of relying solely on amount matching.
-
-### Notes
-The fix is unreleased as of 2026-06-29 — no published SDK version (through 0.4.39) contains commit `839a43dd`. A version bump alone will not resolve this until the SDK cuts a release including #587.
-
