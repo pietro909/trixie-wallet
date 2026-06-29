@@ -25,7 +25,9 @@ function makeReport(
     status: partial.status,
     cutoffDate: partial.cutoffDate,
     secondsUntilCutoff: partial.secondsUntilCutoff,
-    vtxoCount: partial.vtxoCount ?? 0,
+    // Default to a fund-bearing report; the "nothing to rotate" case is
+    // covered explicitly by passing all counts as 0.
+    vtxoCount: partial.vtxoCount ?? 1,
     totalValue: partial.totalValue ?? 0,
     boardingCount: partial.boardingCount ?? 0,
     boardingValue: partial.boardingValue ?? 0,
@@ -60,6 +62,45 @@ describe("aggregateSignerRotationStatus", () => {
         makeReport({ status: "CURRENT" as SignerStatus }),
       ]),
     ).toBeNull();
+  });
+
+  it("returns null when a deprecated signer holds no funds to act on", () => {
+    // A signer can be deprecated while the wallet holds nothing tied to it —
+    // no banner should be raised since there is nothing to rotate.
+    expect(
+      aggregateSignerRotationStatus([
+        makeReport({
+          status: "MIGRATABLE",
+          vtxoCount: 0,
+          boardingCount: 0,
+          recoverableCount: 0,
+          awaitingSweepCount: 0,
+        }),
+      ]),
+    ).toBeNull();
+  });
+
+  it("ignores fund-less reports when ranking severity", () => {
+    // The MIGRATABLE signer has funds; the EXPIRED one is empty and must not
+    // win the worst-status ranking.
+    const status = aggregateSignerRotationStatus([
+      makeReport({
+        status: "EXPIRED",
+        signerPubKey: "empty",
+        vtxoCount: 0,
+        boardingCount: 0,
+        recoverableCount: 0,
+        awaitingSweepCount: 0,
+      }),
+      makeReport({
+        status: "MIGRATABLE",
+        signerPubKey: "funded",
+        vtxoCount: 1,
+      }),
+    ]);
+    expect(status?.worstStatus).toBe("MIGRATABLE");
+    expect(status?.reports).toHaveLength(1);
+    expect(status?.reports[0].signerPubKey).toBe("funded");
   });
 
   it("prioritizes DUE_NOW over EXPIRED for actionability", () => {

@@ -48,18 +48,34 @@ function toRotationReport(r: DeprecatedSignerReport): SignerRotationReport {
 }
 
 /**
+ * Whether a report carries any funds the user could act on. A signer can be
+ * deprecated while the wallet holds nothing tied to it (every count `0`) — the
+ * SDK still emits a report, but there is nothing to migrate, recover, or wait
+ * on, so it must not raise a banner.
+ */
+function reportHasFunds(r: SignerRotationReport): boolean {
+  return (
+    r.vtxoCount > 0 ||
+    r.boardingCount > 0 ||
+    r.recoverableCount > 0 ||
+    r.awaitingSweepCount > 0
+  );
+}
+
+/**
  * Aggregate the SDK's per-signer reports into the transient
  * {@link SignerRotationStatus} the UI consumes. Stringifies `bigint` cutoffs,
  * derives `canMigrate`/`hasMigratableFunds` from the SDK's
  * {@link isCooperativelyMigratable} (not a hardcoded status check), and returns
- * `null` when there is nothing actionable (no reports, or every report is
- * `CURRENT`).
+ * `null` when there is nothing actionable (no reports, every report is
+ * `CURRENT`, or no remaining report holds any funds to act on).
  */
 export function aggregateSignerRotationStatus(
   reports: DeprecatedSignerReport[] | null | undefined,
 ): SignerRotationStatus | null {
   if (!reports || reports.length === 0) return null;
-  const mapped = reports.map(toRotationReport);
+  const mapped = reports.map(toRotationReport).filter(reportHasFunds);
+  if (mapped.length === 0) return null;
   let worstStatus: SignerRotationSeverity = "CURRENT";
   for (const r of mapped) {
     if (SEVERITY_ORDER[r.status] > SEVERITY_ORDER[worstStatus]) {
