@@ -1,3 +1,4 @@
+import type { BoltzSwap } from "@arkade-os/boltz-swap";
 import { type RouteProp, useRoute } from "@react-navigation/native";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
@@ -13,6 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import Button from "../components/Button";
 import CopyableField from "../components/CopyableField";
+import SecretField from "../components/SecretField";
 import { useToast } from "../components/ToastProvider";
 import { useAssetMetadata } from "../hooks/useAssetMetadata";
 import { useFormatSats } from "../hooks/useFormatSats";
@@ -24,10 +26,12 @@ import {
   type Section,
   type SectionRow,
 } from "../services/activity-details/buildSections";
+import { buildSwapDebugSection } from "../services/activity-details/buildSwapDebugSection";
 import { collectSwapMetadataExport } from "../services/activity-details/swapMetadataExport";
 import { statusAmountColor, statusVisuals } from "../services/activity-status";
 import {
   type ChainRefundReadiness,
+  getBoltzSwapById,
   getChainRefundReadinessById,
 } from "../services/arkade/lightning";
 import type { Activity } from "../store/types";
@@ -79,6 +83,16 @@ function renderSectionRow(
       />
     );
   }
+  if (row.kind === "secret") {
+    return (
+      <SecretField
+        key={row.label}
+        label={row.label}
+        value={row.value}
+        warning={row.warning}
+      />
+    );
+  }
   return (
     <View key={row.label} style={styles.textRow}>
       <Text style={[styles.textRowLabel, { color: theme.colors.textSubtle }]}>
@@ -96,14 +110,17 @@ function renderSection(
   network: string | null | undefined,
   theme: AppTheme,
 ): React.ReactNode {
+  const isWarning = section.tone === "warning";
   return (
     <View
       key={section.id}
       style={[
         styles.section,
         {
-          backgroundColor: theme.colors.card,
-          borderColor: theme.colors.border,
+          backgroundColor: isWarning
+            ? theme.colors.pendingSoft
+            : theme.colors.card,
+          borderColor: isWarning ? theme.colors.warning : theme.colors.border,
         },
       ]}
     >
@@ -149,6 +166,38 @@ export default function ActivityDetailsScreen() {
         ? buildActivityDetailSections(activity, { network, assetMetadata })
         : [],
     [activity, network, assetMetadata],
+  );
+
+  // Live Boltz swap fetch, backing the "Swap debug" section below. Reads
+  // through the same `getBoltzSwapById` lookup the "Copy metadata" export
+  // uses — it carries secret material (preimage, chain-swap ephemeral key),
+  // so it's fetched on demand rather than projected into persisted
+  // `Activity.metadata`.
+  const boltzSwapId =
+    activity?.source.type === "boltz_swap" ? activity.source.swapId : null;
+  const [liveSwap, setLiveSwap] = useState<BoltzSwap | null>(null);
+
+  useEffect(() => {
+    if (!boltzSwapId) {
+      setLiveSwap(null);
+      return;
+    }
+    let cancelled = false;
+    getBoltzSwapById(boltzSwapId)
+      .then((swap) => {
+        if (!cancelled) setLiveSwap(swap);
+      })
+      .catch(() => {
+        if (!cancelled) setLiveSwap(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [boltzSwapId]);
+
+  const debugSection = useMemo(
+    () => (activity ? buildSwapDebugSection(activity, liveSwap) : null),
+    [activity, liveSwap],
   );
 
   // Chain-swap refund derivations — computed unconditionally so the
@@ -369,6 +418,7 @@ export default function ActivityDetailsScreen() {
       </View>
 
       {sections.map((section) => renderSection(section, network, theme))}
+      {debugSection ? renderSection(debugSection, network, theme) : null}
 
       {refundableChainSwap ? (
         <View style={styles.refundCard}>

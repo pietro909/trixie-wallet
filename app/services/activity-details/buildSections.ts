@@ -12,12 +12,21 @@ export type SectionRow =
       mono?: boolean;
       multiline?: boolean;
       explorerKind?: ExplorerIdKind;
+    }
+  | {
+      kind: "secret";
+      label: string;
+      value: string;
+      /** Shown next to the reveal toggle, e.g. "Signing key — do not share". */
+      warning?: string;
     };
 
 export type Section = {
   id: string;
   title: string;
   rows: SectionRow[];
+  /** Visual emphasis. "warning" is used for sections carrying secret/debug material. */
+  tone?: "default" | "warning";
 };
 
 export type BuildSectionsContext = {

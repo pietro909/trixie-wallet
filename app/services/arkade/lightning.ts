@@ -442,10 +442,11 @@ export async function restoreBoltzSwaps(swaps: BoltzSwap[]): Promise<void> {
  * been initialized this session.
  *
  * WARNING: the returned object carries secret material — the proof-of-payment
- * `preimage` and the raw Boltz request/response — that is deliberately kept
- * out of `Activity.metadata` (see `swap-mappers.ts`). Treat the result as
- * sensitive; it is only assembled for the manual "Copy metadata" support
- * action on the Activity detail screen.
+ * `preimage`, and for chain swaps the MuSig2 `ephemeralKey` — that is
+ * deliberately kept out of `Activity.metadata` (see `swap-mappers.ts`). Treat
+ * the result as sensitive. Used by the manual "Copy metadata" support action
+ * and by the Activity detail screen's "Swap debug" section (masked/tap-to-
+ * reveal for secret fields).
  */
 export async function getBoltzSwapById(
   swapId: string,
